@@ -32,12 +32,18 @@ contract StablecoinTemplateV3 is
     StablecoinTemplateV3ErrorsAndEvents
 {
 
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
-    bytes32 public constant BLOCKER_ROLE = keccak256("BLOCKER_ROLE");
-    bytes32 public constant UNBLOCKER_ROLE = keccak256("UNBLOCKER_ROLE");
-    bytes32 public constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
+    // keccak256("MINTER_ROLE")
+    bytes32 public constant MINTER_ROLE = 0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6;
+    // keccak256("PAUSER_ROLE")
+    bytes32 public constant PAUSER_ROLE = 0x65d7a28e3265b37a6474929f336521b332c1681b933f6cb9f3376673440d862a;
+    // keccak256("UNPAUSER_ROLE")
+    bytes32 public constant UNPAUSER_ROLE = 0x427da25fe773164f88948d3e215c94b6554e2ed5e5f203a821c9f2f6131cf75a;
+    // keccak256("BLOCKER_ROLE")
+    bytes32 public constant BLOCKER_ROLE = 0x8f2e0057cd5e35397007bcc8f5418f73dd64cc6e4073a0276563f247c3079037;
+    // keccak256("UNBLOCKER_ROLE")
+    bytes32 public constant UNBLOCKER_ROLE = 0xd9baed468f21047a0d6ab9885d6ae46bbf2933283cec161c04c5168907672993;
+    // keccak256("BLOCKED_ADDRESS_BURNER_ROLE")
+    bytes32 public constant BLOCKED_ADDRESS_BURNER_ROLE = 0xe969654fd2eacc916c0e1dbde35c3fc73cc679270202bebca6f382559f374d9f;
 
     modifier onlyOwnerOrAdmin() {
         require(
