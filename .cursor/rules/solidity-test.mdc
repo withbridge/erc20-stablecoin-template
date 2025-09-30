@@ -1,0 +1,90 @@
+---
+description: Solidity test files
+globs: *.t.sol
+alwaysApply: false
+---
+
+---
+
+description: Solidity test files
+globs: \*.t.sol
+alwaysApply: false
+
+---
+
+# Solidity Tests
+
+## Test Structure & Naming
+
+-   Test names should follow the pattern `test_functionName{_success,_fail_MySpecificError}`
+-   Test happy path separately from sad path; explicitly test each error in its own test method
+-   When testing functions that take relatively simple user-input, fuzz the inputs by giving the test function arguments. Use `vm.bound` to restrict inputs as necessary
+-   Never make test instance variables public (e.g., never do `address public owner` in contracts that inherit from Test)
+
+## Address & Account Creation
+
+-   Always use `makeAddr("<descriptive string>")` when making dummy addresses to test against
+    -   Never do `address owner = address(0x01)`
+-   Always use `makeAccount("<descriptive string>")` when making dummy addresses that need to produce signatures
+    -   Access the underlying `address` with `myAccount.addr` and private key with `myAccount.key`
+    -   Since it is a struct, you must declare them like `Account memory myAccount`
+-   Use the test contract itself (`address(this)`) as the default owner of an ownable smart contract; this avoids unnecessary `vm.prank` calls
+
+## Error Testing
+
+-   Never use `vm.expectRevert()` without any data - always supply at least the 4-byte error selector
+-   When possible, supply entire revert data using `vm.expectRevert(abi.encodeWithSelector(MyContract.MyError.selector, ...args...))`
+-   Use `abi.encodeCall()` when appropriate for encoding function calls
+
+## Event Testing
+
+-   Always test events using `expectEmit`
+
+## Signature Testing
+
+-   If a method requires a signature and you are testing the success case, do not pass in dummy bytes for the signature
+-   You must recreate the digest and sign it to generate a valid signature yourself
+-   Never create a standalone separate helper contract when working with signed data or storage, because signature validity is determined by the verifying contract, and storage is scoped per contract address
+
+## Dependencies & Imports
+
+-   Prefer Solady for dependencies over OpenZeppelin
+    -   Solady's default implementations differ from OpenZeppelin (e.g., ERC20 includes Permit by default)
+    -   Do not assume implementations of common standards have the same limited feature set as OpenZeppelin
+-   Import `console2` from `forge-std/Test.sol` when logging is necessary or requested
+-   When accessing Forge Cheatcode structs, `import { VmSafe } from "forge-std/Vm.sol"` and access with `Vm\{,Safe\}.StructName`
+
+## Contract Design Patterns
+
+-   If you need access to internal functions or variables, extend the contract you are testing with public methods to access those variables or methods
+    -   Do not try to access them via helper contracts or direct storage access using namespaced storage - this is not possible, and you will fail
+-   Do pull out re-used helper contracts like `MockERC20` or `MyContractHelper` into their own files
+-   Do not use `mockCall` unless instructed
+-   Modularize tests logic when possible, and minimize local variables to avoid stack-to-deep errors when running coverage reports
+
+## Specific Technical Patterns
+
+-   When testing functions in libraries that might revert, ALWAYS wrap the library call in an external call within the test contract and call it with `this.myHelper(...)`
+    -   Otherwise, the test will fail because the revert needs to happen at a lower depth than the `vm.expectRevert` call
+-   When using EIP-7201 Namespaced Storage Layouts, use `$` as the storage variable (e.g., `MyStorage storage $ = MyStorageLib.getStorage()`)
+    -   Never try to access namespaced storage from within the test contract. This will not work, because it will read the storage from the test contract, and not the contract you are trying to test.
+    -   This should only be relevant when creating helper "sub-classes" of contracts to access storage outside of normal contract logic. If you think you need to use it otherwise, you are probably wrong, and shouldn't.
+    -   Never try to access the storage of the contract you are testing from within other contracts, eg, the test contract itself or helper contracts.
+-   Implementation contracts for upgradeable contracts should always disable initializers (if one doesn't, please bring it up and flag it as extremely important until it fixed). **This means you cannot call `initialize` or `reinitialize` on an implementation contract you've just deployed - they must be called via a proxy contract.**
+    -   Do not `MyContract t = new MyContract(); t.reinitialize(...);` - this will fail.
+
+## General Guidelines
+
+-   Believe compiler errors over your own intuition
+    -   E.g., if it says "Data location must be storage, memory, or calldata" - fix the syntax according to the error rather than assuming you are missing an import
+
+## Solidity Gotchas
+
+-   If a contract inherits a method, you cannot specify its selector using the inheriting definition. I.E. `MyContractB.myFunctionA.selector` is not valid if `MyContractB` inherits from `MyContractA` which defines `myFunctionA`. That means you must always specify `MyContractA.myFunctionA{.selector}` when using things like `abi.encodeCall`, `abi.encodeWithSelector` etc.
+
+## Forge Test Gotchas
+
+-   `vm.prank` changes the caller of **the very next** external call that is not a `Vm` cheatcode
+    -   An external call is any call to a contract that is not the current contract or any call to a `public` or `external` function of the current contract invoked via the `this` keyword, e.g., `this.myFunction(...)`
+    -   This means (among other things) **you cannot query for external variables** when constructing, e.g., calldata or revert data when using a single `vm.prank` (vs `vm.startPrank`), e.g., you cannot do `vm.prank(user); vm.expectRevert(abi.encodeWithSelector(MyContract.MyError.selector, user, myContract.getRelevantVariable())); mycontract.myFunction(...)` - the "prank" is wasted on the `getRelevantVariable` call. Retrieve relevant variables _before_ pranking. Prefer this over using `vm.startPrank` - see the next entry.
+-   `vm.expectRevert` applies to **the very next external call**. It must revert. You cannot query for external variables, because Forge will expect those calls to revert instead of the ones you care about. E.g., you cannot do `vm.expectRevert(...); myContract.myFunction(myContract.getRelevantVariable(), ...)` - this will fail because Forge will check the `getRelevantVariable` call for a revert instead of the `myFunction` call. This is why it is always better to retrieve relevant variables _before_ pranking.
