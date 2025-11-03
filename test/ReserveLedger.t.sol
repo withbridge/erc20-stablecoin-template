@@ -5,10 +5,10 @@ import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.s
 import { DeterministicProxyFactoryFixture } from
     "deterministic-proxy-factory/fixtures/DeterministicProxyFactoryFixture.sol";
 import { Test } from "forge-std/Test.sol";
-import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
@@ -16,14 +16,9 @@ import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 import { StablecoinTemplateV3ErrorsAndEvents } from "src/v3/StablecoinTemplateV3ErrorsAndEvents.sol";
-import { StablecoinTemplateV3SampleUpgrade } from "src/v3/StablecoinTemplateV3SampleUpgrade.sol";
 
-contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
+contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
 
-    // Define the Ownable error locally
-    error OwnableUnauthorizedAccount(address account);
-
-    StablecoinTemplateV3 token;
     ReserveLedger reserveLedger;
     address admin;
     address minter;
@@ -46,6 +41,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         user2 = makeAddr("user2");
         user3 = makeAddr("user3");
 
+
         authRegistry = new AuthRegistry();
         transferPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.BLACKLIST);
 
@@ -61,62 +57,60 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
             })
         );
 
+        // set up access roles
+        reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), minter);
+        reserveLedger.grantRole(reserveLedger.UNWRAPPER_ROLE(), minter);
+        reserveLedger.grantRole(reserveLedger.PAUSER_ROLE(), pauser);
+        reserveLedger.grantRole(reserveLedger.UNPAUSER_ROLE(), unpauser);
+        reserveLedger.grantRole(reserveLedger.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
+
+        // set up transfer policy
         vm.prank(admin);
         vm.expectEmit(true, true, true, true);
         emit TransferPolicyIdSet(admin, transferPolicyId);
         reserveLedger.setTransferPolicyId(transferPolicyId);
 
         assertEq(reserveLedger.getTransferPolicyId(), transferPolicyId);
-
-        address implementation = address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
-        token = StablecoinTemplateV3(
-            DeterministicProxyFactoryFixture.deterministicProxyOZ({
-                initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 0),
-                initialOwner: address(this),
-                implementation: implementation,
-                callData: abi.encodeCall(
-                    StablecoinTemplateV3Base.reinitialize, ("Test Coin", "TC", 6, address(this))
-                )
-            })
-        );
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, true, true);
-        emit TransferPolicyIdSet(admin, transferPolicyId);
-        token.setTransferPolicyId(transferPolicyId);
-
-        // set up access roles
-        token.grantRole(token.MINTER_ROLE(), minter);
-        token.grantRole(token.UNWRAPPER_ROLE(), minter);
-        token.grantRole(token.PAUSER_ROLE(), pauser);
-        token.grantRole(token.UNPAUSER_ROLE(), unpauser);
-        token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
-
-        // set up reserve ledger
-        reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(minter);
-        reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), admin);
-        reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), address(token));
-        reserveLedger.mint(address(minter), 100);
-
-        vm.prank(minter);
-        reserveLedger.approve(address(token), 100);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Deployment Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_initialize_sets_admin() public {
-        assertTrue(token.hasRole(token.DEFAULT_ADMIN_ROLE(), admin));
+    function test_initialize() public {
+        address reserveLedgerImplementation = address(new ReserveLedger(address(authRegistry)));
+        bytes memory callData =
+            abi.encodeCall(StablecoinTemplateV3Base.initialize, ("Test Reserve", "TR", 6, admin));
+
+        ERC1967Proxy proxy = new ERC1967Proxy(reserveLedgerImplementation, callData);
+
+        ReserveLedger reserveToken = ReserveLedger(address(proxy));
+        assertTrue(reserveToken.hasRole(reserveToken.DEFAULT_ADMIN_ROLE(), admin));
+        assertEq(reserveToken.name(), "Test Reserve");
+        assertEq(reserveToken.symbol(), "TR");
+        assertEq(reserveToken.decimals(), 6);
+        assertEq(reserveToken.getMaxSupply(), 0);
+        assertEq(reserveToken.owner(), admin);
+
+        reserveToken.reinitialize("New Reserve", "NR", 8, minter);
+        assertTrue(reserveToken.hasRole(reserveToken.DEFAULT_ADMIN_ROLE(), minter));
+        assertEq(reserveToken.name(), "New Reserve");
+        assertEq(reserveToken.symbol(), "NR");
+        assertEq(reserveToken.decimals(), 8);
+        assertEq(reserveToken.getMaxSupply(), 0);
+        assertEq(reserveToken.owner(), minter);
+    }
+
+    function test_initialize_sets_admin() public view {
+        assertTrue(reserveLedger.hasRole(reserveLedger.DEFAULT_ADMIN_ROLE(), admin));
     }
 
     function test_initialize_reverts_zero_admin() public {
         // Create a new implementation contract
-        StablecoinTemplateV3 implementation = new StablecoinTemplateV3(address(reserveLedger), address(authRegistry));
+        ReserveLedger implementation = new ReserveLedger(address(authRegistry));
 
         // Create a proxy with the implementation but without initialization
-        StablecoinTemplateV3 proxy = StablecoinTemplateV3(
+        ReserveLedger proxy = ReserveLedger(
             DeterministicProxyFactoryFixture.deterministicProxyOZ({
                 initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 1),
                 initialOwner: address(this),
@@ -128,13 +122,13 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         // The proxy should revert with AdminCannotBeZeroAddress when trying to initialize with zero
         // address
         vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
-        proxy.reinitialize("Test Coin", "TC", 6, address(0));
+        proxy.reinitialize("Test Reserve", "TR", 6, address(0));
     }
 
     function test_reinitialize_revert_not_owner() public {
         // Create a new proxy to test reinitialize
-        address implementation = address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
-        StablecoinTemplateV3 proxy = StablecoinTemplateV3(
+        address implementation = address(new ReserveLedger(address(authRegistry)));
+        ReserveLedger proxy = ReserveLedger(
             DeterministicProxyFactoryFixture.deterministicProxyOZ({
                 initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 1),
                 initialOwner: address(this),
@@ -146,108 +140,121 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         // Try to reinitialize as a non-owner
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(OnlyOwnerOrAdmin.selector));
-        proxy.reinitialize("New Coin", "NC", 8, user1);
+        proxy.reinitialize("New Reserve", "NR", 6, user1);
         vm.stopPrank();
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                            Minting / Wrapping Tests
+                                Minting Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_wrap_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
+    function test_mint_success() public {
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(100);
+        reserveLedger.addMintRecipient(user1);
+        vm.stopPrank();
 
-        vm.prank(minter);
+        vm.startPrank(minter);
         vm.expectEmit(true, true, true, true);
         emit Minted(100, user1, minter);
-        token.wrap(user1, 100);
-        assertEq(token.totalSupply(), 100);
-        assertEq(token.balanceOf(user1), 100);
-    }
-
-    function test_wrap_revert_no_allowance() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-
-        vm.startPrank(user1);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientAllowance.selector, address(token), 0, 100
-            )
-        );
-        token.wrap(user1, 100);
+        reserveLedger.mint(user1, 100);
+        assertEq(reserveLedger.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(user1), 100);
         vm.stopPrank();
     }
 
-    function test_wrap_revert_not_recipient() public {
-        vm.prank(admin);
-        token.grantRole(token.MINTER_ROLE(), minter);
-        vm.prank(minter);
-        vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
-        token.wrap(user1, 100);
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
-                            Burning / Unwrapping Tests
-    //////////////////////////////////////////////////////////////////////////*/
-
-    function test_unwrap_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(minter);
-
-        vm.startPrank(minter);
-        reserveLedger.approve(address(token), 100);
-        token.wrap(address(minter), 100);
+    function test_mint_revert_not_minter() public {
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(100);
+        reserveLedger.addMintRecipient(user1);
         vm.stopPrank();
 
-        vm.startPrank(minter);
-        vm.expectEmit(true, true, true, true);
-        emit Unwrapped(100, minter);
-        token.unwrap(100);
-        assertEq(token.totalSupply(), 0);
-        assertEq(token.balanceOf(minter), 0);
-    }
-
-    function test_unwrap_revert_not_unwrapper() public {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 user1,
-                token.UNWRAPPER_ROLE()
+                reserveLedger.MINTER_ROLE()
             )
         );
-        token.unwrap(1);
+        reserveLedger.mint(user1, 100);
         vm.stopPrank();
     }
 
-    function test_unwrap_revert_exceeds_balance() public {
-        vm.prank(admin);
-        token.grantRole(token.MINTER_ROLE(), minter);
+    function test_mint_revert_not_recipient() public {
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(100);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
+        reserveLedger.mint(user1, 100);
+    }
+
+    function test_mint_revert_max_supply() public {
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(50);
+        reserveLedger.addMintRecipient(user1);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(MaxSupplyExceeded.selector));
+        reserveLedger.mint(user1, 100);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Burning Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_burn_success() public {
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(100);
+        reserveLedger.addMintRecipient(minter);
+        vm.stopPrank();
+
+        vm.startPrank(minter);
+        reserveLedger.mint(minter, 100);
+        vm.expectEmit(true, true, true, true);
+        emit Burned(100, minter);
+        reserveLedger.burn(100);
+        assertEq(reserveLedger.totalSupply(), 0);
+        assertEq(reserveLedger.balanceOf(minter), 0);
+        vm.stopPrank();
+    }
+
+    function test_burn_revert_not_minter() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                reserveLedger.MINTER_ROLE()
+            )
+        );
+        reserveLedger.burn(100);
+        vm.stopPrank();
+    }
+
+    function test_burn_revert_exceeds_balance() public {
         vm.prank(minter);
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, minter, 0, 1)
         );
-        token.unwrap(1);
+        reserveLedger.burn(1);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                        Burn From Blocked Address Tests
+                            Burn From Blocked Address Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_transferFromBlockedAddress_success() public {
+    function test_burnFromBlockedAddress_success() public {
         vm.startPrank(admin);
-        token.addMintRecipient(user1);
-        token.grantRole(token.MINTER_ROLE(), minter);
-        token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
-
+        reserveLedger.setMaxSupply(100);
+        reserveLedger.addMintRecipient(user1);
         vm.stopPrank();
 
         vm.startPrank(minter);
-        reserveLedger.approve(address(token), 100);
-        token.wrap(user1, 100);
+        reserveLedger.mint(user1, 100);
         vm.stopPrank();
 
         vm.prank(admin);
@@ -256,18 +263,15 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(blockedBurner);
         vm.expectEmit(true, true, true, true);
         emit BurnedFromBlockedAddress(100, user1, blockedBurner);
-        token.burnFromBlockedAddress(user1);
-        assertEq(token.totalSupply(), 0);
-        assertEq(token.balanceOf(user1), 0);
-        assertEq(reserveLedger.balanceOf(blockedBurner), 100);
+        reserveLedger.burnFromBlockedAddress(user1);
+        assertEq(reserveLedger.totalSupply(), 0);
+        assertEq(reserveLedger.balanceOf(user1), 0);
     }
 
     function test_burnFromBlockedAddress_revert_not_blocked() public {
-        vm.prank(admin);
-        token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
         vm.prank(blockedBurner);
         vm.expectRevert(abi.encodeWithSelector(AddressIsNotBlocked.selector));
-        token.burnFromBlockedAddress(user1);
+        reserveLedger.burnFromBlockedAddress(user1);
     }
 
     function test_burnFromBlockedAddress_revert_no_balance() public {
@@ -275,7 +279,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
         vm.prank(blockedBurner);
         vm.expectRevert(abi.encodeWithSelector(NoBalanceToBurn.selector));
-        token.burnFromBlockedAddress(user1);
+        reserveLedger.burnFromBlockedAddress(user1);
     }
 
     function test_burnFromBlockedAddress_revert_not_burner() public {
@@ -284,10 +288,10 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 user1,
-                token.BLOCKED_ADDRESS_BURNER_ROLE()
+                reserveLedger.BLOCKED_ADDRESS_BURNER_ROLE()
             )
         );
-        token.burnFromBlockedAddress(user1);
+        reserveLedger.burnFromBlockedAddress(user1);
         vm.stopPrank();
     }
 
@@ -296,26 +300,24 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_pause_unpause_success() public {
-        vm.prank(admin);
-        token.grantRole(token.PAUSER_ROLE(), pauser);
         vm.prank(pauser);
-        token.pause();
-        assertTrue(token.paused());
-        vm.prank(admin);
-        token.grantRole(token.UNPAUSER_ROLE(), unpauser);
+        reserveLedger.pause();
+        assertTrue(reserveLedger.paused());
         vm.prank(unpauser);
-        token.unpause();
-        assertFalse(token.paused());
+        reserveLedger.unpause();
+        assertFalse(reserveLedger.paused());
     }
 
     function test_pause_revert_not_pauser() public {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, token.PAUSER_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                reserveLedger.PAUSER_ROLE()
             )
         );
-        token.pause();
+        reserveLedger.pause();
         vm.stopPrank();
     }
 
@@ -325,10 +327,10 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 user1,
-                token.UNPAUSER_ROLE()
+                reserveLedger.UNPAUSER_ROLE()
             )
         );
-        token.unpause();
+        reserveLedger.unpause();
         vm.stopPrank();
     }
 
@@ -337,22 +339,24 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_blockAddress_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(100);
+        reserveLedger.addMintRecipient(user1);
+        vm.stopPrank();
 
         vm.prank(minter);
-        token.wrap(user1, 100);
+        reserveLedger.mint(user1, 100);
 
         vm.prank(user1);
-        assertTrue(token.transfer(user2, 50));
+        assertTrue(reserveLedger.transfer(user2, 50));
 
         vm.prank(admin);
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
-        assertTrue(token.isBlocked(user1));
+        assertTrue(reserveLedger.isBlocked(user1));
 
         vm.prank(user1);
         vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
-        assertFalse(token.transfer(user2, 100));
+        assertFalse(reserveLedger.transfer(user2, 100));
     }
 
     function test_blockAddress_revert_not_blocker() public {
@@ -369,10 +373,10 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     function test_unblockAddress_success() public {
         vm.prank(admin);
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
-        assertTrue(token.isBlocked(user1));
+        assertTrue(reserveLedger.isBlocked(user1));
         vm.prank(admin);
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, false);
-        assertFalse(token.isBlocked(user1));
+        assertFalse(reserveLedger.isBlocked(user1));
     }
 
     function test_unblockAddress_revert_not_unblocker() public {
@@ -387,13 +391,53 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                            Max Supply Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_setMaxSupply_success() public {
+        vm.prank(admin);
+        reserveLedger.setMaxSupply(50);
+        assertEq(reserveLedger.getMaxSupply(), 50);
+    }
+
+    function test_setMaxSupply_revert_below_totalSupply() public {
+        vm.startPrank(admin);
+        reserveLedger.setMaxSupply(100);
+        reserveLedger.addMintRecipient(minter);
+        reserveLedger.addMintRecipient(address(this));
+        vm.stopPrank();
+
+        vm.prank(minter);
+        reserveLedger.mint(address(this), 100);
+
+        vm.startPrank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(MaxSupplyMustBeGreaterThanOrEqualToTotalSupply.selector)
+        );
+        reserveLedger.setMaxSupply(70);
+        vm.stopPrank();
+    }
+
+    function test_setMaxSupply_revert_not_admin() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                reserveLedger.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        reserveLedger.setMaxSupply(1);
+        vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                             Mint Recipient List Tests
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_addMintRecipient_success() public {
         vm.prank(admin);
-        token.addMintRecipient(user1);
-        // no revert
+        reserveLedger.addMintRecipient(user1);
     }
 
     function test_addMintRecipient_revert_not_admin() public {
@@ -402,18 +446,18 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 user1,
-                token.DEFAULT_ADMIN_ROLE()
+                reserveLedger.DEFAULT_ADMIN_ROLE()
             )
         );
-        token.addMintRecipient(user1);
+        reserveLedger.addMintRecipient(user1);
         vm.stopPrank();
     }
 
     function test_removeMintRecipient_success() public {
         vm.prank(admin);
-        token.addMintRecipient(user1);
+        reserveLedger.addMintRecipient(user1);
         vm.prank(admin);
-        token.removeMintRecipient(user1);
+        reserveLedger.removeMintRecipient(user1);
         // no revert
     }
 
@@ -423,10 +467,10 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 user1,
-                token.DEFAULT_ADMIN_ROLE()
+                reserveLedger.DEFAULT_ADMIN_ROLE()
             )
         );
-        token.removeMintRecipient(user1);
+        reserveLedger.removeMintRecipient(user1);
         vm.stopPrank();
     }
 
@@ -437,56 +481,73 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     function test_isBlocked_returns_true_false() public {
         vm.prank(admin);
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
-        assertTrue(token.isBlocked(user1));
-        assertFalse(token.isBlocked(user2));
+        assertTrue(reserveLedger.isBlocked(user1));
+        assertFalse(reserveLedger.isBlocked(user2));
     }
 
-    function test_decimals_returns_value() public {
-        assertEq(token.decimals(), 6);
+    function test_getMaxSupply_returns_value() public {
+        vm.prank(admin);
+        reserveLedger.setMaxSupply(123);
+        assertEq(reserveLedger.getMaxSupply(), 123);
+    }
+
+    function test_decimals_returns_value() public view {
+        assertEq(reserveLedger.decimals(), 6);
     }
 
     function test_isMintRecipient_returns_true_false() public {
         // Not a recipient
-        assertFalse(token.isMintRecipient(user1));
+        assertFalse(reserveLedger.isMintRecipient(user1));
         // Add as recipient
         vm.prank(admin);
-        token.addMintRecipient(user1);
-        assertTrue(token.isMintRecipient(user1));
+        reserveLedger.addMintRecipient(user1);
+        assertTrue(reserveLedger.isMintRecipient(user1));
     }
 
     function test_revokeRole_non_admin_role() public {
         // Grant and then revoke MINTER_ROLE
         vm.prank(admin);
-        token.grantRole(token.MINTER_ROLE(), minter);
-        assertTrue(token.hasRole(token.MINTER_ROLE(), minter));
+        reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), minter);
+        assertTrue(reserveLedger.hasRole(reserveLedger.MINTER_ROLE(), minter));
         vm.prank(admin);
-        token.revokeRole(token.MINTER_ROLE(), minter);
-        assertFalse(token.hasRole(token.MINTER_ROLE(), minter));
+        reserveLedger.revokeRole(reserveLedger.MINTER_ROLE(), minter);
+        assertFalse(reserveLedger.hasRole(reserveLedger.MINTER_ROLE(), minter));
     }
 
     function test_revokeRole_admin_role_multiple_admins() public {
         // Add a second admin
         address admin2 = makeAddr("admin2");
         vm.prank(admin);
-        token.grantRole(token.DEFAULT_ADMIN_ROLE(), admin2);
-        assertTrue(token.hasRole(token.DEFAULT_ADMIN_ROLE(), admin2));
+        reserveLedger.grantRole(reserveLedger.DEFAULT_ADMIN_ROLE(), admin2);
+        assertTrue(reserveLedger.hasRole(reserveLedger.DEFAULT_ADMIN_ROLE(), admin2));
         // Revoke admin2
         vm.prank(admin);
-        token.revokeRole(token.DEFAULT_ADMIN_ROLE(), admin2);
-        assertFalse(token.hasRole(token.DEFAULT_ADMIN_ROLE(), admin2));
+        reserveLedger.revokeRole(reserveLedger.DEFAULT_ADMIN_ROLE(), admin2);
+        assertFalse(reserveLedger.hasRole(reserveLedger.DEFAULT_ADMIN_ROLE(), admin2));
     }
 
     function test_revokeRole_admin_role_reverts_on_last_admin() public {
         // Only one admin (the test contract)
-        assertEq(token.getRoleMemberCount(token.DEFAULT_ADMIN_ROLE()), 1);
+        assertEq(reserveLedger.getRoleMemberCount(reserveLedger.DEFAULT_ADMIN_ROLE()), 1);
 
         // Get the role value BEFORE expectRevert
-        bytes32 adminRole = token.DEFAULT_ADMIN_ROLE();
+        bytes32 adminRole = reserveLedger.DEFAULT_ADMIN_ROLE();
 
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSelector(CannotRevokeLastAdminRole.selector));
-        token.revokeRole(adminRole, admin);
+        reserveLedger.revokeRole(adminRole, admin);
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Access Control Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_grantRole_admin_reverts_zero_address() public {
+        bytes32 role = reserveLedger.DEFAULT_ADMIN_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
+        reserveLedger.grantRole(role, address(0));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -494,62 +555,24 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_upgradeTo_revert_not_admin() public {
-        StablecoinTemplateV3SampleUpgrade upgradeImpl =
-            new StablecoinTemplateV3SampleUpgrade(address(0), address(authRegistry));
+        address upgradeImpl = address(new ReserveLedger(address(authRegistry)));
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 user1,
-                token.DEFAULT_ADMIN_ROLE()
+                reserveLedger.DEFAULT_ADMIN_ROLE()
             )
         );
-        token.upgradeToAndCall(address(upgradeImpl), "");
+        reserveLedger.upgradeToAndCall(upgradeImpl, "");
         vm.stopPrank();
     }
 
     function test_upgradeTo_success() public {
-        StablecoinTemplateV3SampleUpgrade upgradeImpl =
-            new StablecoinTemplateV3SampleUpgrade(address(0), address(authRegistry));
+        address upgradeImpl = address(new ReserveLedger(address(authRegistry)));
         vm.prank(admin);
-        token.upgradeToAndCall(address(upgradeImpl), "");
+        reserveLedger.upgradeToAndCall(upgradeImpl, "");
         // No revert
-    }
-
-}
-
-contract StablecoinTemplateV3SampleUpgradeTest is Test {
-
-    StablecoinTemplateV3SampleUpgrade upgradeImpl;
-    AuthRegistry authRegistry; 
-
-    function setUp() public {
-        authRegistry = new AuthRegistry();
-        // Create implementation contract
-        StablecoinTemplateV3SampleUpgrade implementation =
-            new StablecoinTemplateV3SampleUpgrade(address(0), address(authRegistry));
-
-        // Create proxy with implementation
-        upgradeImpl = StablecoinTemplateV3SampleUpgrade(
-            DeterministicProxyFactoryFixture.deterministicProxyOZ({
-                initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 2),
-                initialOwner: address(this),
-                implementation: address(implementation),
-                callData: abi.encodeCall(
-                    StablecoinTemplateV3Base.reinitialize, ("Test Coin", "TC", 6, address(this))
-                )
-            })
-        );
-    }
-
-    function test_name_override() public {
-        assertEq(upgradeImpl.name(), "StablecoinTemplateV3 Sample Upgrade");
-    }
-
-    function test_eip712Name_override() public {
-        // _EIP712Name is internal, so we cannot call it directly, but we can check permit domain
-        // This is a placeholder for EIP712 domain test if needed
-        assertTrue(true);
     }
 
 }

@@ -1,26 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IERC20BurnMint } from "../utils/IERC20BurnMint.sol";
-import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
 import {
     StablecoinTemplateV3Storage,
     StablecoinTemplateV3StorageLib
 } from "./StablecoinTemplateV3Storage.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
+import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
 
-    using SafeERC20 for IERC20BurnMint;
+contract ReserveLedger is StablecoinTemplateV3Base {
 
-    IERC20BurnMint public immutable RESERVE_LEDGER_ADDRESS;
-
-    constructor(address _reserveLedgerAddress, address _authRegistry)
-        StablecoinTemplateV3Base(_authRegistry)
-    {
-        _disableInitializers();
-        RESERVE_LEDGER_ADDRESS = IERC20BurnMint(_reserveLedgerAddress);
-    }
+    constructor(address _authRegistry) StablecoinTemplateV3Base(_authRegistry) { }
 
     /**
      * @dev Creates `amount` tokens and assigns them to `to`, increasing
@@ -33,15 +23,13 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * Requirements:
      *
      * - `to` cannot be the zero address.
+     * - The sum of `amount` and totalSupply cannot go over the maxSupply.
      * - `to` must be on the list of addresses that can accept a minted tokens
-     * - This function requires that the caller has approved at least `amount` of the reserve ledger
-     * token to the contract.
      */
-    function wrap(address to, uint256 amount) public {
+    function mint(address to, uint256 amount) public virtual onlyRole(MINTER_ROLE) {
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
+        require(totalSupply() + amount <= $._maxSupply, MaxSupplyExceeded());
         require($._mintRecipientList[to], AccountNotValidRecipient());
-
-        RESERVE_LEDGER_ADDRESS.safeTransferFrom(_msgSender(), address(this), amount);
 
         _mint(to, amount);
 
@@ -58,29 +46,28 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * Requirements:
      *
      * - `sender` must have at least `amount` tokens.
-     * - This function requires that the caller has the UNWRAPPER_ROLE.
      */
-    function unwrap(uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
+    function burn(uint256 amount) public virtual onlyRole(MINTER_ROLE) {
         _burn(_msgSender(), amount);
-        RESERVE_LEDGER_ADDRESS.safeTransfer(_msgSender(), amount);
 
-        emit Unwrapped(amount, _msgSender());
+        emit Burned(amount, _msgSender());
     }
 
     /**
      * @dev Burns the entire balance of a blocked address.
      *
      * This function temporarily unblocks the address to allow the burn operation,
-     * then re-blocks it after the burn is complete. Rather than burning the underlying reserve
-     * ledger token,
-     * this function transfers the balance of the blocked address to the caller.
+     * then re-blocks it after the burn is complete.
      *
      * Requirements:
      * - `account` must be blocked
      * - `account` must have a balance greater than 0
-     * - This function requires that the caller has the BLOCKED_ADDRESS_BURNER_ROLE.
      */
-    function burnFromBlockedAddress(address account) public onlyRole(BLOCKED_ADDRESS_BURNER_ROLE) {
+    function burnFromBlockedAddress(address account)
+        public
+        virtual
+        onlyRole(BLOCKED_ADDRESS_BURNER_ROLE)
+    {
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
         require(isBlocked(account), AddressIsNotBlocked());
 
@@ -92,10 +79,26 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         // burns as transfers to the zero address.
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(true);
         _burn(account, accountBalance);
-        RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, accountBalance);
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
 
         emit BurnedFromBlockedAddress(accountBalance, account, _msgSender());
+    }
+
+    /**
+     * @dev Sets the max supply.
+     *
+     * Emits a {MaxSupplySet} event with `amount` set to the amount, and `sender` set to the sender.
+     *
+     * Requirements:
+     *
+     * - `amount` must be greater than or equal to the total supply.
+     */
+    function setMaxSupply(uint256 amount) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(amount >= totalSupply(), MaxSupplyMustBeGreaterThanOrEqualToTotalSupply());
+
+        StablecoinTemplateV3StorageLib.getStorage()._maxSupply = amount;
+
+        emit MaxSupplySet(amount, _msgSender());
     }
 
 }

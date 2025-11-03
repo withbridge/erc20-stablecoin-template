@@ -11,3 +11,30 @@ version = "5.3.0"
 url = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts-upgradeable/5_3_0_10-04-2025_10:51:56_contracts-upgradeable.zip"
 checksum = "4bd92f87af0cac7226b12ce367e7327f13431735fa6010508d8c8177f9d3d10f"
 integrity = "fa195a69ef4dfec7fec7fbbb77f424258c821832fdd355b0a6e5fe34d2986a16"
+
+[[dependencies]]
+name = "auth-registry"
+version = "1"
+git = "git@github.com:withbridge/auth-registry.git"
+rev = "b2d140f8fc4675cd35c9671d1e090fecb0cc5928"
+
+[[dependencies]]
+name = "create2-helpers"
+version = "0.5.0"
+url = "https://soldeer-revisions.s3.amazonaws.com/create2-helpers/0_5_0_13-05-2025_17:05:02_create2-helpers.zip"
+checksum = "2e68e7866282a2801318145d610ea6f8bc64f5a591e1b57a27dd7d49b7adad65"
+integrity = "a18fe8aa906f2840378580388d61d032095410791ce6dff1f9a86754a6755d44"
+
+[[dependencies]]
+name = "deterministic-proxy-factory"
+version = "0.1.4"
+url = "https://soldeer-revisions.s3.amazonaws.com/deterministic-proxy-factory/0_1_4_25-05-2025_18:32:24_proxy-factory.zip"
+checksum = "9782a1e18276c5e6eacc7766597512570cc7cefa9cda7ccf20ef06dff0ff20ab"
+integrity = "0dc238ebe186591151f13256df52bd86dd95029aff66011739facbc680e07305"
+
+[[dependencies]]
+name = "forge-std"
+version = "1.9.7"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_7_28-04-2025_15:55:08_forge-std-1.9.zip"
+checksum = "8d9e0a885fa8ee6429a4d344aeb6799119f6a94c7c4fe6f188df79b0dce294ba"
+integrity = "9e60fdba82bc374df80db7f2951faff6467b9091873004a3d314cf0c084b3c7d"

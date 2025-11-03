@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import { StablecoinTemplateV3ErrorsAndEvents } from "./StablecoinTemplateV3ErrorsAndEvents.sol";
+
+import {
+    StablecoinTemplateV3Storage,
+    StablecoinTemplateV3StorageLib
+} from "./StablecoinTemplateV3Storage.sol";
+import { OwnableUpgradeable } from
+    "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import { AccessControlEnumerableUpgradeable } from
+    "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
+import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import { UUPSUpgradeable } from
+    "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import { ERC20Upgradeable } from
+    "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import { ERC20PermitUpgradeable } from
+    "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
+import { PausableUpgradeable } from
+    "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
+
+abstract contract StablecoinTemplateV3Base is
+    Initializable,
+    ERC20Upgradeable,
+    PausableUpgradeable,
+    OwnableUpgradeable,
+    AccessControlEnumerableUpgradeable,
+    ERC20PermitUpgradeable,
+    UUPSUpgradeable,
+    StablecoinTemplateV3ErrorsAndEvents
+{
+
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
+    bytes32 public constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
+    bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
+
+    IAuthRegistry public immutable AUTH_REGISTRY;
+
+    modifier onlyOwnerOrAdmin() {
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, _msgSender()) || owner() == _msgSender(), OnlyOwnerOrAdmin()
+        );
+        _;
+    }
+
+    constructor(address _authRegistry) {
+        AUTH_REGISTRY = IAuthRegistry(_authRegistry);
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initializes the contract with the given parameters.
+     *
+     * Requirements:
+     * - `admin` cannot be the zero address
+     * - `__decimals` realistically should be 6
+     *
+     * @param _name The name of the token
+     * @param _symbol The symbol of the token
+     * @param __decimals The number of decimals of the token
+     * @param admin The address of the admin
+     */
+    function initialize(
+        string calldata _name,
+        string calldata _symbol,
+        uint8 __decimals,
+        address admin
+    ) public initializer {
+        _initialize(_name, _symbol, __decimals, admin);
+    }
+
+    /**
+     * @dev Reinitializes the contract with new parameters.
+     *
+     * Requirements:
+     * - `admin` cannot be the zero address
+     * - `__decimals` realistically should be 6
+     */
+    function reinitialize(
+        string calldata _name,
+        string calldata _symbol,
+        uint8 __decimals,
+        address admin
+    ) public reinitializer(2) onlyOwnerOrAdmin {
+        _initialize(_name, _symbol, __decimals, admin);
+    }
+
+    function _initialize(
+        string calldata _name,
+        string calldata _symbol,
+        uint8 __decimals,
+        address admin
+    ) internal {
+        require(admin != address(0), AdminCannotBeZeroAddress());
+
+        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
+
+        $._maxSupply = 0;
+        $._decimals = __decimals;
+
+        // "Always-allow" policy by default.
+        $._transferPolicyId = 1;
+
+        __ERC20_init(_name, _symbol);
+        __Pausable_init();
+        __Ownable_init(admin);
+        __AccessControl_init();
+        __ERC20Permit_init(_name);
+        __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+    }
+
+    modifier whenNotInBlockedList(address account) {
+        require(
+            StablecoinTemplateV3StorageLib.getTemporaryUnblockStatus() ||
+            AUTH_REGISTRY.isAuthorized(
+                StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId, account
+            ),
+            AddressBlocked()
+        );
+        _;
+    }
+
+    /**
+     * @dev Triggers stopped state.
+     *
+     * Emits a {Paused} event with `account` set to the sender.
+     *
+     * Requirements:
+     *
+     * - The contract must not be paused.
+     */
+    function pause() public onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /**
+     * @dev Returns to normal state.
+     *
+     * Emits an {Unpaused} event with `account` set to the sender.
+     *
+     * Requirements:
+     *
+     * - The contract must be paused.
+     */
+    function unpause() public onlyRole(UNPAUSER_ROLE) {
+        _unpause();
+    }
+
+    /**
+     * @dev Adds the `account` to a list of addresses that can receive from a mint.
+     *
+     * May emit an {AddedMintRecipient} event with `account` set to account, and `sender` set to the
+     * sender.
+     */
+    function addMintRecipient(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
+        if (!$._mintRecipientList[account]) {
+            $._mintRecipientList[account] = true;
+            emit AddedMintRecipient(account, _msgSender());
+        }
+    }
+
+    /**
+     * @dev Removes the `account` from a list of addresses that can receive from a mint.
+     *
+     * May emit a {RemovedMintRecipient} event with `account` set to account, and `sender` set to
+     * the sender.
+     */
+    function removeMintRecipient(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
+        if ($._mintRecipientList[account]) {
+            delete $._mintRecipientList[account];
+            emit RemovedMintRecipient(account, _msgSender());
+        }
+    }
+
+    /**
+     * @dev Returns `true` if `account` is blocked
+     */
+    function isBlocked(address account) public view returns (bool) {
+        return !AUTH_REGISTRY.isAuthorized(
+            StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId, account
+        );
+    }
+
+    /**
+     * @dev Returns `true` if `account` is a valid mint recipient
+     */
+    function isMintRecipient(address account) public view returns (bool) {
+        return StablecoinTemplateV3StorageLib.getStorage()._mintRecipientList[account];
+    }
+
+    /**
+     * @dev Retrieves `maxSupply`.
+     */
+    function getMaxSupply() public view returns (uint256) {
+        return StablecoinTemplateV3StorageLib.getStorage()._maxSupply;
+    }
+
+    /**
+     * @dev Retrieves `decimals`.
+     */
+    function decimals() public view virtual override returns (uint8) {
+        return StablecoinTemplateV3StorageLib.getStorage()._decimals;
+    }
+
+    /**
+     * @dev Retrieves `transferPolicyId`.
+     */
+    function getTransferPolicyId() public view returns (uint64) {
+        return StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId;
+    }
+
+    /**
+     * @dev Sets `transferPolicyId`.
+     *
+     * Requirements:
+     *
+     * - The caller must have the DEFAULT_ADMIN_ROLE.
+     */
+    function setTransferPolicyId(uint64 policyId) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId = policyId;
+        emit TransferPolicyIdSet(_msgSender(), policyId);
+    }
+
+    /**
+     * @dev Revokes `role` from `account`.
+     *
+     * Requirements:
+     *
+     * - Should not result in an empty DEFAULT_ADMIN_ROLE
+     */
+    function _revokeRole(bytes32 role, address account) internal virtual override returns (bool) {
+        require(
+            role != DEFAULT_ADMIN_ROLE || getRoleMemberCount(DEFAULT_ADMIN_ROLE) > 1,
+            CannotRevokeLastAdminRole()
+        );
+
+        bool revoked = super._revokeRole(role, account);
+
+        return revoked;
+    }
+
+    /**
+     * @dev Grants `role` to `account`.
+     *
+     * Requirements:
+     *
+     * - `account` should not be the zero address.
+     */
+    function _grantRole(bytes32 role, address account) internal virtual override returns (bool) {
+        require(account != address(0), AdminCannotBeZeroAddress());
+
+        bool granted = super._grantRole(role, account);
+
+        return granted;
+    }
+
+    /**
+     * @dev Updates the token balances of `from` and `to` after a transfer.
+     *
+     * Replaces _beforeTokenTransfer and _afterTokenTransfer, so add the relevant modifiers here.
+     *
+     * - `from` and `to` must not be blocked.
+     * - The contract must not be paused.
+     */
+    function _update(address from, address to, uint256 amount)
+        internal
+        override
+        whenNotPaused
+        whenNotInBlockedList(from)
+        whenNotInBlockedList(to)
+    {
+        super._update(from, to, amount);
+    }
+
+    /**
+     * @dev Authorizes the upgrade of the contract.
+     *
+     * Requirements:
+     *
+     * - The caller must have the DEFAULT_ADMIN_ROLE.
+     */
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        override
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    { }
+
+}
