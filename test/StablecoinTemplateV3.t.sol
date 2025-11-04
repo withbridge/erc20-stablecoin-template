@@ -5,6 +5,7 @@ import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.s
 import { DeterministicProxyFactoryFixture } from
     "deterministic-proxy-factory/fixtures/DeterministicProxyFactoryFixture.sol";
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -425,6 +426,32 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.stopPrank();
     }
 
+    function test_addMintRecipient_twice_no_duplicate_event() public {
+        // Add recipient first time - should emit event
+        vm.prank(admin);
+        token.addMintRecipient(user1);
+
+        // Add same recipient again - should not emit event (branch coverage)
+        vm.prank(admin);
+        vm.recordLogs();
+        token.addMintRecipient(user1);
+
+        // Verify no event was emitted
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 0, "No event should be emitted when adding duplicate recipient");
+    }
+
+    function test_removeMintRecipient_not_in_list_no_event() public {
+        // Remove recipient that was never added - should not emit event (branch coverage)
+        vm.prank(admin);
+        vm.recordLogs();
+        token.removeMintRecipient(user1);
+
+        // Verify no event was emitted
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 0, "No event should be emitted when removing non-existent recipient");
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                       isBlocked, getMaxSupply, decimals Tests
     //////////////////////////////////////////////////////////////////////////*/
@@ -541,10 +568,14 @@ contract StablecoinTemplateV3SampleUpgradeTest is Test {
         assertEq(upgradeImpl.name(), "StablecoinTemplateV3 Sample Upgrade");
     }
 
-    function test_eip712Name_override() public {
-        // _EIP712Name is internal, so we cannot call it directly, but we can check permit domain
-        // This is a placeholder for EIP712 domain test if needed
-        assertTrue(true);
+    function test_eip712Name_override() public view {
+        // _EIP712Name is internal, but it's used by eip712Domain()
+        // We can verify the domain separator is computed correctly with the overridden name
+        (, string memory name,,,,,) = upgradeImpl.eip712Domain();
+
+        assertEq(
+            name, "StablecoinTemplateV3 Sample Upgrade", "EIP712 domain name should match override"
+        );
     }
 
 }
