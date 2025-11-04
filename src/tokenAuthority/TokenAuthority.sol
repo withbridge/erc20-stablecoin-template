@@ -31,6 +31,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Constructs the TokenAuthority contract
+     * @param _reserveLedgerToken The address of the reserve ledger token
+     * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
+     */
     constructor(address _reserveLedgerToken, bool _disableInitializer) {
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
 
@@ -43,6 +48,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                     Initializer
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Initializes the TokenAuthority contract
+     * @param _admin The address to be granted the admin role
+     */
     function initialize(address _admin) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -54,6 +63,13 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                         Mint
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Mints stablecoins to a recipient address
+     * @dev Checks and decrements global limit, transaction limit, and minter allowance before minting
+     * @param stablecoinContract The address of the stablecoin contract to mint from
+     * @param to The address to receive the minted tokens
+     * @param amount The amount of tokens to mint
+     */
     function mint(address stablecoinContract, address to, uint256 amount) public {
         MintRateLimit storage mintRateLimit = mintRateLimits[stablecoinContract];
         uint256 minterAllowance = minterAllowances[stablecoinContract][_msgSender()];
@@ -80,6 +96,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 Mint Rate Setters
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Sets both the global and per-transaction mint limits for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param mintGlobalLimit The global mint limit to set
+     * @param mintTxnLimit The per-transaction mint limit to set
+     */
     function setMintRateLimits(
         address stablecoinContract,
         uint256 mintGlobalLimit,
@@ -90,6 +112,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         emit MintRateLimitsSet(_msgSender(), stablecoinContract, mintGlobalLimit, mintTxnLimit);
     }
 
+    /**
+     * @notice Sets the global mint limit for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param mintGlobalLimit The global mint limit to set
+     */
     function setGlobalMintLimit(address stablecoinContract, uint256 mintGlobalLimit)
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -99,6 +126,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         emit GlobalMintLimitSet(_msgSender(), stablecoinContract, mintGlobalLimit);
     }
 
+    /**
+     * @notice Sets the per-transaction mint limit for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param mintTxnLimit The per-transaction mint limit to set
+     */
     function setTxnMintLimit(address stablecoinContract, uint256 mintTxnLimit)
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -108,6 +140,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         emit TxnMintLimitSet(_msgSender(), stablecoinContract, mintTxnLimit);
     }
 
+    /**
+     * @notice Sets the mint allowance for a specific minter on a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param minter The address of the minter
+     * @param minterAllowance The allowance amount to set for the minter
+     */
     function setMinterAllowance(address stablecoinContract, address minter, uint256 minterAllowance)
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -121,6 +159,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 Getters
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Gets the mint allowance for a specific minter on a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param minter The address of the minter
+     * @return minterAllowance The remaining allowance for the minter
+     */
     function getMinterAllowance(address stablecoinContract, address minter)
         public
         view
@@ -129,6 +173,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         return minterAllowances[stablecoinContract][minter];
     }
 
+    /**
+     * @notice Gets the mint rate limits for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return mintGlobalLimit The global mint limit remaining
+     * @return mintTxnLimit The per-transaction mint limit
+     */
     function getStablecoinMintRateLimits(address stablecoinContract)
         public
         view
@@ -144,6 +194,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 Upgrade Logic
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Authorizes an upgrade to a new implementation
+     * @dev Only callable by admin role, required by UUPS pattern
+     * @param newImplementation The address of the new implementation contract
+     */
     function _authorizeUpgrade(address newImplementation)
         internal
         override
