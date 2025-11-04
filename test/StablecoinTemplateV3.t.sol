@@ -68,7 +68,8 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         assertEq(reserveLedger.getTransferPolicyId(), transferPolicyId);
 
-        address implementation = address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
+        address implementation =
+            address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
         token = StablecoinTemplateV3(
             DeterministicProxyFactoryFixture.deterministicProxyOZ({
                 initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 0),
@@ -113,7 +114,8 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_initialize_reverts_zero_admin() public {
         // Create a new implementation contract
-        StablecoinTemplateV3 implementation = new StablecoinTemplateV3(address(reserveLedger), address(authRegistry));
+        StablecoinTemplateV3 implementation =
+            new StablecoinTemplateV3(address(reserveLedger), address(authRegistry));
 
         // Create a proxy with the implementation but without initialization
         StablecoinTemplateV3 proxy = StablecoinTemplateV3(
@@ -133,7 +135,8 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_reinitialize_revert_not_owner() public {
         // Create a new proxy to test reinitialize
-        address implementation = address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
+        address implementation =
+            address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
         StablecoinTemplateV3 proxy = StablecoinTemplateV3(
             DeterministicProxyFactoryFixture.deterministicProxyOZ({
                 initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 1),
@@ -357,11 +360,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_blockAddress_revert_not_blocker() public {
         vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAuthRegistry.Unauthorized.selector
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAuthRegistry.Unauthorized.selector));
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
         vm.stopPrank();
     }
@@ -377,11 +376,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_unblockAddress_revert_not_unblocker() public {
         vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAuthRegistry.Unauthorized.selector
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAuthRegistry.Unauthorized.selector));
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, false);
         vm.stopPrank();
     }
@@ -521,7 +516,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 contract StablecoinTemplateV3SampleUpgradeTest is Test {
 
     StablecoinTemplateV3SampleUpgrade upgradeImpl;
-    AuthRegistry authRegistry; 
+    AuthRegistry authRegistry;
 
     function setUp() public {
         authRegistry = new AuthRegistry();

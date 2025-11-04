@@ -43,4 +43,5 @@ library StablecoinTemplateV3StorageLib {
             tstore(slot, value)
         }
     }
+
 }

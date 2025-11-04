@@ -118,10 +118,10 @@ abstract contract StablecoinTemplateV3Base is
 
     modifier whenNotInBlockedList(address account) {
         require(
-            StablecoinTemplateV3StorageLib.getTemporaryUnblockStatus() ||
-            AUTH_REGISTRY.isAuthorized(
-                StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId, account
-            ),
+            StablecoinTemplateV3StorageLib.getTemporaryUnblockStatus()
+                || AUTH_REGISTRY.isAuthorized(
+                    StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId, account
+                ),
             AddressBlocked()
         );
         _;

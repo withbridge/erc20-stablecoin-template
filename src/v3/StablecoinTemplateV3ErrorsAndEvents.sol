@@ -12,7 +12,7 @@ interface StablecoinTemplateV3ErrorsAndEvents {
     event AddedMintRecipient(address indexed account, address indexed sender);
     event RemovedMintRecipient(address indexed account, address indexed sender);
     event Unwrapped(uint256 amount, address indexed sender);
-    event TransferPolicyIdSet(address indexed sender,uint64 policyId);
+    event TransferPolicyIdSet(address indexed sender, uint64 policyId);
 
     error AddressBlocked();
     error AdminCannotBeZeroAddress();

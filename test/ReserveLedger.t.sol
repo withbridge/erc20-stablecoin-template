@@ -41,7 +41,6 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         user2 = makeAddr("user2");
         user3 = makeAddr("user3");
 
-
         authRegistry = new AuthRegistry();
         transferPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.BLACKLIST);
 
@@ -361,11 +360,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_blockAddress_revert_not_blocker() public {
         vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAuthRegistry.Unauthorized.selector
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAuthRegistry.Unauthorized.selector));
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
         vm.stopPrank();
     }
@@ -381,11 +376,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_unblockAddress_revert_not_unblocker() public {
         vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAuthRegistry.Unauthorized.selector
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAuthRegistry.Unauthorized.selector));
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, false);
         vm.stopPrank();
     }
