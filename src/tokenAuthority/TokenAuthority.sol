@@ -135,7 +135,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /**
      * @notice Unwraps a given amount of a wrapped stablecoin for the caller
      * @dev Reverts if the stablecoin contract provided is the reserve ledger token,
-     *      since unwrapping is only applicable to wrapped stablecoins. 
+     *      since unwrapping is only applicable to wrapped stablecoins.
      *      Calls unwrap on the wrapped stablecoin, which should send the underlying reserve
      *      tokens to this contract, then transfers those reserve tokens to the caller.
      * @param stablecoinContract The address of the wrapped stablecoin contract
@@ -146,7 +146,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
         require(stablecoinContract != RESERVE_LEDGER_TOKEN, CannotUnwrapReserveLedgerToken());
 
-        // Unwrap the wrapped stablecoin, which will send underlying RESERVE_LEDGER_TOKEN to this contract
+        // Unwrap the wrapped stablecoin, which will send underlying RESERVE_LEDGER_TOKEN to this
+        // contract
         IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
 
         // Transfer the received RESERVE_LEDGER_TOKEN to the sender

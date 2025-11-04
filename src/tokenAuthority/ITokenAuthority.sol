@@ -138,7 +138,7 @@ interface ITokenAuthority {
     /**
      * @notice Unwraps a given amount of a wrapped stablecoin for the caller
      * @dev Reverts if the stablecoin contract provided is the reserve ledger token,
-     *      since unwrapping is only applicable to wrapped stablecoins. 
+     *      since unwrapping is only applicable to wrapped stablecoins.
      *      Calls unwrap on the wrapped stablecoin, which should send the underlying reserve
      *      tokens to this contract, then transfers those reserve tokens to the caller.
      * @param stablecoinContract The address of the wrapped stablecoin contract

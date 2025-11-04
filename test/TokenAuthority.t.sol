@@ -601,7 +601,9 @@ contract TokenAuthorityTest is Test {
         vm.prank(minter);
         tokenAuthority.unwrap(address(mockToken), unwrapAmount2);
 
-        assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount - unwrapAmount1 - unwrapAmount2);
+        assertEq(
+            mockToken.balanceOf(address(tokenAuthority)), mintAmount - unwrapAmount1 - unwrapAmount2
+        );
         assertEq(reserveLedgerToken.balanceOf(minter), unwrapAmount1 + unwrapAmount2);
     }
 
