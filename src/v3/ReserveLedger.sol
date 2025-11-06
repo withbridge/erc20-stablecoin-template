@@ -29,11 +29,11 @@ contract ReserveLedger is StablecoinTemplateV3Base {
     function mint(address to, uint256 amount) public virtual onlyRole(MINTER_ROLE) {
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
         require(totalSupply() + amount <= $._maxSupply, MaxSupplyExceeded());
-        require($._mintRecipientList[to], AccountNotValidRecipient());
+        require(isMintRecipient(to), AccountNotValidRecipient());
 
         _mint(to, amount);
 
-        emit Minted(amount, to, _msgSender());
+        emit Minted(amount, to, msg.sender);
     }
 
     /**
@@ -48,9 +48,9 @@ contract ReserveLedger is StablecoinTemplateV3Base {
      * - `sender` must have at least `amount` tokens.
      */
     function burn(uint256 amount) public virtual onlyRole(MINTER_ROLE) {
-        _burn(_msgSender(), amount);
+        _burn(msg.sender, amount);
 
-        emit Burned(amount, _msgSender());
+        emit Burned(amount, msg.sender);
     }
 
     /**
@@ -81,7 +81,7 @@ contract ReserveLedger is StablecoinTemplateV3Base {
         _burn(account, accountBalance);
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
 
-        emit BurnedFromBlockedAddress(accountBalance, account, _msgSender());
+        emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
     }
 
     /**
@@ -98,7 +98,7 @@ contract ReserveLedger is StablecoinTemplateV3Base {
 
         StablecoinTemplateV3StorageLib.getStorage()._maxSupply = amount;
 
-        emit MaxSupplySet(amount, _msgSender());
+        emit MaxSupplySet(amount, msg.sender);
     }
 
 }

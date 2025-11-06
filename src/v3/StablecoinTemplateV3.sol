@@ -39,13 +39,13 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      */
     function wrap(address to, uint256 amount) public {
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
-        require($._mintRecipientList[to], AccountNotValidRecipient());
+        require(isMintRecipient(to), AccountNotValidRecipient());
 
-        RESERVE_LEDGER_ADDRESS.safeTransferFrom(_msgSender(), address(this), amount);
+        RESERVE_LEDGER_ADDRESS.safeTransferFrom(msg.sender, address(this), amount);
 
         _mint(to, amount);
 
-        emit Minted(amount, to, _msgSender());
+        emit Minted(amount, to, msg.sender);
     }
 
     /**
@@ -61,10 +61,10 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * - This function requires that the caller has the UNWRAPPER_ROLE.
      */
     function unwrap(uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
-        _burn(_msgSender(), amount);
-        RESERVE_LEDGER_ADDRESS.safeTransfer(_msgSender(), amount);
+        _burn(msg.sender, amount);
+        RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, amount);
 
-        emit Unwrapped(amount, _msgSender());
+        emit Unwrapped(amount, msg.sender);
     }
 
     /**
@@ -95,7 +95,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, accountBalance);
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
 
-        emit BurnedFromBlockedAddress(accountBalance, account, _msgSender());
+        emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
     }
 
 }

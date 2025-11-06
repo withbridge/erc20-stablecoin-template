@@ -49,7 +49,7 @@ abstract contract StablecoinTemplateV3Base is
 
     modifier onlyOwnerOrAdmin() {
         require(
-            hasRole(DEFAULT_ADMIN_ROLE, _msgSender()) || owner() == _msgSender(), OnlyOwnerOrAdmin()
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || owner() == msg.sender, OnlyOwnerOrAdmin()
         );
         _;
     }
@@ -75,9 +75,11 @@ abstract contract StablecoinTemplateV3Base is
         string calldata _name,
         string calldata _symbol,
         uint8 __decimals,
-        address admin
+        address admin,
+        uint64 _transferPolicyId,
+        uint64 _mintRecipientPolicyId
     ) public initializer {
-        _initialize(_name, _symbol, __decimals, admin);
+        _initialize(_name, _symbol, __decimals, admin, _transferPolicyId, _mintRecipientPolicyId);
     }
 
     /**
@@ -91,16 +93,20 @@ abstract contract StablecoinTemplateV3Base is
         string calldata _name,
         string calldata _symbol,
         uint8 __decimals,
-        address admin
+        address admin,
+        uint64 _transferPolicyId,
+        uint64 _mintRecipientPolicyId
     ) public reinitializer(2) onlyOwnerOrAdmin {
-        _initialize(_name, _symbol, __decimals, admin);
+        _initialize(_name, _symbol, __decimals, admin, _transferPolicyId, _mintRecipientPolicyId);
     }
 
     function _initialize(
         string calldata _name,
         string calldata _symbol,
         uint8 __decimals,
-        address admin
+        address admin,
+        uint64 _transferPolicyId,
+        uint64 _mintRecipientPolicyId
     ) internal {
         require(admin != address(0), AdminCannotBeZeroAddress());
 
@@ -109,8 +115,8 @@ abstract contract StablecoinTemplateV3Base is
         $._maxSupply = 0;
         $._decimals = __decimals;
 
-        // "Always-allow" policy by default.
-        $._transferPolicyId = 1;
+        $._transferPolicyId = _transferPolicyId;
+        $._mintRecipientPolicyId = _mintRecipientPolicyId;
 
         __ERC20_init(_name, _symbol);
         __Pausable_init();
@@ -160,34 +166,6 @@ abstract contract StablecoinTemplateV3Base is
     }
 
     /**
-     * @dev Adds the `account` to a list of addresses that can receive from a mint.
-     *
-     * May emit an {AddedMintRecipient} event with `account` set to account, and `sender` set to the
-     * sender.
-     */
-    function addMintRecipient(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
-        if (!$._mintRecipientList[account]) {
-            $._mintRecipientList[account] = true;
-            emit AddedMintRecipient(account, _msgSender());
-        }
-    }
-
-    /**
-     * @dev Removes the `account` from a list of addresses that can receive from a mint.
-     *
-     * May emit a {RemovedMintRecipient} event with `account` set to account, and `sender` set to
-     * the sender.
-     */
-    function removeMintRecipient(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
-        if ($._mintRecipientList[account]) {
-            delete $._mintRecipientList[account];
-            emit RemovedMintRecipient(account, _msgSender());
-        }
-    }
-
-    /**
      * @dev Returns `true` if `account` is blocked
      */
     function isBlocked(address account) public view returns (bool) {
@@ -200,7 +178,9 @@ abstract contract StablecoinTemplateV3Base is
      * @dev Returns `true` if `account` is a valid mint recipient
      */
     function isMintRecipient(address account) public view returns (bool) {
-        return StablecoinTemplateV3StorageLib.getStorage()._mintRecipientList[account];
+        return AUTH_REGISTRY.isAuthorized(
+            StablecoinTemplateV3StorageLib.getStorage()._mintRecipientPolicyId, account
+        );
     }
 
     /**
@@ -225,6 +205,13 @@ abstract contract StablecoinTemplateV3Base is
     }
 
     /**
+     * @dev Retrieves `mintRecipientPolicyId`.
+     */
+    function getMintRecipientPolicyId() public view returns (uint64) {
+        return StablecoinTemplateV3StorageLib.getStorage()._mintRecipientPolicyId;
+    }
+
+    /**
      * @dev Sets `transferPolicyId`.
      *
      * Requirements:
@@ -233,7 +220,19 @@ abstract contract StablecoinTemplateV3Base is
      */
     function setTransferPolicyId(uint64 policyId) public onlyRole(DEFAULT_ADMIN_ROLE) {
         StablecoinTemplateV3StorageLib.getStorage()._transferPolicyId = policyId;
-        emit TransferPolicyIdSet(_msgSender(), policyId);
+        emit TransferPolicyIdSet(msg.sender, policyId);
+    }
+
+    /**
+     * @dev Sets `mintRecipientPolicyId`.
+     *
+     * Requirements:
+     *
+     * - The caller must have the DEFAULT_ADMIN_ROLE.
+     */
+    function setMintRecipientPolicyId(uint64 policyId) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        StablecoinTemplateV3StorageLib.getStorage()._mintRecipientPolicyId = policyId;
+        emit MintRecipientPolicyIdSet(msg.sender, policyId);
     }
 
     /**

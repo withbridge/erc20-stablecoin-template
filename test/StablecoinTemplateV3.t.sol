@@ -39,6 +39,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     address user3;
     AuthRegistry authRegistry;
     uint64 transferPolicyId;
+    uint64 mintRecipientPolicyId;
 
     function setUp() public {
         admin = address(this);
@@ -52,6 +53,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         authRegistry = new AuthRegistry();
         transferPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.BLACKLIST);
+        mintRecipientPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.WHITELIST);
 
         address reserveLedgerImplementation = address(new ReserveLedger(address(authRegistry)));
         reserveLedger = ReserveLedger(
@@ -60,7 +62,15 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                 initialOwner: address(this),
                 implementation: reserveLedgerImplementation,
                 callData: abi.encodeCall(
-                    StablecoinTemplateV3Base.reinitialize, ("Test Reserve", "TR", 6, address(this))
+                    StablecoinTemplateV3Base.reinitialize,
+                    (
+                        "Test Reserve",
+                        "TR",
+                        6,
+                        address(this),
+                        transferPolicyId,
+                        mintRecipientPolicyId
+                    )
                 )
             })
         );
@@ -80,15 +90,31 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                 initialOwner: address(this),
                 implementation: implementation,
                 callData: abi.encodeCall(
-                    StablecoinTemplateV3Base.reinitialize, ("Test Coin", "TC", 6, address(this))
+                    StablecoinTemplateV3Base.reinitialize,
+                    ("Test Coin", "TC", 6, address(this), transferPolicyId, mintRecipientPolicyId)
                 )
             })
         );
 
+        // set up transfer policy
         vm.prank(admin);
         vm.expectEmit(true, true, true, true);
         emit TransferPolicyIdSet(admin, transferPolicyId);
         token.setTransferPolicyId(transferPolicyId);
+
+        // set up mint recipient policy
+        vm.startPrank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit MintRecipientPolicyIdSet(admin, mintRecipientPolicyId);
+        reserveLedger.setMintRecipientPolicyId(mintRecipientPolicyId);
+
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, user1, true);
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, minter, true);
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, address(this), true);
+        vm.stopPrank();
+
+        assertEq(token.getTransferPolicyId(), transferPolicyId);
+        assertEq(token.getMintRecipientPolicyId(), mintRecipientPolicyId);
 
         // set up access roles
         token.grantRole(token.MINTER_ROLE(), minter);
@@ -99,7 +125,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         // set up reserve ledger
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(minter);
         reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), admin);
         reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), address(token));
         reserveLedger.mint(address(minter), 100);
@@ -134,7 +159,9 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         // The proxy should revert with AdminCannotBeZeroAddress when trying to initialize with zero
         // address
         vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
-        proxy.reinitialize("Test Coin", "TC", 6, address(0));
+        proxy.reinitialize(
+            "Test Coin", "TC", 6, address(0), transferPolicyId, mintRecipientPolicyId
+        );
     }
 
     function test_reinitialize_revert_not_owner() public {
@@ -153,7 +180,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         // Try to reinitialize as a non-owner
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(OnlyOwnerOrAdmin.selector));
-        proxy.reinitialize("New Coin", "NC", 8, user1);
+        proxy.reinitialize("New Coin", "NC", 8, user1, transferPolicyId, mintRecipientPolicyId);
         vm.stopPrank();
     }
 
@@ -162,9 +189,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_wrap_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-
         vm.prank(minter);
         vm.expectEmit(true, true, true, true);
         emit Minted(100, user1, minter);
@@ -174,9 +198,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     function test_wrap_revert_no_allowance() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-
         vm.startPrank(user1);
 
         vm.expectRevert(
@@ -193,7 +214,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         token.grantRole(token.MINTER_ROLE(), minter);
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
-        token.wrap(user1, 100);
+        token.wrap(user2, 100);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -201,9 +222,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_unwrap_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(minter);
-
         vm.startPrank(minter);
         reserveLedger.approve(address(token), 100);
         token.wrap(address(minter), 100);
@@ -246,7 +264,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_transferFromBlockedAddress_success() public {
         vm.startPrank(admin);
-        token.addMintRecipient(user1);
         token.grantRole(token.MINTER_ROLE(), minter);
         token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
 
@@ -344,9 +361,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_blockAddress_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-
         vm.prank(minter);
         token.wrap(user1, 100);
 
@@ -386,76 +400,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                            Mint Recipient List Tests
-    //////////////////////////////////////////////////////////////////////////*/
-
-    function test_addMintRecipient_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-        // no revert
-    }
-
-    function test_addMintRecipient_revert_not_admin() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                token.DEFAULT_ADMIN_ROLE()
-            )
-        );
-        token.addMintRecipient(user1);
-        vm.stopPrank();
-    }
-
-    function test_removeMintRecipient_success() public {
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-        vm.prank(admin);
-        token.removeMintRecipient(user1);
-        // no revert
-    }
-
-    function test_removeMintRecipient_revert_not_admin() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                token.DEFAULT_ADMIN_ROLE()
-            )
-        );
-        token.removeMintRecipient(user1);
-        vm.stopPrank();
-    }
-
-    function test_addMintRecipient_twice_no_duplicate_event() public {
-        // Add recipient first time - should emit event
-        vm.prank(admin);
-        token.addMintRecipient(user1);
-
-        // Add same recipient again - should not emit event (branch coverage)
-        vm.prank(admin);
-        vm.recordLogs();
-        token.addMintRecipient(user1);
-
-        // Verify no event was emitted
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 0, "No event should be emitted when adding duplicate recipient");
-    }
-
-    function test_removeMintRecipient_not_in_list_no_event() public {
-        // Remove recipient that was never added - should not emit event (branch coverage)
-        vm.prank(admin);
-        vm.recordLogs();
-        token.removeMintRecipient(user1);
-
-        // Verify no event was emitted
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 0, "No event should be emitted when removing non-existent recipient");
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
                       isBlocked, getMaxSupply, decimals Tests
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -471,11 +415,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     function test_isMintRecipient_returns_true_false() public {
-        // Not a recipient
-        assertFalse(token.isMintRecipient(user1));
-        // Add as recipient
-        vm.prank(admin);
-        token.addMintRecipient(user1);
         assertTrue(token.isMintRecipient(user1));
     }
 
@@ -547,6 +486,8 @@ contract StablecoinTemplateV3SampleUpgradeTest is Test {
 
     StablecoinTemplateV3SampleUpgrade upgradeImpl;
     AuthRegistry authRegistry;
+    uint64 transferPolicyId;
+    uint64 mintRecipientPolicyId;
 
     function setUp() public {
         authRegistry = new AuthRegistry();
@@ -561,7 +502,8 @@ contract StablecoinTemplateV3SampleUpgradeTest is Test {
                 initialOwner: address(this),
                 implementation: address(implementation),
                 callData: abi.encodeCall(
-                    StablecoinTemplateV3Base.reinitialize, ("Test Coin", "TC", 6, address(this))
+                    StablecoinTemplateV3Base.reinitialize,
+                    ("Test Coin", "TC", 6, address(this), transferPolicyId, mintRecipientPolicyId)
                 )
             })
         );

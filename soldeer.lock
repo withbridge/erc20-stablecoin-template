@@ -16,7 +16,7 @@ integrity = "fa195a69ef4dfec7fec7fbbb77f424258c821832fdd355b0a6e5fe34d2986a16"
 name = "auth-registry"
 version = "1"
 git = "git@github.com:withbridge/auth-registry.git"
-rev = "b2d140f8fc4675cd35c9671d1e090fecb0cc5928"
+rev = "972c64a75ad81da1c901a06b65e942e7825ad387"
 
 [[dependencies]]
 name = "create2-helpers"

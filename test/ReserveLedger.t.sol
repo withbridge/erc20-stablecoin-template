@@ -33,6 +33,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     address user3;
     AuthRegistry authRegistry;
     uint64 transferPolicyId;
+    uint64 mintRecipientPolicyId;
 
     function setUp() public {
         admin = address(this);
@@ -46,6 +47,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         authRegistry = new AuthRegistry();
         transferPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.BLACKLIST);
+        mintRecipientPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.WHITELIST);
 
         address reserveLedgerImplementation = address(new ReserveLedger(address(authRegistry)));
         reserveLedger = ReserveLedger(
@@ -54,7 +56,15 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
                 initialOwner: address(this),
                 implementation: reserveLedgerImplementation,
                 callData: abi.encodeCall(
-                    StablecoinTemplateV3Base.reinitialize, ("Test Reserve", "TR", 6, address(this))
+                    StablecoinTemplateV3Base.reinitialize,
+                    (
+                        "Test Reserve",
+                        "TR",
+                        6,
+                        address(this),
+                        transferPolicyId,
+                        mintRecipientPolicyId
+                    )
                 )
             })
         );
@@ -72,7 +82,19 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         emit TransferPolicyIdSet(admin, transferPolicyId);
         reserveLedger.setTransferPolicyId(transferPolicyId);
 
+        // set up mint recipient policy
+        vm.startPrank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit MintRecipientPolicyIdSet(admin, mintRecipientPolicyId);
+        reserveLedger.setMintRecipientPolicyId(mintRecipientPolicyId);
+
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, user1, true);
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, minter, true);
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, address(this), true);
+        vm.stopPrank();
+
         assertEq(reserveLedger.getTransferPolicyId(), transferPolicyId);
+        assertEq(reserveLedger.getMintRecipientPolicyId(), mintRecipientPolicyId);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -81,8 +103,10 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_initialize() public {
         address reserveLedgerImplementation = address(new ReserveLedger(address(authRegistry)));
-        bytes memory callData =
-            abi.encodeCall(StablecoinTemplateV3Base.initialize, ("Test Reserve", "TR", 6, admin));
+        bytes memory callData = abi.encodeCall(
+            StablecoinTemplateV3Base.initialize,
+            ("Test Reserve", "TR", 6, admin, transferPolicyId, mintRecipientPolicyId)
+        );
 
         ERC1967Proxy proxy = new ERC1967Proxy(reserveLedgerImplementation, callData);
 
@@ -94,7 +118,9 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertEq(reserveToken.getMaxSupply(), 0);
         assertEq(reserveToken.owner(), admin);
 
-        reserveToken.reinitialize("New Reserve", "NR", 8, minter);
+        reserveToken.reinitialize(
+            "New Reserve", "NR", 8, minter, transferPolicyId, mintRecipientPolicyId
+        );
         assertTrue(reserveToken.hasRole(reserveToken.DEFAULT_ADMIN_ROLE(), minter));
         assertEq(reserveToken.name(), "New Reserve");
         assertEq(reserveToken.symbol(), "NR");
@@ -124,7 +150,9 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         // The proxy should revert with AdminCannotBeZeroAddress when trying to initialize with zero
         // address
         vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
-        proxy.reinitialize("Test Reserve", "TR", 6, address(0));
+        proxy.reinitialize(
+            "Test Reserve", "TR", 6, address(0), transferPolicyId, mintRecipientPolicyId
+        );
     }
 
     function test_reinitialize_revert_not_owner() public {
@@ -142,7 +170,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         // Try to reinitialize as a non-owner
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(OnlyOwnerOrAdmin.selector));
-        proxy.reinitialize("New Reserve", "NR", 6, user1);
+        proxy.reinitialize("New Reserve", "NR", 6, user1, transferPolicyId, mintRecipientPolicyId);
         vm.stopPrank();
     }
 
@@ -151,10 +179,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_mint_success() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(user1);
-        vm.stopPrank();
 
         vm.startPrank(minter);
         vm.expectEmit(true, true, true, true);
@@ -166,10 +192,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     function test_mint_revert_not_minter() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(user1);
-        vm.stopPrank();
 
         vm.startPrank(user1);
         vm.expectRevert(
@@ -190,14 +214,12 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
-        reserveLedger.mint(user1, 100);
+        reserveLedger.mint(user2, 100);
     }
 
     function test_mint_revert_max_supply() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(50);
-        reserveLedger.addMintRecipient(user1);
-        vm.stopPrank();
 
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(MaxSupplyExceeded.selector));
@@ -209,10 +231,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_burn_success() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(minter);
-        vm.stopPrank();
 
         vm.startPrank(minter);
         reserveLedger.mint(minter, 100);
@@ -250,10 +270,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_burnFromBlockedAddress_success() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(user1);
-        vm.stopPrank();
 
         vm.startPrank(minter);
         reserveLedger.mint(user1, 100);
@@ -341,10 +359,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_blockAddress_success() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(user1);
-        vm.stopPrank();
 
         vm.prank(minter);
         reserveLedger.mint(user1, 100);
@@ -395,11 +411,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     function test_setMaxSupply_revert_below_totalSupply() public {
-        vm.startPrank(admin);
+        vm.prank(admin);
         reserveLedger.setMaxSupply(100);
-        reserveLedger.addMintRecipient(minter);
-        reserveLedger.addMintRecipient(address(this));
-        vm.stopPrank();
 
         vm.prank(minter);
         reserveLedger.mint(address(this), 100);
@@ -426,49 +439,6 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                            Mint Recipient List Tests
-    //////////////////////////////////////////////////////////////////////////*/
-
-    function test_addMintRecipient_success() public {
-        vm.prank(admin);
-        reserveLedger.addMintRecipient(user1);
-    }
-
-    function test_addMintRecipient_revert_not_admin() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                reserveLedger.DEFAULT_ADMIN_ROLE()
-            )
-        );
-        reserveLedger.addMintRecipient(user1);
-        vm.stopPrank();
-    }
-
-    function test_removeMintRecipient_success() public {
-        vm.prank(admin);
-        reserveLedger.addMintRecipient(user1);
-        vm.prank(admin);
-        reserveLedger.removeMintRecipient(user1);
-        // no revert
-    }
-
-    function test_removeMintRecipient_revert_not_admin() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                reserveLedger.DEFAULT_ADMIN_ROLE()
-            )
-        );
-        reserveLedger.removeMintRecipient(user1);
-        vm.stopPrank();
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
                       isBlocked, getMaxSupply, decimals Tests
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -490,12 +460,8 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     function test_isMintRecipient_returns_true_false() public {
-        // Not a recipient
-        assertFalse(reserveLedger.isMintRecipient(user1));
-        // Add as recipient
-        vm.prank(admin);
-        reserveLedger.addMintRecipient(user1);
         assertTrue(reserveLedger.isMintRecipient(user1));
+        assertFalse(reserveLedger.isMintRecipient(user2));
     }
 
     function test_revokeRole_non_admin_role() public {

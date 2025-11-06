@@ -3,10 +3,11 @@ pragma solidity ^0.8.20;
 
 struct StablecoinTemplateV3Storage {
     mapping(address => bool) __DEPRECATED_blockedList;
-    mapping(address => bool) _mintRecipientList;
+    mapping(address => bool) __DEPRECATED_mintRecipientList;
     uint256 _maxSupply;
     uint8 _decimals;
     uint64 _transferPolicyId;
+    uint64 _mintRecipientPolicyId;
 }
 
 library StablecoinTemplateV3StorageLib {
