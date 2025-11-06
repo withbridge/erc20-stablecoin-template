@@ -3,10 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IERC20BurnMint } from "../utils/IERC20BurnMint.sol";
 import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
-import {
-    StablecoinTemplateV3Storage,
-    StablecoinTemplateV3StorageLib
-} from "./StablecoinTemplateV3Storage.sol";
+import { StablecoinTemplateV3StorageLib } from "./StablecoinTemplateV3Storage.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
@@ -38,7 +35,6 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * token to the contract.
      */
     function wrap(address to, uint256 amount) public {
-        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
         require(isMintRecipient(to), AccountNotValidRecipient());
 
         RESERVE_LEDGER_ADDRESS.safeTransferFrom(msg.sender, address(this), amount);
@@ -81,7 +77,6 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * - This function requires that the caller has the BLOCKED_ADDRESS_BURNER_ROLE.
      */
     function burnFromBlockedAddress(address account) public onlyRole(BLOCKED_ADDRESS_BURNER_ROLE) {
-        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
         require(isBlocked(account), AddressIsNotBlocked());
 
         uint256 accountBalance = balanceOf(account);

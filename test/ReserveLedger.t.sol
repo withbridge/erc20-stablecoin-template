@@ -459,7 +459,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertEq(reserveLedger.decimals(), 6);
     }
 
-    function test_isMintRecipient_returns_true_false() public {
+    function test_isMintRecipient_returns_true_false() public view {
         assertTrue(reserveLedger.isMintRecipient(user1));
         assertFalse(reserveLedger.isMintRecipient(user2));
     }

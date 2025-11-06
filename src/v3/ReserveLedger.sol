@@ -68,7 +68,6 @@ contract ReserveLedger is StablecoinTemplateV3Base {
         virtual
         onlyRole(BLOCKED_ADDRESS_BURNER_ROLE)
     {
-        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
         require(isBlocked(account), AddressIsNotBlocked());
 
         uint256 accountBalance = balanceOf(account);

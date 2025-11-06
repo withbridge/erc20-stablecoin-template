@@ -193,7 +193,9 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         uint256 mintGlobalLimit,
         uint256 mintTxnLimit
     ) public onlyRole(MINT_RATE_LIMIT_SETTER_ROLE) {
-        mintRateLimits[stablecoinContract] = MintRateLimit(mintGlobalLimit, mintTxnLimit);
+        mintRateLimits[stablecoinContract] = MintRateLimit({
+            mintGlobalLimit: mintGlobalLimit, mintTxnLimit: mintTxnLimit
+        });
 
         emit MintRateLimitsSet(msg.sender, stablecoinContract, mintGlobalLimit, mintTxnLimit);
     }

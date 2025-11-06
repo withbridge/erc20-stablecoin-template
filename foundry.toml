@@ -37,6 +37,15 @@ number_underscore = "thousands"
 wrap_comments = true
 multline_func_header = "all"
 
+[lint]
+exclude_lints = [
+    "erc20-unchecked-transfer",
+    "mixed-case-function",
+    "mixed-case-variable",
+    "unwrapped-modifier-logic",
+]
+
+
 [dependencies]
 forge-std = "1.9.7"
 create2-helpers = "0.5.0"

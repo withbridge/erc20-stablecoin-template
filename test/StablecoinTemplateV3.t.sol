@@ -6,7 +6,6 @@ import {
     DeterministicProxyFactoryFixture
 } from "deterministic-proxy-factory/fixtures/DeterministicProxyFactoryFixture.sol";
 import { Test } from "forge-std/Test.sol";
-import { Vm } from "forge-std/Vm.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -137,7 +136,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                                 Deployment Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_initialize_sets_admin() public {
+    function test_initialize_sets_admin() public view {
         assertTrue(token.hasRole(token.DEFAULT_ADMIN_ROLE(), admin));
     }
 
@@ -410,11 +409,11 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertFalse(token.isBlocked(user2));
     }
 
-    function test_decimals_returns_value() public {
+    function test_decimals_returns_value() public view {
         assertEq(token.decimals(), 6);
     }
 
-    function test_isMintRecipient_returns_true_false() public {
+    function test_isMintRecipient_returns_true_false() public view {
         assertTrue(token.isMintRecipient(user1));
     }
 
@@ -509,7 +508,7 @@ contract StablecoinTemplateV3SampleUpgradeTest is Test {
         );
     }
 
-    function test_name_override() public {
+    function test_name_override() public view {
         assertEq(upgradeImpl.name(), "StablecoinTemplateV3 Sample Upgrade");
     }
 

@@ -66,10 +66,10 @@ contract MockERC20WrapUnwrap is IERC20WrapUnwrap {
     string public symbol = "MOCKW";
     uint8 public decimals = 18;
 
-    IERC20BurnMint public immutable underlyingToken;
+    IERC20BurnMint public immutable UNDERLYING_TOKEN;
 
     constructor(address _underlyingToken) {
-        underlyingToken = IERC20BurnMint(_underlyingToken);
+        UNDERLYING_TOKEN = IERC20BurnMint(_underlyingToken);
     }
 
     function totalSupply() external view returns (uint256) {
@@ -107,7 +107,7 @@ contract MockERC20WrapUnwrap is IERC20WrapUnwrap {
         // the underlying tokens to themselves. We use transfer instead of transferFrom
         // to avoid needing approval setup in tests.
         // In production code, this would properly check allowances.
-        bool success = underlyingToken.transferFrom(msg.sender, address(this), amount);
+        bool success = UNDERLYING_TOKEN.transferFrom(msg.sender, address(this), amount);
         require(success, "Transfer failed");
         // Mint wrapped tokens to recipient
         _balances[to] += amount;
@@ -119,7 +119,7 @@ contract MockERC20WrapUnwrap is IERC20WrapUnwrap {
         _balances[msg.sender] -= amount;
         _totalSupply -= amount;
         // Transfer underlying tokens to caller
-        underlyingToken.transfer(msg.sender, amount);
+        UNDERLYING_TOKEN.transfer(msg.sender, amount);
     }
 
 }

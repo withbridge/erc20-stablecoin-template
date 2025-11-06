@@ -9,7 +9,6 @@ import { Test } from "forge-std/Test.sol";
 
 import { ITokenAuthority } from "src/tokenAuthority/ITokenAuthority.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
-import { IERC20BurnMint } from "src/utils/IERC20BurnMint.sol";
 
 contract TokenAuthorityTest is Test {
 
@@ -55,10 +54,10 @@ contract TokenAuthorityTest is Test {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_initialize_failsWhenDisabled() public {
-        TokenAuthority tokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
+        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
 
         vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
-        tokenAuthority.initialize(admin);
+        newTokenAuthority.initialize(admin);
     }
 
     function test_initialize_sets_admin() public view {
