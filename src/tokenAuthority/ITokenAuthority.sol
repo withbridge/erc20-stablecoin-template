@@ -111,6 +111,22 @@ interface ITokenAuthority {
     /// @param amount The amount of wrapped tokens unwrapped
     event Unwrap(address indexed sender, address indexed stablecoinContract, uint256 amount);
 
+    /**
+     * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
+     * recipient
+     * @dev Approves the stablecoin contract to spend the specified amount of reserve ledger tokens,
+     * then wraps the tokens to the `to` address
+     * @param stablecoinContract The address of the target stablecoin contract
+     * @param to The address to receive the wrapped tokens
+     * @param amount The amount of reserve tokens to wrap
+     */
+    event Wrap(
+        address indexed sender,
+        address indexed stablecoinContract,
+        address indexed to,
+        uint256 amount
+    );
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/

@@ -608,6 +608,211 @@ contract TokenAuthorityTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                                Wrap Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_wrap_success() public {
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount);
+
+        // User1 approves tokenAuthority to spend their reserve ledger tokens
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+
+        // Wrap tokens for user2
+        vm.prank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.Wrap(user1, address(mockToken), user2, wrapAmount);
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount);
+
+        // Verify user2 received wrapped tokens
+        assertEq(mockToken.balanceOf(user2), wrapAmount);
+        // Verify user1's reserve tokens were transferred
+        assertEq(reserveLedgerToken.balanceOf(user1), 0);
+        // Verify reserve tokens are now held by the mockToken contract
+        assertEq(reserveLedgerToken.balanceOf(address(mockToken)), wrapAmount);
+    }
+
+    function test_wrap_to_self() public {
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount);
+
+        // User1 approves tokenAuthority to spend their reserve ledger tokens
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+
+        // Wrap tokens for self
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user1, wrapAmount);
+
+        // Verify user1 received wrapped tokens
+        assertEq(mockToken.balanceOf(user1), wrapAmount);
+        // Verify reserve tokens are now held by the mockToken contract
+        assertEq(reserveLedgerToken.balanceOf(address(mockToken)), wrapAmount);
+    }
+
+    function test_wrap_multiple_times() public {
+        uint256 wrapAmount1 = 100;
+        uint256 wrapAmount2 = 50;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount1 + wrapAmount2);
+
+        // User1 approves tokenAuthority to spend their reserve ledger tokens
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount1 + wrapAmount2);
+
+        // First wrap
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount1);
+
+        assertEq(mockToken.balanceOf(user2), wrapAmount1);
+        assertEq(reserveLedgerToken.balanceOf(user1), wrapAmount2);
+
+        // Second wrap
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount2);
+
+        assertEq(mockToken.balanceOf(user2), wrapAmount1 + wrapAmount2);
+        assertEq(reserveLedgerToken.balanceOf(user1), 0);
+    }
+
+    function test_wrap_different_users() public {
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to both users
+        reserveLedgerToken.mint(user1, wrapAmount);
+        reserveLedgerToken.mint(user2, wrapAmount);
+
+        // Both users approve tokenAuthority
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+        vm.prank(user2);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+
+        // User1 wraps
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user1, wrapAmount);
+
+        // User2 wraps
+        vm.prank(user2);
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount);
+
+        // Verify both users received their wrapped tokens
+        assertEq(mockToken.balanceOf(user1), wrapAmount);
+        assertEq(mockToken.balanceOf(user2), wrapAmount);
+    }
+
+    function test_wrap_different_stablecoins() public {
+        MockERC20WrapUnwrap mockToken2 = new MockERC20WrapUnwrap(address(reserveLedgerToken));
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount * 2);
+
+        // User1 approves tokenAuthority
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount * 2);
+
+        // Wrap into first token
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user1, wrapAmount);
+
+        // Wrap into second token
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken2), user1, wrapAmount);
+
+        // Verify wrapped tokens in both contracts
+        assertEq(mockToken.balanceOf(user1), wrapAmount);
+        assertEq(mockToken2.balanceOf(user1), wrapAmount);
+    }
+
+    function test_wrap_zero_amount() public {
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, 100);
+
+        // User1 approves tokenAuthority
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), 100);
+
+        // Wrap zero amount - should succeed but have no effect
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user2, 0);
+
+        // Verify no tokens were wrapped
+        assertEq(mockToken.balanceOf(user2), 0);
+        assertEq(reserveLedgerToken.balanceOf(user1), 100);
+    }
+
+    function test_wrap_revert_insufficient_balance() public {
+        uint256 wrapAmount = 100;
+
+        // User1 has no reserve ledger tokens
+        assertEq(reserveLedgerToken.balanceOf(user1), 0);
+
+        // User1 approves tokenAuthority (approval without balance)
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+
+        // Attempt to wrap should fail
+        vm.prank(user1);
+        vm.expectRevert();
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount);
+    }
+
+    function test_wrap_revert_insufficient_approval() public {
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount);
+
+        // User1 approves less than wrap amount
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount - 1);
+
+        // Attempt to wrap should fail
+        vm.prank(user1);
+        vm.expectRevert();
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount);
+    }
+
+    function test_wrap_revert_no_approval() public {
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount);
+
+        // User1 does not approve tokenAuthority
+
+        // Attempt to wrap should fail
+        vm.prank(user1);
+        vm.expectRevert();
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount);
+    }
+
+    function test_wrap_large_amount() public {
+        uint256 wrapAmount = type(uint128).max; // Large but safe amount
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount);
+
+        // User1 approves tokenAuthority
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+
+        // Wrap large amount
+        vm.prank(user1);
+        tokenAuthority.wrap(address(mockToken), user2, wrapAmount);
+
+        // Verify wrapped tokens
+        assertEq(mockToken.balanceOf(user2), wrapAmount);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                                 Getter Tests
     //////////////////////////////////////////////////////////////////////////*/
 

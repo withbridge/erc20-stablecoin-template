@@ -93,7 +93,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
         MintRateLimit storage mintRateLimit = mintRateLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][_msgSender()];
+        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
         require(mintRateLimit.mintGlobalLimit >= amount, MintGlobalLimitExceeded());
         require(mintRateLimit.mintTxnLimit >= amount, MintTxnLimitExceeded());
         require(minterAllowance >= amount, MinterAllowanceExceeded());
@@ -103,7 +103,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         }
 
         if (minterAllowance != type(uint256).max) {
-            minterAllowances[stablecoinContract][_msgSender()] -= amount;
+            minterAllowances[stablecoinContract][msg.sender] -= amount;
         }
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
@@ -113,7 +113,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
             IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
         }
 
-        emit Mint(_msgSender(), stablecoinContract, to, amount);
+        emit Mint(msg.sender, stablecoinContract, to, amount);
     }
 
     /**
@@ -131,7 +131,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
             IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
         }
 
-        emit Burn(_msgSender(), stablecoinContract, amount);
+        emit Burn(msg.sender, stablecoinContract, amount);
     }
 
     /**
@@ -153,9 +153,29 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
 
         // Transfer the received RESERVE_LEDGER_TOKEN to the sender
-        IERC20BurnMint(RESERVE_LEDGER_TOKEN).transfer(_msgSender(), amount);
+        IERC20BurnMint(RESERVE_LEDGER_TOKEN).transfer(msg.sender, amount);
 
-        emit Unwrap(_msgSender(), stablecoinContract, amount);
+        emit Unwrap(msg.sender, stablecoinContract, amount);
+    }
+
+    /**
+     * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
+     * recipient.
+     * @dev Transfers the specified amount of reserve ledger tokens from the caller to this
+     * contract,
+     *      approves the stablecoin contract to spend these tokens, and then wraps the tokens for
+     * the recipient.
+     *      Emits a {Wrap} event upon successful wrapping.
+     * @param stablecoinContract The address of the target stablecoin contract.
+     * @param to The address to receive the wrapped tokens.
+     * @param amount The amount of reserve tokens to wrap.
+     */
+    function wrap(address stablecoinContract, address to, uint256 amount) public {
+        IERC20BurnMint(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
+        IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
+        IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
+
+        emit Wrap(msg.sender, stablecoinContract, to, amount);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -175,7 +195,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     ) public onlyRole(MINT_RATE_LIMIT_SETTER_ROLE) {
         mintRateLimits[stablecoinContract] = MintRateLimit(mintGlobalLimit, mintTxnLimit);
 
-        emit MintRateLimitsSet(_msgSender(), stablecoinContract, mintGlobalLimit, mintTxnLimit);
+        emit MintRateLimitsSet(msg.sender, stablecoinContract, mintGlobalLimit, mintTxnLimit);
     }
 
     /**
@@ -189,7 +209,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     {
         mintRateLimits[stablecoinContract].mintGlobalLimit = mintGlobalLimit;
 
-        emit GlobalMintLimitSet(_msgSender(), stablecoinContract, mintGlobalLimit);
+        emit GlobalMintLimitSet(msg.sender, stablecoinContract, mintGlobalLimit);
     }
 
     /**
@@ -203,7 +223,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     {
         mintRateLimits[stablecoinContract].mintTxnLimit = mintTxnLimit;
 
-        emit TxnMintLimitSet(_msgSender(), stablecoinContract, mintTxnLimit);
+        emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
     }
 
     /**
@@ -218,7 +238,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     {
         minterAllowances[stablecoinContract][minter] = minterAllowance;
 
-        emit MinterAllowanceSet(_msgSender(), stablecoinContract, minter, minterAllowance);
+        emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
