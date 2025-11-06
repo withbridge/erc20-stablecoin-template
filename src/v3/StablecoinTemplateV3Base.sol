@@ -107,7 +107,7 @@ abstract contract StablecoinTemplateV3Base is
         address admin,
         uint64 _transferPolicyId,
         uint64 _mintRecipientPolicyId
-    ) internal {
+    ) internal onlyInitializing {
         require(admin != address(0), AdminCannotBeZeroAddress());
 
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
