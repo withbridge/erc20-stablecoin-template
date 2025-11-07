@@ -398,6 +398,111 @@ contract TokenAuthorityTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                            Bridge Ecosystem Contract Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_setBridgeEcosystemContract_success() public {
+        address bridgeContract = makeAddr("bridge");
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.BridgeEcosystemContractSet(admin, bridgeContract, true);
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+
+        assertTrue(tokenAuthority.bridgeEcosystemContracts(bridgeContract));
+    }
+
+    function test_setBridgeEcosystemContract_disable() public {
+        address bridgeContract = makeAddr("bridge");
+
+        // First enable
+        vm.prank(admin);
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+        assertTrue(tokenAuthority.bridgeEcosystemContracts(bridgeContract));
+
+        // Then disable
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.BridgeEcosystemContractSet(admin, bridgeContract, false);
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, false);
+
+        assertFalse(tokenAuthority.bridgeEcosystemContracts(bridgeContract));
+    }
+
+    function test_setBridgeEcosystemContract_revert_not_admin() public {
+        address bridgeContract = makeAddr("bridge");
+
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                tokenAuthority.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+        vm.stopPrank();
+    }
+
+    function test_mint_bridge_ecosystem_bypasses_limits() public {
+        address bridgeContract = makeAddr("bridge");
+        uint256 mintAmount = 1000;
+
+        // Enable bridge contract
+        vm.prank(admin);
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+
+        // Do NOT set any limits or allowances for the bridge contract
+
+        // Bridge contract should be able to mint without limits
+        vm.prank(bridgeContract);
+        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+
+        // Verify tokens were minted
+        assertEq(mockToken.balanceOf(user1), mintAmount);
+    }
+
+    function test_mint_bridge_ecosystem_ignores_txn_limit() public {
+        address bridgeContract = makeAddr("bridge");
+        uint256 mintAmount = 1000;
+
+        // Enable bridge contract
+        vm.prank(admin);
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+
+        // Set very low txn limit (would normally prevent minting)
+        vm.prank(admin);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 10);
+
+        // Bridge contract should still be able to mint despite low txn limit
+        vm.prank(bridgeContract);
+        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+
+        // Verify tokens were minted
+        assertEq(mockToken.balanceOf(user1), mintAmount);
+    }
+
+    function test_mint_bridge_ecosystem_ignores_minter_allowance() public {
+        address bridgeContract = makeAddr("bridge");
+        uint256 mintAmount = 1000;
+
+        // Enable bridge contract
+        vm.prank(admin);
+        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+
+        // Set very low minter allowance (would normally prevent minting)
+        vm.prank(admin);
+        tokenAuthority.setMinterAllowance(address(mockToken), bridgeContract, 10);
+
+        // Bridge contract should still be able to mint despite low allowance
+        vm.prank(bridgeContract);
+        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+
+        // Verify tokens were minted
+        assertEq(mockToken.balanceOf(user1), mintAmount);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                                     Burn Tests
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -473,6 +578,25 @@ contract TokenAuthorityTest is Test {
         );
         vm.prank(user1);
         tokenAuthority.burn(address(reserveLedgerToken), 30);
+    }
+
+    function test_burn_zero_amount() public {
+        // Setup: grant burner role and mint tokens
+        vm.startPrank(admin);
+        tokenAuthority.setTxnMintLimit(address(reserveLedgerToken), 200);
+        tokenAuthority.setMinterAllowance(address(reserveLedgerToken), minter, 500);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), minter);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), address(tokenAuthority), 100);
+
+        // Burning zero amount should work (no revert in contract, but ERC20 might revert)
+        // This tests the edge case behavior
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.Burn(minter, address(reserveLedgerToken), 0);
+        tokenAuthority.burn(address(reserveLedgerToken), 0);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -575,6 +699,23 @@ contract TokenAuthorityTest is Test {
             mockToken.balanceOf(address(tokenAuthority)), mintAmount - unwrapAmount1 - unwrapAmount2
         );
         assertEq(reserveLedgerToken.balanceOf(minter), unwrapAmount1 + unwrapAmount2);
+    }
+
+    function test_unwrap_zero_amount() public {
+        vm.startPrank(admin);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 200);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
+        tokenAuthority.grantRole(tokenAuthority.UNWRAPPER_ROLE(), minter);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        tokenAuthority.mint(address(mockToken), address(tokenAuthority), 100);
+
+        // Unwrapping zero amount should work (tests edge case)
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.Unwrap(minter, address(mockToken), 0);
+        tokenAuthority.unwrap(address(mockToken), 0);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -795,6 +936,161 @@ contract TokenAuthorityTest is Test {
     function test_getStablecoinTxnMintLimit_returns_zero_by_default() public view {
         uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
         assertEq(txnLimit, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Role Management Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_role_constants() public view {
+        bytes32 mintRateLimitSetterRole = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
+        bytes32 burnerRole = keccak256("BURNER_ROLE");
+        bytes32 unwrapperRole = keccak256("UNWRAPPER_ROLE");
+
+        assertEq(tokenAuthority.MINT_RATE_LIMIT_SETTER_ROLE(), mintRateLimitSetterRole);
+        assertEq(tokenAuthority.BURNER_ROLE(), burnerRole);
+        assertEq(tokenAuthority.UNWRAPPER_ROLE(), unwrapperRole);
+    }
+
+    function test_grantRole_multiple_roles() public {
+        vm.startPrank(admin);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user1);
+        tokenAuthority.grantRole(tokenAuthority.UNWRAPPER_ROLE(), user1);
+        tokenAuthority.grantRole(tokenAuthority.MINT_RATE_LIMIT_SETTER_ROLE(), user1);
+        vm.stopPrank();
+
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.BURNER_ROLE(), user1));
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.UNWRAPPER_ROLE(), user1));
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.MINT_RATE_LIMIT_SETTER_ROLE(), user1));
+    }
+
+    function test_revokeRole_success() public {
+        // Grant role first
+        vm.prank(admin);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user1);
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.BURNER_ROLE(), user1));
+
+        // Revoke role
+        vm.prank(admin);
+        tokenAuthority.revokeRole(tokenAuthority.BURNER_ROLE(), user1);
+        assertFalse(tokenAuthority.hasRole(tokenAuthority.BURNER_ROLE(), user1));
+    }
+
+    function test_getRoleMemberCount() public {
+        vm.startPrank(admin);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user1);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user2);
+        vm.stopPrank();
+
+        assertEq(tokenAuthority.getRoleMemberCount(tokenAuthority.BURNER_ROLE()), 2);
+    }
+
+    function test_getRoleMember() public {
+        vm.startPrank(admin);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user1);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user2);
+        vm.stopPrank();
+
+        address member0 = tokenAuthority.getRoleMember(tokenAuthority.BURNER_ROLE(), 0);
+        address member1 = tokenAuthority.getRoleMember(tokenAuthority.BURNER_ROLE(), 1);
+
+        assertTrue(member0 == user1 || member0 == user2);
+        assertTrue(member1 == user1 || member1 == user2);
+        assertTrue(member0 != member1);
+    }
+
+    function test_getRoleAdmin() public view {
+        bytes32 defaultAdminRole = tokenAuthority.DEFAULT_ADMIN_ROLE();
+        assertEq(tokenAuthority.getRoleAdmin(tokenAuthority.BURNER_ROLE()), defaultAdminRole);
+        assertEq(tokenAuthority.getRoleAdmin(tokenAuthority.UNWRAPPER_ROLE()), defaultAdminRole);
+        assertEq(
+            tokenAuthority.getRoleAdmin(tokenAuthority.MINT_RATE_LIMIT_SETTER_ROLE()),
+            defaultAdminRole
+        );
+    }
+
+    function test_renounceRole_success() public {
+        // Grant role first
+        vm.prank(admin);
+        tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), user1);
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.BURNER_ROLE(), user1));
+
+        // User renounces their own role (msg.sender must match the account parameter)
+        vm.startPrank(user1);
+        tokenAuthority.renounceRole(tokenAuthority.BURNER_ROLE(), user1);
+        vm.stopPrank();
+        assertFalse(tokenAuthority.hasRole(tokenAuthority.BURNER_ROLE(), user1));
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Additional Edge Case Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_wrap_revert_reserve_ledger_token() public {
+        uint256 wrapAmount = 100;
+
+        // Setup: mint reserve ledger tokens to user1
+        reserveLedgerToken.mint(user1, wrapAmount);
+
+        // User1 approves tokenAuthority
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(tokenAuthority), wrapAmount);
+
+        // Try to wrap reserve ledger token into itself - should fail
+        vm.prank(user1);
+        vm.expectRevert();
+        tokenAuthority.wrap(address(reserveLedgerToken), user2, wrapAmount);
+    }
+
+    function test_setTxnMintLimit_zero() public {
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken), 0);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 0);
+
+        assertEq(tokenAuthority.getStablecoinTxnMintLimit(address(mockToken)), 0);
+    }
+
+    function test_setMinterAllowance_zero() public {
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 0);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, 0);
+
+        assertEq(tokenAuthority.getMinterAllowance(address(mockToken), minter), 0);
+    }
+
+    function test_mint_exactly_at_txn_limit() public {
+        uint256 mintAmount = 100;
+
+        // Setup limits equal to mint amount
+        vm.startPrank(admin);
+        tokenAuthority.setTxnMintLimit(address(mockToken), mintAmount);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, mintAmount);
+        vm.stopPrank();
+
+        // Mint exactly at the limit - should succeed
+        vm.prank(minter);
+        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+
+        assertEq(mockToken.balanceOf(user1), mintAmount);
+    }
+
+    function test_mint_exactly_at_minter_allowance() public {
+        uint256 mintAmount = 100;
+
+        // Setup limits equal to mint amount
+        vm.startPrank(admin);
+        tokenAuthority.setTxnMintLimit(address(mockToken), mintAmount * 2);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, mintAmount);
+        vm.stopPrank();
+
+        // Mint exactly at the allowance - should succeed
+        vm.prank(minter);
+        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+
+        assertEq(mockToken.balanceOf(user1), mintAmount);
+        assertEq(tokenAuthority.getMinterAllowance(address(mockToken), minter), 0);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
