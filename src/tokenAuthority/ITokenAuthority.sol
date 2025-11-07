@@ -144,9 +144,8 @@ interface ITokenAuthority {
     /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
-     * ledger token,
-     *      it calls burn directly; otherwise, it calls unwrap on the ERC20WrapUnwrap interface.
-     * @param stablecoinContract The address of the stablecoin contract
+     * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin
+     * @param stablecoinContract The address of the stablecoin contract first.
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) external;

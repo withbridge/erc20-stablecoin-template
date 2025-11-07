@@ -110,6 +110,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
             IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(to, amount);
         } else {
             IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
+            IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
             IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
         }
 
@@ -129,7 +130,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
             IERC20BurnMint(RESERVE_LEDGER_TOKEN).burn(amount);
         } else {
             IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
+            IERC20BurnMint(RESERVE_LEDGER_TOKEN).burn(amount);
         }
+
+        mintRateLimits[stablecoinContract].mintGlobalLimit += amount;
 
         emit Burn(msg.sender, stablecoinContract, amount);
     }
