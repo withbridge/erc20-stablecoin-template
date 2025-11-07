@@ -478,8 +478,8 @@ contract TokenAuthorityTest is Test {
 
         // Verify wrapped tokens were burned (unwrapped) from TokenAuthority
         assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount - burnAmount);
-        // And transfers underlying tokens back to TokenAuthority contract
-        assertEq(reserveLedgerToken.balanceOf(address(tokenAuthority)), burnAmount);
+        // And transfers underlying tokens were burned as well
+        assertEq(reserveLedgerToken.balanceOf(address(tokenAuthority)), 0);
     }
 
     function test_burn_revert_not_burner() public {
