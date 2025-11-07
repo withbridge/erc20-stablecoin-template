@@ -80,16 +80,12 @@ interface ITokenAuthority {
         address indexed sender, address indexed stablecoinContract, uint256 mintTxnLimit
     );
 
-    /// @notice Emitted when a minter's allowance is set for a stablecoin
+    /// @notice Emitted when a minter's allowance is set
     /// @param sender The address that set the allowance (must have MINT_RATE_LIMIT_SETTER_ROLE)
-    /// @param stablecoinContract The address of the stablecoin contract
     /// @param minter The address of the minter whose allowance is being set
     /// @param minterAllowance The new allowance for the minter
     event MinterAllowanceSet(
-        address indexed sender,
-        address indexed stablecoinContract,
-        address indexed minter,
-        uint256 minterAllowance
+        address indexed sender, address indexed minter, uint256 minterAllowance
     );
 
     /// @notice Emitted when tokens are minted to a recipient
@@ -193,24 +189,18 @@ interface ITokenAuthority {
     function setTxnMintLimit(address stablecoinContract, uint256 mintTxnLimit) external;
 
     /**
-     * @notice Sets the mint allowance for a specific minter on a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
+     * @notice Sets the mint allowance for a specific minter
      * @param minter The address of the minter
      * @param minterAllowance The allowance amount to set for the minter
      */
-    function setMinterAllowance(address stablecoinContract, address minter, uint256 minterAllowance)
-        external;
+    function setMinterAllowance(address minter, uint256 minterAllowance) external;
 
     /**
-     * @notice Gets the mint allowance for a specific minter on a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
+     * @notice Gets the mint allowance for a specific minter
      * @param minter The address of the minter
      * @return minterAllowance The remaining allowance for the minter
      */
-    function getMinterAllowance(address stablecoinContract, address minter)
-        external
-        view
-        returns (uint256 minterAllowance);
+    function getMinterAllowance(address minter) external view returns (uint256 minterAllowance);
 
     /**
      * @notice Gets the mint rate limits for a specific stablecoin contract

@@ -35,12 +35,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 State Variables
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Maps each stablecoin contract address and user address to the minter allowance for
-    /// that user on the stablecoin.
-    /// @dev minterAllowances[stablecoinContract][user] = minterAllowance (remaining tokens that can
-    /// be minted by the user)
-    mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance)) public
-        minterAllowances;
+    /// @notice Stores the minter allowance for each user across all stablecoins.
+    /// @dev minterAllowances[user] = minterAllowance, representing the total remaining amount the
+    /// user is allowed to mint across all stablecoins.
+    mapping(address user => uint256 minterAllowance) public minterAllowances;
 
     /// @notice Maps each stablecoin contract address to its respective mint rate limits.
     /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
@@ -94,17 +92,17 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     function mint(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
         MintRateLimit storage mintRateLimit = mintRateLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
-        require(mintRateLimit.mintGlobalLimit >= amount, MintGlobalLimitExceeded());
-        require(mintRateLimit.mintTxnLimit >= amount, MintTxnLimitExceeded());
+        uint256 minterAllowance = minterAllowances[msg.sender];
         require(minterAllowance >= amount, MinterAllowanceExceeded());
+        require(mintRateLimit.mintTxnLimit >= amount, MintTxnLimitExceeded());
+        require(mintRateLimit.mintGlobalLimit >= amount, MintGlobalLimitExceeded());
 
         if (mintRateLimit.mintGlobalLimit != type(uint256).max) {
             mintRateLimit.mintGlobalLimit -= amount;
         }
 
         if (minterAllowance != type(uint256).max) {
-            minterAllowances[stablecoinContract][msg.sender] -= amount;
+            minterAllowances[msg.sender] -= amount;
         }
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
@@ -235,18 +233,17 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     }
 
     /**
-     * @notice Sets the mint allowance for a specific minter on a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
+     * @notice Sets the mint allowance for a specific minter
      * @param minter The address of the minter
      * @param minterAllowance The allowance amount to set for the minter
      */
-    function setMinterAllowance(address stablecoinContract, address minter, uint256 minterAllowance)
+    function setMinterAllowance(address minter, uint256 minterAllowance)
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        minterAllowances[stablecoinContract][minter] = minterAllowance;
+        minterAllowances[minter] = minterAllowance;
 
-        emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
+        emit MinterAllowanceSet(msg.sender, minter, minterAllowance);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -254,17 +251,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Gets the mint allowance for a specific minter on a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
+     * @notice Gets the mint allowance for a specific minter
      * @param minter The address of the minter
      * @return minterAllowance The remaining allowance for the minter
      */
-    function getMinterAllowance(address stablecoinContract, address minter)
-        public
-        view
-        returns (uint256 minterAllowance)
-    {
-        return minterAllowances[stablecoinContract][minter];
+    function getMinterAllowance(address minter) public view returns (uint256 minterAllowance) {
+        return minterAllowances[minter];
     }
 
     /**
