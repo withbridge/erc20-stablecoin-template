@@ -201,6 +201,12 @@ contract TokenAuthorityTest is Test {
         assertEq(remainingAllowance, 500 - mintAmount);
     }
 
+    function test_mint_cannot_be_zero() public {
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.AmountCannotBeZero.selector);
+        tokenAuthority.mint(address(mockToken), user1, 0);
+    }
+
     function test_mint_with_max_limits_no_decrement() public {
         uint256 mintAmount = 50;
 
@@ -738,8 +744,9 @@ contract TokenAuthorityTest is Test {
         vm.prank(user1);
         reserveLedgerToken.approve(address(tokenAuthority), 100);
 
-        // Wrap zero amount - should succeed but have no effect
+        // Wrap zero amount
         vm.prank(user1);
+        vm.expectRevert(ITokenAuthority.AmountCannotBeZero.selector);
         tokenAuthority.wrap(address(mockToken), user2, 0);
 
         // Verify no tokens were wrapped

@@ -43,6 +43,11 @@ interface ITokenAuthority {
     /// @dev Unwrapping is only applicable to wrapped stablecoins
     error CannotUnwrapReserveLedgerToken();
 
+    /// @notice Thrown when attempting to perform an operation with an amount of zero
+    /// @dev This prevents operations that would result in zero value transfers or operations
+    /// that would have no effect
+    error AmountCannotBeZero();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

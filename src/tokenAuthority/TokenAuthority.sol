@@ -92,6 +92,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
+        require(amount > 0, AmountCannotBeZero());
         MintRateLimit storage mintRateLimit = mintRateLimits[stablecoinContract];
         uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
         require(mintRateLimit.mintGlobalLimit >= amount, MintGlobalLimitExceeded());
@@ -175,6 +176,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        require(amount > 0, AmountCannotBeZero());
         IERC20BurnMint(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
         IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
         IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
