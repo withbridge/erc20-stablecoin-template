@@ -117,7 +117,6 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         // set up access roles
         token.grantRole(token.MINTER_ROLE(), minter);
-        token.grantRole(token.UNWRAPPER_ROLE(), minter);
         token.grantRole(token.PAUSER_ROLE(), pauser);
         token.grantRole(token.UNPAUSER_ROLE(), unpauser);
         token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
@@ -187,16 +186,16 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                             Minting / Wrapping Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_wrap_success() public {
+    function test_mint_success() public {
         vm.prank(minter);
         vm.expectEmit(true, true, true, true);
         emit Minted(100, user1, minter);
-        token.wrap(user1, 100);
+        token.mint(user1, 100);
         assertEq(token.totalSupply(), 100);
         assertEq(token.balanceOf(user1), 100);
     }
 
-    function test_wrap_revert_no_allowance() public {
+    function test_mint_revert_no_allowance() public {
         vm.startPrank(user1);
 
         vm.expectRevert(
@@ -204,57 +203,55 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                 IERC20Errors.ERC20InsufficientAllowance.selector, address(token), 0, 100
             )
         );
-        token.wrap(user1, 100);
+        token.mint(user1, 100);
         vm.stopPrank();
     }
 
-    function test_wrap_revert_not_recipient() public {
+    function test_mint_revert_not_recipient() public {
         vm.prank(admin);
         token.grantRole(token.MINTER_ROLE(), minter);
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
-        token.wrap(user2, 100);
+        token.mint(user2, 100);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                             Burning / Unwrapping Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_unwrap_success() public {
+    function test_burn_success() public {
         vm.startPrank(minter);
         reserveLedger.approve(address(token), 100);
-        token.wrap(address(minter), 100);
+        token.mint(address(minter), 100);
         vm.stopPrank();
 
         vm.startPrank(minter);
         vm.expectEmit(true, true, true, true);
         emit Unwrapped(100, minter);
-        token.unwrap(100);
+        token.burn(100);
         assertEq(token.totalSupply(), 0);
         assertEq(token.balanceOf(minter), 0);
     }
 
-    function test_unwrap_revert_not_unwrapper() public {
+    function test_burn_revert_not_unwrapper() public {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                token.UNWRAPPER_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, token.MINTER_ROLE()
             )
         );
-        token.unwrap(1);
+        token.burn(1);
         vm.stopPrank();
     }
 
-    function test_unwrap_revert_exceeds_balance() public {
+    function test_burn_revert_exceeds_balance() public {
         vm.prank(admin);
         token.grantRole(token.MINTER_ROLE(), minter);
         vm.prank(minter);
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, minter, 0, 1)
         );
-        token.unwrap(1);
+        token.burn(1);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -270,7 +267,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         vm.startPrank(minter);
         reserveLedger.approve(address(token), 100);
-        token.wrap(user1, 100);
+        token.mint(user1, 100);
         vm.stopPrank();
 
         vm.prank(admin);
@@ -361,7 +358,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_blockAddress_success() public {
         vm.prank(minter);
-        token.wrap(user1, 100);
+        token.mint(user1, 100);
 
         vm.prank(user1);
         assertTrue(token.transfer(user2, 50));

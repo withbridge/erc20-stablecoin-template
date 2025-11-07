@@ -73,16 +73,12 @@ contract TokenAuthorityTest is Test {
     //////////////////////////////////////////////////////////////////////////*/
 
     function test_setMintRateLimits_success() public {
-        uint256 globalLimit = 1000;
         uint256 txnLimit = 100;
 
         vm.prank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), globalLimit, txnLimit);
+        tokenAuthority.setTxnMintLimit(address(mockToken), txnLimit);
 
-        (uint256 returnedGlobalLimit, uint256 returnedTxnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-
-        assertEq(returnedGlobalLimit, globalLimit);
+        uint256 returnedTxnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
         assertEq(returnedTxnLimit, txnLimit);
     }
 
@@ -95,31 +91,7 @@ contract TokenAuthorityTest is Test {
                 tokenAuthority.MINT_RATE_LIMIT_SETTER_ROLE()
             )
         );
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 100);
-        vm.stopPrank();
-    }
-
-    function test_setGlobalMintLimit_success() public {
-        uint256 globalLimit = 1000;
-
-        vm.prank(admin);
-        tokenAuthority.setGlobalMintLimit(address(mockToken), globalLimit);
-
-        (uint256 returnedGlobalLimit,) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(returnedGlobalLimit, globalLimit);
-    }
-
-    function test_setGlobalMintLimit_revert_not_admin() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                tokenAuthority.MINT_RATE_LIMIT_SETTER_ROLE()
-            )
-        );
-        tokenAuthority.setGlobalMintLimit(address(mockToken), 1000);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 100);
         vm.stopPrank();
     }
 
@@ -129,8 +101,7 @@ contract TokenAuthorityTest is Test {
         vm.prank(admin);
         tokenAuthority.setTxnMintLimit(address(mockToken), txnLimit);
 
-        (, uint256 returnedTxnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
+        uint256 returnedTxnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
         assertEq(returnedTxnLimit, txnLimit);
     }
 
@@ -179,7 +150,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup limits and allowances
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 100);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 100);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
         vm.stopPrank();
 
@@ -191,9 +162,7 @@ contract TokenAuthorityTest is Test {
         assertEq(mockToken.balanceOf(user1), mintAmount);
 
         // Verify global limit was decremented, txn limit stays the same
-        (uint256 globalLimit, uint256 txnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(globalLimit, 1000 - mintAmount);
+        uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
         assertEq(txnLimit, 100); // Txn limit is not decremented
 
         // Verify allowance was decremented
@@ -212,7 +181,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup with max uint256 limits (unlimited)
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), type(uint256).max, type(uint256).max);
+        tokenAuthority.setTxnMintLimit(address(mockToken), type(uint256).max);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, type(uint256).max);
         vm.stopPrank();
 
@@ -224,9 +193,7 @@ contract TokenAuthorityTest is Test {
         assertEq(mockToken.balanceOf(user1), mintAmount);
 
         // Verify limits were NOT decremented (still max)
-        (uint256 globalLimit, uint256 txnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(globalLimit, type(uint256).max);
+        uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
         assertEq(txnLimit, type(uint256).max);
 
         // Verify allowance was NOT decremented (still max)
@@ -234,34 +201,14 @@ contract TokenAuthorityTest is Test {
         assertEq(remainingAllowance, type(uint256).max);
     }
 
-    function test_mint_revert_global_limit_exceeded() public {
-        uint256 mintAmount = 100;
-
-        // Setup limits where global limit is less than mint amount
-        vm.startPrank(admin);
-        vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MintRateLimitsSet(admin, address(mockToken), 50, 200);
-        tokenAuthority.setMintRateLimits(address(mockToken), 50, 200);
-        vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 500);
-        tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
-        vm.stopPrank();
-
-        // Attempt to mint
-        vm.prank(minter);
-        vm.expectRevert(ITokenAuthority.MintGlobalLimitExceeded.selector);
-        tokenAuthority.mint(address(mockToken), user1, mintAmount);
-    }
-
-    function test_mint_revert_txn_limit_exceeded() public {
+    function test_mint_revert_txn_limit_exceeded_low_txn_limit() public {
         uint256 mintAmount = 100;
 
         // Setup limits where txn limit is less than mint amount
         vm.startPrank(admin);
         vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MintRateLimitsSet(admin, address(mockToken), 1000, 50);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 50);
-
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken), 50);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 50);
         vm.expectEmit(true, true, true, true);
         emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 500);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
@@ -273,14 +220,34 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.mint(address(mockToken), user1, mintAmount);
     }
 
+    function test_mint_revert_txn_limit_exceeded_low_allowance() public {
+        uint256 mintAmount = 100;
+
+        // Setup limits where minter allowance is less than mint amount
+        vm.startPrank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken), 1000);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 1000);
+
+        vm.expectEmit(true, true, true, true);
+        emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 50);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, 50);
+        vm.stopPrank();
+
+        // Attempt to mint - should fail due to low allowance
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.MinterAllowanceExceeded.selector);
+        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+    }
+
     function test_mint_revert_minter_allowance_exceeded() public {
         uint256 mintAmount = 100;
 
         // Setup limits where minter allowance is less than mint amount
         vm.startPrank(admin);
         vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MintRateLimitsSet(admin, address(mockToken), 1000, 200);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 200);
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken), 1000);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 1000);
 
         vm.expectEmit(true, true, true, true);
         emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 50);
@@ -297,8 +264,8 @@ contract TokenAuthorityTest is Test {
         // Setup limits
         vm.startPrank(admin);
         vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MintRateLimitsSet(admin, address(mockToken), 100, 50);
-        tokenAuthority.setMintRateLimits(address(mockToken), 100, 50);
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken), 100);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 100);
         vm.expectEmit(true, true, true, true);
         emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 100);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 100);
@@ -311,20 +278,19 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.mint(address(mockToken), user1, 30);
 
         // Check remaining limits
-        (uint256 globalLimit, uint256 txnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(globalLimit, 70);
-        assertEq(txnLimit, 50); // Txn limit is not decremented
+        uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
+        assertEq(txnLimit, 100); // Txn limit is not decremented
         assertEq(tokenAuthority.getMinterAllowance(address(mockToken), minter), 70);
 
-        // Second mint should succeed with txn limit (30  < 50 )
+        // Second mint should succeed with txn limit (30 < 100)
         vm.prank(minter);
         tokenAuthority.mint(address(mockToken), user1, 30);
 
-        // Verify total minted and remaining global limit
+        // Verify total minted and remaining allowance
         assertEq(mockToken.balanceOf(user1), 60);
-        (globalLimit,) = tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(globalLimit, 40);
+        txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
+        assertEq(txnLimit, 100); // Txn limit is not decremented
+        assertEq(tokenAuthority.getMinterAllowance(address(mockToken), minter), 40);
     }
 
     function test_mint_different_stablecoins_separate_limits() public {
@@ -337,15 +303,15 @@ contract TokenAuthorityTest is Test {
         // Setup limits for both tokens
         vm.startPrank(admin);
         vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MintRateLimitsSet(admin, address(mockToken), 100, 50);
-        tokenAuthority.setMintRateLimits(address(mockToken), 100, 50);
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken), 100);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 100);
         vm.expectEmit(true, true, true, true);
         emit ITokenAuthority.MinterAllowanceSet(admin, address(mockToken), minter, 100);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 100);
 
         vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.MintRateLimitsSet(admin, address(mockToken2), 200, 100);
-        tokenAuthority.setMintRateLimits(address(mockToken2), 200, 100);
+        emit ITokenAuthority.TxnMintLimitSet(admin, address(mockToken2), 200);
+        tokenAuthority.setTxnMintLimit(address(mockToken2), 200);
         tokenAuthority.setMinterAllowance(address(mockToken2), minter, 200);
         vm.stopPrank();
 
@@ -353,23 +319,24 @@ contract TokenAuthorityTest is Test {
         vm.prank(minter);
         tokenAuthority.mint(address(mockToken), user1, 30);
 
-        // Verify global limits decreased and txn limit is unchanged (it's a per-txn cap)
-        (uint256 globalLimit1, uint256 txnLimit1) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(globalLimit1, 70);
-        assertEq(txnLimit1, 50); // Txn limit is not decremented
+        // Verify txn limit is unchanged (it's a per-txn cap)
+        uint256 txnLimit1 = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
+        assertEq(txnLimit1, 100); // Txn limit is not decremented
+
+        // Verify allowance decreased
+        assertEq(tokenAuthority.getMinterAllowance(address(mockToken), minter), 70);
 
         // Verify second token limits unchanged
-        (uint256 globalLimit2, uint256 txnLimit2) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken2));
-        assertEq(globalLimit2, 200);
-        assertEq(txnLimit2, 100);
+        uint256 txnLimit2 = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken2));
+        assertEq(txnLimit2, 200);
+        assertEq(tokenAuthority.getMinterAllowance(address(mockToken2), minter), 200);
 
         // Mint from second token should work
         vm.prank(minter);
         tokenAuthority.mint(address(mockToken2), user1, 50);
 
         assertEq(mockToken2.balanceOf(user1), 50);
+        assertEq(tokenAuthority.getMinterAllowance(address(mockToken2), minter), 150);
     }
 
     function test_mint_different_minters_separate_allowances() public {
@@ -377,7 +344,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup limits for both minters
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 500);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 500);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 100);
         tokenAuthority.setMinterAllowance(address(mockToken), minter2, 200);
         vm.stopPrank();
@@ -409,7 +376,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup limits and allowances for reserve ledger token
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(reserveLedgerToken), 1000, 100);
+        tokenAuthority.setTxnMintLimit(address(reserveLedgerToken), 100);
         tokenAuthority.setMinterAllowance(address(reserveLedgerToken), minter, 500);
         vm.stopPrank();
 
@@ -420,10 +387,8 @@ contract TokenAuthorityTest is Test {
         // Verify tokens were minted directly to user1 (not wrapped)
         assertEq(reserveLedgerToken.balanceOf(user1), mintAmount);
 
-        // Verify global limit was decremented
-        (uint256 globalLimit, uint256 txnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(reserveLedgerToken));
-        assertEq(globalLimit, 1000 - mintAmount);
+        // Verify txn limit is not decremented
+        uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(reserveLedgerToken));
         assertEq(txnLimit, 100);
 
         // Verify allowance was decremented
@@ -442,7 +407,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup: mint some reserve ledger tokens first to the TokenAuthority contract
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(reserveLedgerToken), 1000, 200);
+        tokenAuthority.setTxnMintLimit(address(reserveLedgerToken), 200);
         tokenAuthority.setMinterAllowance(address(reserveLedgerToken), minter, 500);
         tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), minter);
         vm.stopPrank();
@@ -467,7 +432,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup: mint some wrapped tokens first
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 200);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 200);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
         tokenAuthority.grantRole(tokenAuthority.BURNER_ROLE(), minter);
         vm.stopPrank();
@@ -491,7 +456,7 @@ contract TokenAuthorityTest is Test {
     function test_burn_revert_not_burner() public {
         // Setup: mint some tokens first
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(reserveLedgerToken), 1000, 200);
+        tokenAuthority.setTxnMintLimit(address(reserveLedgerToken), 200);
         tokenAuthority.setMinterAllowance(address(reserveLedgerToken), minter, 500);
         vm.stopPrank();
 
@@ -520,7 +485,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup: mint some wrapped tokens first
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 200);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 200);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
         tokenAuthority.grantRole(tokenAuthority.UNWRAPPER_ROLE(), minter);
         vm.stopPrank();
@@ -586,7 +551,7 @@ contract TokenAuthorityTest is Test {
 
         // Setup: mint some wrapped tokens first
         vm.startPrank(admin);
-        tokenAuthority.setMintRateLimits(address(mockToken), 1000, 200);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 200);
         tokenAuthority.setMinterAllowance(address(mockToken), minter, 500);
         tokenAuthority.grantRole(tokenAuthority.UNWRAPPER_ROLE(), minter);
         vm.stopPrank();
@@ -827,10 +792,8 @@ contract TokenAuthorityTest is Test {
         assertEq(allowance, 0);
     }
 
-    function test_getStablecoinMintRateLimits_returns_zero_by_default() public view {
-        (uint256 globalLimit, uint256 txnLimit) =
-            tokenAuthority.getStablecoinMintRateLimits(address(mockToken));
-        assertEq(globalLimit, 0);
+    function test_getStablecoinTxnMintLimit_returns_zero_by_default() public view {
+        uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
         assertEq(txnLimit, 0);
     }
 

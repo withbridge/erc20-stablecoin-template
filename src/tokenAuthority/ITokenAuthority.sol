@@ -9,21 +9,6 @@ pragma solidity ^0.8.24;
 interface ITokenAuthority {
 
     /*//////////////////////////////////////////////////////////////////////////
-                                    Structs
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /// @notice Stores the mint rate limits for a stablecoin contract
-    /// @dev Both limits are enforced during minting operations
-    struct MintRateLimit {
-        /// @notice The remaining cumulative amount that can be minted globally for this stablecoin
-        /// @dev This limit decrements with each mint and acts as a total supply cap over a period
-        uint256 mintGlobalLimit;
-        /// @notice The maximum amount that can be minted in a single transaction
-        /// @dev This limit does not decrement and serves as a per-transaction cap
-        uint256 mintTxnLimit;
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
                                     Errors
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -51,26 +36,6 @@ interface ITokenAuthority {
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
-
-    /// @notice Emitted when both mint rate limits are set for a stablecoin
-    /// @param sender The address that set the limits (must have MINT_RATE_LIMIT_SETTER_ROLE)
-    /// @param stablecoinContract The address of the stablecoin contract
-    /// @param mintGlobalLimit The new global mint limit
-    /// @param mintTxnLimit The new per-transaction mint limit
-    event MintRateLimitsSet(
-        address indexed sender,
-        address indexed stablecoinContract,
-        uint256 mintGlobalLimit,
-        uint256 mintTxnLimit
-    );
-
-    /// @notice Emitted when only the global mint limit is updated for a stablecoin
-    /// @param sender The address that set the limit (must have MINT_RATE_LIMIT_SETTER_ROLE)
-    /// @param stablecoinContract The address of the stablecoin contract
-    /// @param mintGlobalLimit The new global mint limit
-    event GlobalMintLimitSet(
-        address indexed sender, address indexed stablecoinContract, uint256 mintGlobalLimit
-    );
 
     /// @notice Emitted when only the per-transaction mint limit is updated for a stablecoin
     /// @param sender The address that set the limit (must have MINT_RATE_LIMIT_SETTER_ROLE)
@@ -132,6 +97,15 @@ interface ITokenAuthority {
         uint256 amount
     );
 
+    /// @notice Emitted when a bridge ecosystem contract is enabled or disabled
+    /// @param sender The address that enabled or disabled the bridge ecosystem contract (must have
+    /// DEFAULT_ADMIN_ROLE) @param bridgeEcosystemContract The address of the bridge ecosystem
+    /// contract
+    /// @param enabled Set to true to enable, false to disable
+    event BridgeEcosystemContractSet(
+        address indexed sender, address indexed bridgeEcosystemContract, bool enabled
+    );
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -167,25 +141,6 @@ interface ITokenAuthority {
     function unwrap(address stablecoinContract, uint256 amount) external;
 
     /**
-     * @notice Sets both the global and per-transaction mint limits for a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
-     * @param mintGlobalLimit The global mint limit to set
-     * @param mintTxnLimit The per-transaction mint limit to set
-     */
-    function setMintRateLimits(
-        address stablecoinContract,
-        uint256 mintGlobalLimit,
-        uint256 mintTxnLimit
-    ) external;
-
-    /**
-     * @notice Sets the global mint limit for a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
-     * @param mintGlobalLimit The global mint limit to set
-     */
-    function setGlobalMintLimit(address stablecoinContract, uint256 mintGlobalLimit) external;
-
-    /**
      * @notice Sets the per-transaction mint limit for a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
      * @param mintTxnLimit The per-transaction mint limit to set
@@ -202,6 +157,16 @@ interface ITokenAuthority {
         external;
 
     /**
+     * @notice Enables or disables a bridge ecosystem contract
+     * @dev Only callable by an account with the default admin role.
+     *      Setting `enabled` to true allows the given address to be recognized
+     *      as part of the bridge ecosystem, potentially exempting it from certain restrictions.
+     * @param bridgeEcosystemContract The address of the bridge ecosystem contract to modify
+     * @param enabled Set to true to enable, false to disable
+     */
+    function setBridgeEcosystemContract(address bridgeEcosystemContract, bool enabled) external;
+
+    /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
      * @param minter The address of the minter
@@ -213,14 +178,13 @@ interface ITokenAuthority {
         returns (uint256 minterAllowance);
 
     /**
-     * @notice Gets the mint rate limits for a specific stablecoin contract
+     * @notice Gets the per-transaction mint limit for a specific stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
-     * @return mintGlobalLimit The global mint limit remaining
      * @return mintTxnLimit The per-transaction mint limit
      */
-    function getStablecoinMintRateLimits(address stablecoinContract)
+    function getStablecoinTxnMintLimit(address stablecoinContract)
         external
         view
-        returns (uint256 mintGlobalLimit, uint256 mintTxnLimit);
+        returns (uint256 mintTxnLimit);
 
 }

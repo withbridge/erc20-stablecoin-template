@@ -34,7 +34,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * - This function requires that the caller has approved at least `amount` of the reserve ledger
      * token to the contract.
      */
-    function wrap(address to, uint256 amount) public {
+    function mint(address to, uint256 amount) public {
         require(isMintRecipient(to), AccountNotValidRecipient());
 
         RESERVE_LEDGER_ADDRESS.safeTransferFrom(msg.sender, address(this), amount);
@@ -56,7 +56,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * - `sender` must have at least `amount` tokens.
      * - This function requires that the caller has the UNWRAPPER_ROLE.
      */
-    function unwrap(uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
+    function burn(uint256 amount) public onlyRole(MINTER_ROLE) {
         _burn(msg.sender, amount);
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, amount);
 

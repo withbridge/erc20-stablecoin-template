@@ -23,6 +23,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     address public immutable RESERVE_LEDGER_TOKEN;
 
+    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 10e6;
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Immutable Variables
     //////////////////////////////////////////////////////////////////////////*/
@@ -45,7 +47,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /// @notice Maps each stablecoin contract address to its respective mint rate limits.
     /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
     /// mint limits for the stablecoin)
-    mapping(address stablecoinContract => MintRateLimit mintRateLimit) public mintRateLimits;
+    mapping(address stablecoinContract => uint256 mintTxnLimit) public mintTxnLimits;
+
+    /// @notice Maps each bridge ecosystem contract address to a boolean indicating whether it is
+    /// enabled @dev bridgeEcosystemContracts[bridgeEcosystemContract] = enabled (true if enabled,
+    /// false if disabled)
+    mapping(address bridgeEcosystemContract => bool enabled) public bridgeEcosystemContracts;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -93,18 +100,16 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
-        MintRateLimit storage mintRateLimit = mintRateLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
-        require(mintRateLimit.mintGlobalLimit >= amount, MintGlobalLimitExceeded());
-        require(mintRateLimit.mintTxnLimit >= amount, MintTxnLimitExceeded());
-        require(minterAllowance >= amount, MinterAllowanceExceeded());
 
-        if (mintRateLimit.mintGlobalLimit != type(uint256).max) {
-            mintRateLimit.mintGlobalLimit -= amount;
-        }
+        if (!bridgeEcosystemContracts[msg.sender]) {
+            uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
+            uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
+            require(minterAllowance >= amount, MinterAllowanceExceeded());
+            require(mintTxnLimit >= amount, MintTxnLimitExceeded());
 
-        if (minterAllowance != type(uint256).max) {
-            minterAllowances[stablecoinContract][msg.sender] -= amount;
+            if (minterAllowance != type(uint256).max) {
+                minterAllowances[stablecoinContract][msg.sender] -= amount;
+            }
         }
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
@@ -133,8 +138,6 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
             IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
             IERC20BurnMint(RESERVE_LEDGER_TOKEN).burn(amount);
         }
-
-        mintRateLimits[stablecoinContract].mintGlobalLimit += amount;
 
         emit Burn(msg.sender, stablecoinContract, amount);
     }
@@ -189,38 +192,6 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Sets both the global and per-transaction mint limits for a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
-     * @param mintGlobalLimit The global mint limit to set
-     * @param mintTxnLimit The per-transaction mint limit to set
-     */
-    function setMintRateLimits(
-        address stablecoinContract,
-        uint256 mintGlobalLimit,
-        uint256 mintTxnLimit
-    ) public onlyRole(MINT_RATE_LIMIT_SETTER_ROLE) {
-        mintRateLimits[stablecoinContract] = MintRateLimit({
-            mintGlobalLimit: mintGlobalLimit, mintTxnLimit: mintTxnLimit
-        });
-
-        emit MintRateLimitsSet(msg.sender, stablecoinContract, mintGlobalLimit, mintTxnLimit);
-    }
-
-    /**
-     * @notice Sets the global mint limit for a stablecoin contract
-     * @param stablecoinContract The address of the stablecoin contract
-     * @param mintGlobalLimit The global mint limit to set
-     */
-    function setGlobalMintLimit(address stablecoinContract, uint256 mintGlobalLimit)
-        public
-        onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
-    {
-        mintRateLimits[stablecoinContract].mintGlobalLimit = mintGlobalLimit;
-
-        emit GlobalMintLimitSet(msg.sender, stablecoinContract, mintGlobalLimit);
-    }
-
-    /**
      * @notice Sets the per-transaction mint limit for a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
      * @param mintTxnLimit The per-transaction mint limit to set
@@ -229,7 +200,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        mintRateLimits[stablecoinContract].mintTxnLimit = mintTxnLimit;
+        mintTxnLimits[stablecoinContract] = mintTxnLimit;
 
         emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
     }
@@ -247,6 +218,26 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         minterAllowances[stablecoinContract][minter] = minterAllowance;
 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Setters
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Enables or disables a bridge ecosystem contract
+     * @dev Only callable by an account with the default admin role.
+     *      Setting `enabled` to true allows the given address to be recognized
+     *      as part of the bridge ecosystem, potentially exempting it from certain restrictions.
+     * @param bridgeEcosystemContract The address of the bridge ecosystem contract to modify
+     * @param enabled Set to true to enable, false to disable
+     */
+    function setBridgeEcosystemContract(address bridgeEcosystemContract, bool enabled)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        bridgeEcosystemContracts[bridgeEcosystemContract] = enabled;
+        emit BridgeEcosystemContractSet(msg.sender, bridgeEcosystemContract, enabled);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -268,20 +259,16 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     }
 
     /**
-     * @notice Gets the mint rate limits for a specific stablecoin contract
+     * @notice Gets the per-transaction mint limit for a specific stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
-     * @return mintGlobalLimit The global mint limit remaining
      * @return mintTxnLimit The per-transaction mint limit
      */
-    function getStablecoinMintRateLimits(address stablecoinContract)
+    function getStablecoinTxnMintLimit(address stablecoinContract)
         public
         view
-        returns (uint256 mintGlobalLimit, uint256 mintTxnLimit)
+        returns (uint256 mintTxnLimit)
     {
-        return (
-            mintRateLimits[stablecoinContract].mintGlobalLimit,
-            mintRateLimits[stablecoinContract].mintTxnLimit
-        );
+        return mintTxnLimits[stablecoinContract];
     }
 
     /*//////////////////////////////////////////////////////////////////////////
