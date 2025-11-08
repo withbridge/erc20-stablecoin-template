@@ -189,7 +189,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     function test_mint_success() public {
         vm.prank(minter);
         vm.expectEmit(true, true, true, true);
-        emit Minted(100, user1, minter);
+        emit Wrapped(100, user1, minter);
         token.wrap(user1, 100);
         assertEq(token.totalSupply(), 100);
         assertEq(token.balanceOf(user1), 100);
