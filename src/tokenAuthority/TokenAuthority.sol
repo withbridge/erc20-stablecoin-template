@@ -128,8 +128,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
-     * ledger token,
-     *      it calls burn directly; otherwise, it calls unwrap on the ERC20WrapUnwrap interface.
+     * ledger token, it calls burn directly; otherwise, it calls unwrap on the ERC20WrapUnwrap
+     * interface.
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
      */
@@ -172,10 +172,9 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
      * recipient.
      * @dev Transfers the specified amount of reserve ledger tokens from the caller to this
-     * contract,
-     *      approves the stablecoin contract to spend these tokens, and then wraps the tokens for
-     * the recipient.
-     *      Emits a {Wrap} event upon successful wrapping.
+     * contract, approves the stablecoin contract to spend these tokens, and then wraps the tokens
+     * for the recipient.
+     * @dev Emits a {Wrap} event upon successful wrapping.
      * @param stablecoinContract The address of the target stablecoin contract.
      * @param to The address to receive the wrapped tokens.
      * @param amount The amount of reserve tokens to wrap.

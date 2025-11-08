@@ -15,7 +15,6 @@ interface StablecoinTemplateV3ErrorsAndEvents {
      */
     event Minted(uint256 amount, address indexed to, address indexed sender);
 
-    
     /**
      * @notice Emitted when tokens are wrapped.
      * @param amount The amount of tokens wrapped.
