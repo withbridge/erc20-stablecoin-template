@@ -44,7 +44,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
         _mint(to, amount);
 
-        emit Minted(amount, to, msg.sender);
+        emit Wrapped(amount, to, msg.sender);
     }
 
     /**
