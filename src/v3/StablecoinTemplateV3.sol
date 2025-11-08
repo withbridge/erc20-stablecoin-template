@@ -38,6 +38,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * token to the contract.
      */
     function wrap(address to, uint256 amount) public {
+        require(amount > 0, AmountCannotBeZero());
         require(isMintRecipient(to), AccountNotValidRecipient());
 
         RESERVE_LEDGER_ADDRESS.safeTransferFrom(msg.sender, address(this), amount);

@@ -165,4 +165,9 @@ interface StablecoinTemplateV3ErrorsAndEvents {
      */
     error MigrationToWrappedNotCompleted();
 
+    /**
+     * @notice Thrown when attempting to perform an operation with an amount of zero.
+     */
+    error AmountCannotBeZero();
+
 }
