@@ -190,7 +190,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(minter);
         vm.expectEmit(true, true, true, true);
         emit Minted(100, user1, minter);
-        token.mint(user1, 100);
+        token.wrap(user1, 100);
         assertEq(token.totalSupply(), 100);
         assertEq(token.balanceOf(user1), 100);
     }
@@ -203,7 +203,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                 IERC20Errors.ERC20InsufficientAllowance.selector, address(token), 0, 100
             )
         );
-        token.mint(user1, 100);
+        token.wrap(user1, 100);
         vm.stopPrank();
     }
 
@@ -212,7 +212,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         token.grantRole(token.MINTER_ROLE(), minter);
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
-        token.mint(user2, 100);
+        token.wrap(user2, 100);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -222,13 +222,13 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     function test_burn_success() public {
         vm.startPrank(minter);
         reserveLedger.approve(address(token), 100);
-        token.mint(address(minter), 100);
+        token.wrap(address(minter), 100);
         vm.stopPrank();
 
         vm.startPrank(minter);
         vm.expectEmit(true, true, true, true);
         emit Unwrapped(100, minter);
-        token.burn(100);
+        token.unwrap(100);
         assertEq(token.totalSupply(), 0);
         assertEq(token.balanceOf(minter), 0);
     }
@@ -240,7 +240,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                 IAccessControl.AccessControlUnauthorizedAccount.selector, user1, token.MINTER_ROLE()
             )
         );
-        token.burn(1);
+        token.unwrap(1);
         vm.stopPrank();
     }
 
@@ -251,7 +251,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, minter, 0, 1)
         );
-        token.burn(1);
+        token.unwrap(1);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -267,7 +267,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         vm.startPrank(minter);
         reserveLedger.approve(address(token), 100);
-        token.mint(user1, 100);
+        token.wrap(user1, 100);
         vm.stopPrank();
 
         vm.prank(admin);
@@ -358,7 +358,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_blockAddress_success() public {
         vm.prank(minter);
-        token.mint(user1, 100);
+        token.wrap(user1, 100);
 
         vm.prank(user1);
         assertTrue(token.transfer(user2, 50));

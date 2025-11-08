@@ -33,6 +33,11 @@ interface ITokenAuthority {
     /// that would have no effect
     error AmountCannotBeZero();
 
+    /// @notice Thrown when a mint operation would exceed the absolute maximum amount
+    /// @dev This prevents operations that would result in an amount exceeding the absolute
+    /// maximum amount
+    error AmountExceedsAbsoluteMax();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

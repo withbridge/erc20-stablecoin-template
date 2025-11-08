@@ -112,6 +112,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
             }
         }
 
+        require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
             IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(to, amount);
         } else {

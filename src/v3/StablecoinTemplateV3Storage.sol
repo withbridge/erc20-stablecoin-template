@@ -8,6 +8,7 @@ struct StablecoinTemplateV3Storage {
     uint8 _decimals;
     uint64 _transferPolicyId;
     uint64 _mintRecipientPolicyId;
+    bool _migrationToWrappedCompleted;
 }
 
 library StablecoinTemplateV3StorageLib {

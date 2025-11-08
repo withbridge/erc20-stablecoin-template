@@ -3,7 +3,10 @@ pragma solidity ^0.8.24;
 
 import { IERC20BurnMint } from "../utils/IERC20BurnMint.sol";
 import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
-import { StablecoinTemplateV3StorageLib } from "./StablecoinTemplateV3Storage.sol";
+import {
+    StablecoinTemplateV3Storage,
+    StablecoinTemplateV3StorageLib
+} from "./StablecoinTemplateV3Storage.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
@@ -34,7 +37,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * - This function requires that the caller has approved at least `amount` of the reserve ledger
      * token to the contract.
      */
-    function mint(address to, uint256 amount) public {
+    function wrap(address to, uint256 amount) public {
         require(isMintRecipient(to), AccountNotValidRecipient());
 
         RESERVE_LEDGER_ADDRESS.safeTransferFrom(msg.sender, address(this), amount);
@@ -54,13 +57,71 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
      * Requirements:
      *
      * - `sender` must have at least `amount` tokens.
-     * - This function requires that the caller has the UNWRAPPER_ROLE.
+     * - This function requires that the caller has the MINTER_ROLE.
      */
-    function burn(uint256 amount) public onlyRole(MINTER_ROLE) {
+    function unwrap(uint256 amount) public onlyRole(MINTER_ROLE) {
         _burn(msg.sender, amount);
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, amount);
 
         emit Unwrapped(amount, msg.sender);
+    }
+
+    /**
+     * @dev Creates `amount` tokens and assigns them to `to`, increasing
+     * the total supply.
+     *
+     * Emits a {Transfer} event with `from` set to the zero address.
+     * Emits a {Minted} event with `to` set to to, `amount` set to the amount, and `sender` set to
+     * the sender.
+     *
+     * Requirements:
+     *
+     * - `to` cannot be the zero address.
+     * - The sum of `amount` and totalSupply cannot go over the maxSupply.
+     * - `to` must be on the list of addresses that can accept a minted tokens
+     */
+    function mint(address to, uint256 amount) public virtual onlyRole(MINTER_ROLE) {
+        require(
+            !StablecoinTemplateV3StorageLib.getStorage()._migrationToWrappedCompleted,
+            MigrationToWrappedCompleted()
+        );
+        StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
+        require(totalSupply() + amount <= $._maxSupply, MaxSupplyExceeded());
+        require(isMintRecipient(to), AccountNotValidRecipient());
+
+        _mint(to, amount);
+
+        emit Minted(amount, to, msg.sender);
+    }
+
+    /**
+     * @dev Destroys `amount` tokens from `sender`, reducing the
+     * total supply.
+     *
+     * Emits a {Transfer} event with `to` set to the zero address.
+     * Emits a {Burned} event with `amount` set to the amount, and `sender` set to the sender.
+     *
+     * Requirements:
+     *
+     * - `sender` must have at least `amount` tokens.
+     */
+    function burn(uint256 amount) public virtual onlyRole(MINTER_ROLE) {
+        require(
+            !StablecoinTemplateV3StorageLib.getStorage()._migrationToWrappedCompleted,
+            MigrationToWrappedCompleted()
+        );
+        _burn(msg.sender, amount);
+
+        emit Burned(amount, msg.sender);
+    }
+
+    function completeMigrationToWrapped() public onlyRole(DEFAULT_ADMIN_ROLE) {
+        StablecoinTemplateV3StorageLib.getStorage()._migrationToWrappedCompleted = true;
+        require(
+            RESERVE_LEDGER_ADDRESS.balanceOf(address(this)) == totalSupply(),
+            ReserveLedgerBalanceMismatch()
+        );
+        emit MigrationHasCompleted(msg.sender);
     }
 
     /**

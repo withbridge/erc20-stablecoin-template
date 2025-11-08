@@ -86,6 +86,12 @@ interface StablecoinTemplateV3ErrorsAndEvents {
      */
     event MintRecipientPolicyIdSet(address indexed sender, uint64 policyId);
 
+    /**
+     * @notice Emitted when the migration to wrapped is completed.
+     * @param sender The address that completed the migration.
+     */
+    event MigrationHasCompleted(address indexed sender);
+
     /////////////
     // Errors  //
     /////////////
@@ -139,5 +145,15 @@ interface StablecoinTemplateV3ErrorsAndEvents {
      * @notice Thrown when there is a mismatch in reserve ledger balance.
      */
     error ReserveLedgerBalanceMismatch();
+
+    /**
+     * @notice Thrown when the migration to wrapped is completed.
+     */
+    error MigrationToWrappedCompleted();
+
+    /**
+     * @notice Thrown when the migration to wrapped is not completed.
+     */
+    error MigrationToWrappedNotCompleted();
 
 }
