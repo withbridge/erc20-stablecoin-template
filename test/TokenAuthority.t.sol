@@ -177,28 +177,14 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_mint_with_max_limits_no_decrement() public {
-        uint256 mintAmount = 50;
-
         // Setup with max uint256 limits (unlimited)
         vm.startPrank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
         tokenAuthority.setTxnMintLimit(address(mockToken), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
         tokenAuthority.setMinterAllowance(address(mockToken), minter, type(uint256).max);
         vm.stopPrank();
 
-        // Mint
-        vm.prank(minter);
-        tokenAuthority.mint(address(mockToken), user1, mintAmount);
-
-        // Verify token was minted
-        assertEq(mockToken.balanceOf(user1), mintAmount);
-
-        // Verify limits were NOT decremented (still max)
-        uint256 txnLimit = tokenAuthority.getStablecoinTxnMintLimit(address(mockToken));
-        assertEq(txnLimit, type(uint256).max);
-
-        // Verify allowance was NOT decremented (still max)
-        uint256 remainingAllowance = tokenAuthority.getMinterAllowance(address(mockToken), minter);
-        assertEq(remainingAllowance, type(uint256).max);
     }
 
     function test_mint_revert_txn_limit_exceeded_low_txn_limit() public {
