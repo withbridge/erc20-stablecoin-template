@@ -401,47 +401,28 @@ contract TokenAuthorityTest is Test {
                             Bridge Ecosystem Contract Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_setBridgeEcosystemContract_success() public {
+    function test_grantRole_success() public {
         address bridgeContract = makeAddr("bridge");
 
         vm.prank(admin);
-        vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.BridgeEcosystemContractSet(admin, bridgeContract, true);
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+        tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
-        assertTrue(tokenAuthority.bridgeEcosystemContracts(bridgeContract));
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
     }
 
-    function test_setBridgeEcosystemContract_disable() public {
+    function test_revokeRole_disable() public {
         address bridgeContract = makeAddr("bridge");
 
         // First enable
         vm.prank(admin);
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
-        assertTrue(tokenAuthority.bridgeEcosystemContracts(bridgeContract));
+        tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
+        assertTrue(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
 
         // Then disable
         vm.prank(admin);
-        vm.expectEmit(true, true, true, true);
-        emit ITokenAuthority.BridgeEcosystemContractSet(admin, bridgeContract, false);
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, false);
+        tokenAuthority.revokeRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
-        assertFalse(tokenAuthority.bridgeEcosystemContracts(bridgeContract));
-    }
-
-    function test_setBridgeEcosystemContract_revert_not_admin() public {
-        address bridgeContract = makeAddr("bridge");
-
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                tokenAuthority.DEFAULT_ADMIN_ROLE()
-            )
-        );
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
-        vm.stopPrank();
+        assertFalse(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
     }
 
     function test_mint_bridge_ecosystem_bypasses_limits() public {
@@ -450,13 +431,13 @@ contract TokenAuthorityTest is Test {
 
         // Enable bridge contract
         vm.prank(admin);
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+        tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
         // Do NOT set any limits or allowances for the bridge contract
 
         // Bridge contract should be able to mint without limits
         vm.prank(bridgeContract);
-        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+        tokenAuthority.mintBridgeEcosystem(address(mockToken), user1, mintAmount);
 
         // Verify tokens were minted
         assertEq(mockToken.balanceOf(user1), mintAmount);
@@ -468,7 +449,7 @@ contract TokenAuthorityTest is Test {
 
         // Enable bridge contract
         vm.prank(admin);
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+        tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
         // Set very low txn limit (would normally prevent minting)
         vm.prank(admin);
@@ -476,7 +457,7 @@ contract TokenAuthorityTest is Test {
 
         // Bridge contract should still be able to mint despite low txn limit
         vm.prank(bridgeContract);
-        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+        tokenAuthority.mintBridgeEcosystem(address(mockToken), user1, mintAmount);
 
         // Verify tokens were minted
         assertEq(mockToken.balanceOf(user1), mintAmount);
@@ -488,7 +469,7 @@ contract TokenAuthorityTest is Test {
 
         // Enable bridge contract
         vm.prank(admin);
-        tokenAuthority.setBridgeEcosystemContract(bridgeContract, true);
+        tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
         // Set very low minter allowance (would normally prevent minting)
         vm.prank(admin);
@@ -496,7 +477,7 @@ contract TokenAuthorityTest is Test {
 
         // Bridge contract should still be able to mint despite low allowance
         vm.prank(bridgeContract);
-        tokenAuthority.mint(address(mockToken), user1, mintAmount);
+        tokenAuthority.mintBridgeEcosystem(address(mockToken), user1, mintAmount);
 
         // Verify tokens were minted
         assertEq(mockToken.balanceOf(user1), mintAmount);

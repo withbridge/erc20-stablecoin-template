@@ -450,6 +450,199 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                        Legacy Mint/Burn Tests (Pre-Migration)
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_legacy_mint_success() public {
+        // Set max supply to allow legacy mint
+        vm.prank(admin);
+        token.setMaxSupply(1000);
+
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit Minted(50, user1, minter);
+        token.mint(user1, 50);
+
+        assertEq(token.totalSupply(), 50);
+        assertEq(token.balanceOf(user1), 50);
+    }
+
+    function test_legacy_mint_revert_not_recipient() public {
+        // Set max supply to allow legacy mint
+        vm.prank(admin);
+        token.setMaxSupply(1000);
+
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
+        token.mint(user2, 50);
+    }
+
+    function test_legacy_mint_revert_max_supply() public {
+        // Set max supply on the wrapped token
+        vm.prank(admin);
+        token.setMaxSupply(50);
+
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(MaxSupplyExceeded.selector));
+        token.mint(user1, 100);
+    }
+
+    function test_legacy_burn_success() public {
+        // Set max supply to allow legacy mint
+        vm.prank(admin);
+        token.setMaxSupply(1000);
+
+        // First mint some tokens using legacy mint
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        token.mint(user1, 50);
+
+        // Transfer to minter for burning
+        vm.prank(user1);
+        token.transfer(minter, 50);
+
+        // Now burn
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit Burned(50, minter);
+        token.burn(50);
+
+        assertEq(token.totalSupply(), 0);
+        assertEq(token.balanceOf(minter), 0);
+    }
+
+    function test_legacy_burn_revert_exceeds_balance() public {
+        // Set max supply to allow legacy mint
+        vm.prank(admin);
+        token.setMaxSupply(1000);
+
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, minter, 0, 100)
+        );
+        token.burn(100);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                        Migration Completion Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_completeMigrationToWrapped_success() public {
+        // First, wrap some tokens to match reserve ledger balance
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        assertEq(token.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+
+        // Complete migration
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit MigrationHasCompleted(admin);
+        token.completeMigrationToWrapped();
+    }
+
+    function test_completeMigrationToWrapped_revert_balance_mismatch() public {
+        // Wrap some tokens
+        vm.prank(minter);
+        token.wrap(user1, 50);
+
+        assertEq(token.totalSupply(), 50);
+        assertEq(reserveLedger.balanceOf(address(token)), 50);
+
+        // Now use legacy mint to create a mismatch
+        vm.prank(admin);
+        token.setMaxSupply(1000);
+
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        token.mint(user1, 25);
+
+        // Now total supply is 75 but reserve ledger balance is only 50
+        assertEq(token.totalSupply(), 75);
+        assertEq(reserveLedger.balanceOf(address(token)), 50);
+
+        // This should revert because reserve ledger balance doesn't match total supply
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ReserveLedgerBalanceMismatch.selector));
+        token.completeMigrationToWrapped();
+    }
+
+    function test_completeMigrationToWrapped_revert_not_admin() public {
+        // Set up valid state for migration
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        // Get the role before the prank
+        bytes32 adminRole = token.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                adminRole
+            )
+        );
+        token.completeMigrationToWrapped();
+    }
+
+    function test_legacy_mint_revert_after_migration() public {
+        // Complete migration first
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        // Now try to use legacy mint - should revert
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(MigrationToWrappedCompleted.selector));
+        token.mint(user1, 50);
+    }
+
+    function test_legacy_burn_revert_after_migration() public {
+        // Wrap all reserve tokens to complete migration
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        // Grant minter role
+        vm.prank(admin);
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        // Transfer some tokens to minter
+        vm.prank(user1);
+        token.transfer(minter, 50);
+
+        // Now try to use legacy burn - should revert
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(MigrationToWrappedCompleted.selector));
+        token.burn(50);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                             Upgrade Tests
     //////////////////////////////////////////////////////////////////////////*/
 

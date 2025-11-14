@@ -236,6 +236,23 @@ abstract contract StablecoinTemplateV3Base is
     }
 
     /**
+     * @dev Sets the max supply.
+     *
+     * Emits a {MaxSupplySet} event with `amount` set to the amount, and `sender` set to the sender.
+     *
+     * Requirements:
+     *
+     * - `amount` must be greater than or equal to the total supply.
+     */
+    function setMaxSupply(uint256 amount) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(amount >= totalSupply(), MaxSupplyMustBeGreaterThanOrEqualToTotalSupply());
+
+        StablecoinTemplateV3StorageLib.getStorage()._maxSupply = amount;
+
+        emit MaxSupplySet(amount, msg.sender);
+    }
+
+    /**
      * @dev Revokes `role` from `account`.
      *
      * Requirements:
@@ -281,7 +298,6 @@ abstract contract StablecoinTemplateV3Base is
         override
         whenNotPaused
         whenNotInBlockedList(from)
-        whenNotInBlockedList(to)
     {
         super._update(from, to, amount);
     }

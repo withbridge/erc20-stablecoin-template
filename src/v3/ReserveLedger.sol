@@ -83,21 +83,4 @@ contract ReserveLedger is StablecoinTemplateV3Base {
         emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
     }
 
-    /**
-     * @dev Sets the max supply.
-     *
-     * Emits a {MaxSupplySet} event with `amount` set to the amount, and `sender` set to the sender.
-     *
-     * Requirements:
-     *
-     * - `amount` must be greater than or equal to the total supply.
-     */
-    function setMaxSupply(uint256 amount) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(amount >= totalSupply(), MaxSupplyMustBeGreaterThanOrEqualToTotalSupply());
-
-        StablecoinTemplateV3StorageLib.getStorage()._maxSupply = amount;
-
-        emit MaxSupplySet(amount, msg.sender);
-    }
-
 }

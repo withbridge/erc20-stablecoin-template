@@ -32,6 +32,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     bytes32 public constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
+    bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE = keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -48,11 +49,6 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
     /// mint limits for the stablecoin)
     mapping(address stablecoinContract => uint256 mintTxnLimit) public mintTxnLimits;
-
-    /// @notice Maps each bridge ecosystem contract address to a boolean indicating whether it is
-    /// enabled @dev bridgeEcosystemContracts[bridgeEcosystemContract] = enabled (true if enabled,
-    /// false if disabled)
-    mapping(address bridgeEcosystemContract => bool enabled) public bridgeEcosystemContracts;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -101,28 +97,32 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     function mint(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
 
-        if (!bridgeEcosystemContracts[msg.sender]) {
-            uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
-            uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
-            require(minterAllowance >= amount, MinterAllowanceExceeded());
-            require(mintTxnLimit >= amount, MintTxnLimitExceeded());
+        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
+        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
+        require(minterAllowance >= amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
 
-            if (minterAllowance != type(uint256).max) {
-                minterAllowances[stablecoinContract][msg.sender] -= amount;
-            }
+        if (minterAllowance != type(uint256).max) {
+            minterAllowances[stablecoinContract][msg.sender] -= amount;
         }
 
-        require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        _mint(stablecoinContract, to, amount);
+    }
 
-        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(to, amount);
-        } else {
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-            IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
-        }
-
-        emit Mint(msg.sender, stablecoinContract, to, amount);
+    
+    /**
+     * @notice Mints stablecoins to a specified address for bridge ecosystem contracts.
+     * @dev Callable only by contracts with the BRIDGE_ECOSYSTEM_CONTRACT_ROLE.
+     *      Does not enforce minter allowance or per-transaction mint limits.
+     * @param stablecoinContract The address of the stablecoin contract to mint from.
+     * @param to The recipient address that will receive the minted tokens.
+     * @param amount The amount of tokens to mint.
+     */
+    function mintBridgeEcosystem(address stablecoinContract, address to, uint256 amount)
+        public
+        onlyRole(BRIDGE_ECOSYSTEM_CONTRACT_ROLE)
+    {
+        _mint(stablecoinContract, to, amount);
     }
 
     /**
@@ -222,26 +222,6 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Setters
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Enables or disables a bridge ecosystem contract
-     * @dev Only callable by an account with the default admin role.
-     *      Setting `enabled` to true allows the given address to be recognized
-     *      as part of the bridge ecosystem, potentially exempting it from certain restrictions.
-     * @param bridgeEcosystemContract The address of the bridge ecosystem contract to modify
-     * @param enabled Set to true to enable, false to disable
-     */
-    function setBridgeEcosystemContract(address bridgeEcosystemContract, bool enabled)
-        public
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        bridgeEcosystemContracts[bridgeEcosystemContract] = enabled;
-        emit BridgeEcosystemContractSet(msg.sender, bridgeEcosystemContract, enabled);
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
                                 Getters
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -287,4 +267,21 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         onlyRole(DEFAULT_ADMIN_ROLE)
     { }
 
+    /*//////////////////////////////////////////////////////////////////////////
+                                Internal Functions
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function _mint(address stablecoinContract, address to, uint256 amount) internal {
+        require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+
+        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
+            IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(to, amount);
+        } else {
+            IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
+            IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
+            IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
+        }
+
+        emit Mint(msg.sender, stablecoinContract, to, amount);
+    }
 }
