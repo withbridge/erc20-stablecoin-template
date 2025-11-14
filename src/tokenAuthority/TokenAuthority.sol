@@ -102,9 +102,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         require(minterAllowance >= amount, MinterAllowanceExceeded());
         require(mintTxnLimit >= amount, MintTxnLimitExceeded());
 
-        if (minterAllowance != type(uint256).max) {
-            minterAllowances[stablecoinContract][msg.sender] -= amount;
-        }
+        minterAllowances[stablecoinContract][msg.sender] -= amount;
 
         _mint(stablecoinContract, to, amount);
     }
