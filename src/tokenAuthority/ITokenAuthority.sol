@@ -126,6 +126,16 @@ interface ITokenAuthority {
     function mint(address stablecoinContract, address to, uint256 amount) external;
 
     /**
+     * @notice Mints stablecoins to a specified address for bridge ecosystem contracts.
+     * @dev Callable only by contracts with the BRIDGE_ECOSYSTEM_CONTRACT_ROLE.
+     *      Does not enforce minter allowance or per-transaction mint limits.
+     * @param stablecoinContract The address of the stablecoin contract to mint from.
+     * @param to The recipient address that will receive the minted tokens.
+     * @param amount The amount of tokens to mint.
+     */
+    function mintBridgeEcosystem(address stablecoinContract, address to, uint256 amount) external;
+
+    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
      * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin
@@ -160,16 +170,6 @@ interface ITokenAuthority {
      */
     function setMinterAllowance(address stablecoinContract, address minter, uint256 minterAllowance)
         external;
-
-    /**
-     * @notice Enables or disables a bridge ecosystem contract
-     * @dev Only callable by an account with the default admin role.
-     *      Setting `enabled` to true allows the given address to be recognized
-     *      as part of the bridge ecosystem, potentially exempting it from certain restrictions.
-     * @param bridgeEcosystemContract The address of the bridge ecosystem contract to modify
-     * @param enabled Set to true to enable, false to disable
-     */
-    function setBridgeEcosystemContract(address bridgeEcosystemContract, bool enabled) external;
 
     /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract
