@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IERC20BurnMint } from "src/utils/IERC20BurnMint.sol";
-import { IERC20WrapUnwrap } from "src/utils/IERC20WrapUnwrap.sol";
+import { IERC20Mintable } from "src/utils/IERC20Mintable.sol";
+import { IWrappedERC20 } from "src/utils/IWrappedERC20.sol";
 
 // Mock ERC20 token for testing
-contract MockERC20BurnMint is IERC20BurnMint {
+contract MockERC20BurnMint is IERC20Mintable {
 
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -57,7 +57,7 @@ contract MockERC20BurnMint is IERC20BurnMint {
 }
 
 // Mock ERC20 token with wrap/unwrap functionality for testing stablecoins
-contract MockERC20WrapUnwrap is IERC20WrapUnwrap {
+contract MockERC20WrapUnwrap is IWrappedERC20 {
 
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -66,10 +66,10 @@ contract MockERC20WrapUnwrap is IERC20WrapUnwrap {
     string public symbol = "MOCKW";
     uint8 public decimals = 18;
 
-    IERC20BurnMint public immutable UNDERLYING_TOKEN;
+    IERC20Mintable public immutable UNDERLYING_TOKEN;
 
     constructor(address _underlyingToken) {
-        UNDERLYING_TOKEN = IERC20BurnMint(_underlyingToken);
+        UNDERLYING_TOKEN = IERC20Mintable(_underlyingToken);
     }
 
     function totalSupply() external view returns (uint256) {

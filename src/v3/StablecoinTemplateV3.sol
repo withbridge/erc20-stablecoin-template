@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IERC20BurnMint } from "../utils/IERC20BurnMint.sol";
+import { IERC20Mintable } from "../utils/IERC20Mintable.sol";
 import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
 import {
     StablecoinTemplateV3Storage,
@@ -11,15 +11,15 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 
 contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
-    using SafeERC20 for IERC20BurnMint;
+    using SafeERC20 for IERC20Mintable;
 
-    IERC20BurnMint public immutable RESERVE_LEDGER_ADDRESS;
+    IERC20Mintable public immutable RESERVE_LEDGER_ADDRESS;
 
     constructor(address _reserveLedgerAddress, address _authRegistry)
         StablecoinTemplateV3Base(_authRegistry)
     {
         _disableInitializers();
-        RESERVE_LEDGER_ADDRESS = IERC20BurnMint(_reserveLedgerAddress);
+        RESERVE_LEDGER_ADDRESS = IERC20Mintable(_reserveLedgerAddress);
     }
 
     /**

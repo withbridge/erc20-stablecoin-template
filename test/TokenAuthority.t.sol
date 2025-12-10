@@ -184,7 +184,6 @@ contract TokenAuthorityTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
         tokenAuthority.setMinterAllowance(address(mockToken), minter, type(uint256).max);
         vm.stopPrank();
-
     }
 
     function test_mint_revert_txn_limit_exceeded_low_txn_limit() public {
@@ -393,7 +392,9 @@ contract TokenAuthorityTest is Test {
         vm.prank(admin);
         tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
-        assertTrue(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
+        assertTrue(
+            tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract)
+        );
     }
 
     function test_revokeRole_disable() public {
@@ -402,13 +403,17 @@ contract TokenAuthorityTest is Test {
         // First enable
         vm.prank(admin);
         tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
-        assertTrue(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
+        assertTrue(
+            tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract)
+        );
 
         // Then disable
         vm.prank(admin);
         tokenAuthority.revokeRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
-        assertFalse(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
+        assertFalse(
+            tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract)
+        );
     }
 
     function test_mint_bridge_ecosystem_bypasses_limits() public {
@@ -485,17 +490,19 @@ contract TokenAuthorityTest is Test {
         vm.stopPrank();
 
         // Mint to tokenAuthority contract (burn() will burn from the contract's balance)
-        vm.prank(minter);
-        tokenAuthority.mint(address(reserveLedgerToken), address(tokenAuthority), mintAmount);
+        vm.startPrank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), minter, mintAmount);
+        reserveLedgerToken.approve(address(tokenAuthority), burnAmount);
+        vm.stopPrank();
 
-        assertEq(reserveLedgerToken.balanceOf(address(tokenAuthority)), mintAmount);
+        assertEq(reserveLedgerToken.balanceOf(minter), mintAmount);
 
         // Burn some tokens (burn will burn from TokenAuthority contract's balance)
         vm.prank(minter);
         tokenAuthority.burn(address(reserveLedgerToken), burnAmount);
 
         // Verify tokens were burned from TokenAuthority contract
-        assertEq(reserveLedgerToken.balanceOf(address(tokenAuthority)), mintAmount - burnAmount);
+        assertEq(reserveLedgerToken.balanceOf(minter), mintAmount - burnAmount);
     }
 
     function test_burn_wrapped_stablecoin_success() public {
@@ -510,17 +517,19 @@ contract TokenAuthorityTest is Test {
         vm.stopPrank();
 
         // Mint to the TokenAuthority contract
-        vm.prank(minter);
-        tokenAuthority.mint(address(mockToken), address(tokenAuthority), mintAmount);
+        vm.startPrank(minter);
+        tokenAuthority.mint(address(mockToken), minter, mintAmount);
+        mockToken.approve(address(tokenAuthority), burnAmount);
+        vm.stopPrank();
 
-        assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount);
+        assertEq(mockToken.balanceOf(minter), mintAmount);
 
         // Burn wrapped tokens (unwrap) - unwrap is called from TokenAuthority contract
         vm.prank(minter);
         tokenAuthority.burn(address(mockToken), burnAmount);
 
         // Verify wrapped tokens were burned (unwrapped) from TokenAuthority
-        assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount - burnAmount);
+        assertEq(mockToken.balanceOf(address(minter)), mintAmount - burnAmount);
         // And transfers underlying tokens were burned as well
         assertEq(reserveLedgerToken.balanceOf(address(tokenAuthority)), 0);
     }
@@ -582,10 +591,12 @@ contract TokenAuthorityTest is Test {
         vm.stopPrank();
 
         // Mint wrapped tokens to the TokenAuthority contract
-        vm.prank(minter);
-        tokenAuthority.mint(address(mockToken), address(tokenAuthority), mintAmount);
+        vm.startPrank(minter);
+        tokenAuthority.mint(address(mockToken), minter, mintAmount);
+        mockToken.approve(address(tokenAuthority), mintAmount);
+        vm.stopPrank();
 
-        assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount);
+        assertEq(mockToken.balanceOf(minter), mintAmount);
 
         // Unwrap tokens - should transfer reserve tokens to minter
         vm.prank(minter);
@@ -594,7 +605,7 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.unwrap(address(mockToken), unwrapAmount);
 
         // Verify wrapped tokens were burned from TokenAuthority
-        assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount - unwrapAmount);
+        assertEq(mockToken.balanceOf(minter), mintAmount - unwrapAmount);
         // Verify reserve tokens were transferred to minter
         assertEq(reserveLedgerToken.balanceOf(minter), unwrapAmount);
     }
@@ -648,23 +659,23 @@ contract TokenAuthorityTest is Test {
         vm.stopPrank();
 
         // Mint wrapped tokens to the TokenAuthority contract
-        vm.prank(minter);
-        tokenAuthority.mint(address(mockToken), address(tokenAuthority), mintAmount);
+        vm.startPrank(minter);
+        tokenAuthority.mint(address(mockToken), minter, mintAmount);
+        mockToken.approve(address(tokenAuthority), unwrapAmount1 + unwrapAmount2);
+        vm.stopPrank();
 
         // First unwrap
         vm.prank(minter);
         tokenAuthority.unwrap(address(mockToken), unwrapAmount1);
 
-        assertEq(mockToken.balanceOf(address(tokenAuthority)), mintAmount - unwrapAmount1);
+        assertEq(mockToken.balanceOf(minter), mintAmount - unwrapAmount1);
         assertEq(reserveLedgerToken.balanceOf(minter), unwrapAmount1);
 
         // Second unwrap
         vm.prank(minter);
         tokenAuthority.unwrap(address(mockToken), unwrapAmount2);
 
-        assertEq(
-            mockToken.balanceOf(address(tokenAuthority)), mintAmount - unwrapAmount1 - unwrapAmount2
-        );
+        assertEq(mockToken.balanceOf(minter), mintAmount - unwrapAmount1 - unwrapAmount2);
         assertEq(reserveLedgerToken.balanceOf(minter), unwrapAmount1 + unwrapAmount2);
     }
 

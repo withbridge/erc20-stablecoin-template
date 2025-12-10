@@ -38,6 +38,9 @@ interface ITokenAuthority {
     /// maximum amount
     error AmountExceedsAbsoluteMax();
 
+    /// @notice Thrown when there is a mismatch in reserve ledger balance.
+    error ReserveLedgerBalanceMismatch();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
