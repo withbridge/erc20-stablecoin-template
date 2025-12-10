@@ -112,7 +112,7 @@ abstract contract StablecoinTemplateV3Base is
 
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
 
-        $._maxSupply = 0;
+        $._maxSupply = totalSupply();
         $._decimals = __decimals;
 
         $._transferPolicyId = _transferPolicyId;
