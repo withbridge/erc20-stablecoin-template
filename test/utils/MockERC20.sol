@@ -54,6 +54,11 @@ contract MockERC20BurnMint is IERC20BurnMint {
         _totalSupply += amount;
     }
 
+    function burnFrom(address account, uint256 amount) external {
+        _balances[account] -= amount;
+        _totalSupply -= amount;
+    }
+
 }
 
 // Mock ERC20 token with wrap/unwrap functionality for testing stablecoins

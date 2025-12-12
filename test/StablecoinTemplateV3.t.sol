@@ -255,6 +255,150 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                            BurnFrom Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_burnFrom_success() public {
+        // Setup: wrap tokens to user1 (this transfers reserve ledger tokens to the contract)
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        // Complete migration to enable reserve ledger burning
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        assertEq(token.balanceOf(user1), 100);
+        assertEq(token.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+        uint256 initialReserveLedgerSupply = reserveLedger.totalSupply();
+
+        // Burn 50 tokens from user1 (burns user1's wrapped tokens and contract's reserve ledger
+        // tokens)
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit Burned(50, minter);
+        token.burnFrom(user1, 50);
+
+        // Verify wrapped token balances
+        assertEq(token.balanceOf(user1), 50);
+        assertEq(token.totalSupply(), 50);
+        // Verify reserve ledger tokens are burned from contract's balance
+        assertEq(reserveLedger.balanceOf(address(token)), 50);
+        assertEq(reserveLedger.totalSupply(), initialReserveLedgerSupply - 50);
+    }
+
+    function test_burnFrom_revert_not_minter() public {
+        // Setup: wrap tokens to user1
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        // Get the role before prank
+        bytes32 minterRole = token.MINTER_ROLE();
+
+        // Try to burn from user1 as user3 (who doesn't have MINTER_ROLE on token)
+        vm.prank(user3);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user3, minterRole
+            )
+        );
+        token.burnFrom(user1, 50);
+    }
+
+    function test_burnFrom_revert_insufficient_balance() public {
+        // Setup: wrap tokens to user1
+        vm.prank(minter);
+        token.wrap(user1, 50);
+
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        // Try to burn more than user1's wrapped token balance
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, user1, 50, 100)
+        );
+        token.burnFrom(user1, 100);
+    }
+
+    function test_burnFrom_burns_entire_balance() public {
+        // Setup: wrap tokens to user1
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        assertEq(token.balanceOf(user1), 100);
+        assertEq(token.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+        uint256 initialReserveLedgerSupply = reserveLedger.totalSupply();
+
+        // Burn all tokens from user1
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit Burned(100, minter);
+        token.burnFrom(user1, 100);
+
+        // Verify all balances
+        assertEq(token.balanceOf(user1), 0);
+        assertEq(token.totalSupply(), 0);
+        assertEq(reserveLedger.balanceOf(address(token)), 0);
+        assertEq(reserveLedger.totalSupply(), initialReserveLedgerSupply - 100);
+    }
+
+    function test_burnFrom_revert_insufficient_reserve_ledger() public {
+        // Setup: wrap tokens to user1 (contract gets 50 reserve ledger tokens)
+        vm.prank(minter);
+        token.wrap(user1, 50);
+
+        vm.prank(admin);
+        token.completeMigrationToWrapped();
+
+        // Manually transfer 25 reserve ledger tokens out of contract to create mismatch
+        vm.prank(address(token));
+        reserveLedger.transfer(admin, 25);
+
+        assertEq(reserveLedger.balanceOf(address(token)), 25);
+
+        // Try to burn 50 - should fail because contract only has 25 reserve ledger tokens
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, address(token), 25, 50
+            )
+        );
+        token.burnFrom(user1, 50);
+    }
+
+    function test_burnFrom_before_migration() public {
+        // Setup: wrap tokens to user1 (migration NOT completed)
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        assertEq(token.balanceOf(user1), 100);
+        assertEq(token.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+        uint256 initialReserveLedgerSupply = reserveLedger.totalSupply();
+
+        // Burn 50 tokens from user1 before migration (should NOT burn reserve ledger tokens)
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true);
+        emit Burned(50, minter);
+        token.burnFrom(user1, 50);
+
+        // Verify wrapped token balances
+        assertEq(token.balanceOf(user1), 50);
+        assertEq(token.totalSupply(), 50);
+        // Reserve ledger tokens should NOT be burned before migration
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+        assertEq(reserveLedger.totalSupply(), initialReserveLedgerSupply);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                         Burn From Blocked Address Tests
     //////////////////////////////////////////////////////////////////////////*/
 

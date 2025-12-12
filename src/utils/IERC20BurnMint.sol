@@ -20,4 +20,9 @@ interface IERC20BurnMint is IERC20 {
     /// @param amount The amount of tokens to mint
     function mint(address to, uint256 amount) external;
 
+    /// @notice Burns amount` of tokens from `account`
+    /// @param account Address of the account tokens are being burned from
+    /// @param amount Amount of tokens being burned
+    function burnFrom(address account, uint256 amount) external;
+
 }

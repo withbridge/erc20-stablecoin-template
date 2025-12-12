@@ -155,4 +155,28 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
     }
 
+    /**
+     * @dev Destroys `amount` tokens from `account`, reducing the
+     * total supply.
+     *
+     * Emits a {Transfer} event with `to` set to the zero address.
+     * Emits a {Burned} event with `amount` set to the amount, and `sender` set to the sender.
+     *
+     * If migration has been completed then we burn the RD as well
+     *
+     * Requirements:
+     *
+     * - `account` must have at least `amount` tokens.
+     * - `sender` must have the `MINTER_ROLE` role
+     */
+    function burnFrom(address account, uint256 amount) public virtual onlyRole(MINTER_ROLE) {
+        _burn(account, amount);
+
+        if (StablecoinTemplateV3StorageLib.getStorage()._migrationToWrappedCompleted) {
+            RESERVE_LEDGER_ADDRESS.burn(amount);
+        }
+
+        emit Burned(amount, msg.sender);
+    }
+
 }
