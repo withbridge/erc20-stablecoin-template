@@ -595,9 +595,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                adminRole
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, adminRole
             )
         );
         token.completeMigrationToWrapped();

@@ -184,7 +184,6 @@ contract TokenAuthorityTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
         tokenAuthority.setMinterAllowance(address(mockToken), minter, type(uint256).max);
         vm.stopPrank();
-
     }
 
     function test_mint_revert_txn_limit_exceeded_low_txn_limit() public {
@@ -393,7 +392,9 @@ contract TokenAuthorityTest is Test {
         vm.prank(admin);
         tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
-        assertTrue(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
+        assertTrue(
+            tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract)
+        );
     }
 
     function test_revokeRole_disable() public {
@@ -402,13 +403,17 @@ contract TokenAuthorityTest is Test {
         // First enable
         vm.prank(admin);
         tokenAuthority.grantRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
-        assertTrue(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
+        assertTrue(
+            tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract)
+        );
 
         // Then disable
         vm.prank(admin);
         tokenAuthority.revokeRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
-        assertFalse(tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract));
+        assertFalse(
+            tokenAuthority.hasRole(tokenAuthority.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract)
+        );
     }
 
     function test_mint_bridge_ecosystem_bypasses_limits() public {

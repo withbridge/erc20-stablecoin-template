@@ -32,7 +32,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     bytes32 public constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
-    bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE = keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
+    bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE =
+        keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -107,7 +108,6 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         _mint(stablecoinContract, to, amount);
     }
 
-    
     /**
      * @notice Mints stablecoins to a specified address for bridge ecosystem contracts.
      * @dev Callable only by contracts with the BRIDGE_ECOSYSTEM_CONTRACT_ROLE.
@@ -284,4 +284,5 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
     }
+
 }
