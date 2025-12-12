@@ -93,9 +93,9 @@ contract ReserveLedger is StablecoinTemplateV3Base {
      * Requirements:
      *
      * - `account` must have at least `amount` tokens.
-     * - `sender` must have the `MINTER_ROLE` role
+     * - `sender` must have the `BURN_FROM_ROLE` role
      */
-    function burnFrom(address account, uint256 amount) public virtual onlyRole(MINTER_ROLE) {
+    function burnFrom(address account, uint256 amount) public virtual onlyRole(BURN_FROM_ROLE) {
         _burn(account, amount);
 
         emit Burned(amount, msg.sender);

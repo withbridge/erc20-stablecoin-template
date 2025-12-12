@@ -33,6 +33,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
     address pauser;
     address unpauser;
     address blockedBurner;
+    address burner;
     address user1;
     address user2;
     address user3;
@@ -46,6 +47,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         pauser = makeAddr("pauser");
         unpauser = makeAddr("unpauser");
         blockedBurner = makeAddr("blockedBurner");
+        burner = makeAddr("burner");
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
         user3 = makeAddr("user3");
@@ -120,6 +122,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         token.grantRole(token.PAUSER_ROLE(), pauser);
         token.grantRole(token.UNPAUSER_ROLE(), unpauser);
         token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
+        token.grantRole(token.BURN_FROM_ROLE(), burner);
 
         // set up reserve ledger
         reserveLedger.setMaxSupply(100);
@@ -274,9 +277,9 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
         // Burn 50 tokens from user1 (burns user1's wrapped tokens and contract's reserve ledger
         // tokens)
-        vm.prank(minter);
+        vm.prank(burner);
         vm.expectEmit(true, true, true, true);
-        emit Burned(50, minter);
+        emit Burned(50, burner);
         token.burnFrom(user1, 50);
 
         // Verify wrapped token balances
@@ -287,7 +290,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertEq(reserveLedger.totalSupply(), initialReserveLedgerSupply - 50);
     }
 
-    function test_burnFrom_revert_not_minter() public {
+    function test_burnFrom_revert_not_burner() public {
         // Setup: wrap tokens to user1
         vm.prank(minter);
         token.wrap(user1, 100);
@@ -296,13 +299,13 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         token.completeMigrationToWrapped();
 
         // Get the role before prank
-        bytes32 minterRole = token.MINTER_ROLE();
+        bytes32 burnFromRole = token.BURN_FROM_ROLE();
 
-        // Try to burn from user1 as user3 (who doesn't have MINTER_ROLE on token)
+        // Try to burn from user1 as user3 (who doesn't have BURN_FROM_ROLE on token)
         vm.prank(user3);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, user3, minterRole
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user3, burnFromRole
             )
         );
         token.burnFrom(user1, 50);
@@ -317,7 +320,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         token.completeMigrationToWrapped();
 
         // Try to burn more than user1's wrapped token balance
-        vm.prank(minter);
+        vm.prank(burner);
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, user1, 50, 100)
         );
@@ -338,9 +341,9 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         uint256 initialReserveLedgerSupply = reserveLedger.totalSupply();
 
         // Burn all tokens from user1
-        vm.prank(minter);
+        vm.prank(burner);
         vm.expectEmit(true, true, true, true);
-        emit Burned(100, minter);
+        emit Burned(100, burner);
         token.burnFrom(user1, 100);
 
         // Verify all balances
@@ -365,7 +368,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertEq(reserveLedger.balanceOf(address(token)), 25);
 
         // Try to burn 50 - should fail because contract only has 25 reserve ledger tokens
-        vm.prank(minter);
+        vm.prank(burner);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IERC20Errors.ERC20InsufficientBalance.selector, address(token), 25, 50
@@ -385,9 +388,9 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         uint256 initialReserveLedgerSupply = reserveLedger.totalSupply();
 
         // Burn 50 tokens from user1 before migration (should NOT burn reserve ledger tokens)
-        vm.prank(minter);
+        vm.prank(burner);
         vm.expectEmit(true, true, true, true);
-        emit Burned(50, minter);
+        emit Burned(50, burner);
         token.burnFrom(user1, 50);
 
         // Verify wrapped token balances

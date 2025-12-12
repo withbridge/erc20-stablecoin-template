@@ -44,6 +44,7 @@ abstract contract StablecoinTemplateV3Base is
     bytes32 public constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 public constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
     bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
+    bytes32 public constant BURN_FROM_ROLE = keccak256("BURN_FROM_ROLE");
 
     IAuthRegistry public immutable AUTH_REGISTRY;
 

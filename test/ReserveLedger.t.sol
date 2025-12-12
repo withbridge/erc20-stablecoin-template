@@ -28,6 +28,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     address pauser;
     address unpauser;
     address blockedBurner;
+    address burner;
     address user1;
     address user2;
     address user3;
@@ -41,6 +42,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         pauser = makeAddr("pauser");
         unpauser = makeAddr("unpauser");
         blockedBurner = makeAddr("blockedBurner");
+        burner = makeAddr("burner");
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
         user3 = makeAddr("user3");
@@ -75,6 +77,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         reserveLedger.grantRole(reserveLedger.PAUSER_ROLE(), pauser);
         reserveLedger.grantRole(reserveLedger.UNPAUSER_ROLE(), unpauser);
         reserveLedger.grantRole(reserveLedger.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
+        reserveLedger.grantRole(reserveLedger.BURN_FROM_ROLE(), burner);
 
         // set up transfer policy
         vm.prank(admin);
@@ -263,6 +266,62 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, minter, 0, 1)
         );
         reserveLedger.burn(1);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            BurnFrom Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_burnFrom_success() public {
+        vm.prank(admin);
+        reserveLedger.setMaxSupply(100);
+
+        vm.prank(minter);
+        reserveLedger.mint(user1, 100);
+
+        assertEq(reserveLedger.balanceOf(user1), 100);
+        assertEq(reserveLedger.totalSupply(), 100);
+
+        vm.prank(burner);
+        vm.expectEmit(true, true, true, true);
+        emit Burned(50, burner);
+        reserveLedger.burnFrom(user1, 50);
+
+        assertEq(reserveLedger.balanceOf(user1), 50);
+        assertEq(reserveLedger.totalSupply(), 50);
+    }
+
+    function test_burnFrom_revert_not_burner() public {
+        vm.prank(admin);
+        reserveLedger.setMaxSupply(100);
+
+        vm.prank(minter);
+        reserveLedger.mint(user1, 100);
+
+        vm.startPrank(user2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user2,
+                reserveLedger.BURN_FROM_ROLE()
+            )
+        );
+        reserveLedger.burnFrom(user1, 50);
+        vm.stopPrank();
+    }
+
+    function test_burnFrom_revert_insufficient_balance() public {
+        vm.prank(admin);
+        reserveLedger.setMaxSupply(100);
+
+        vm.prank(minter);
+        reserveLedger.mint(user1, 50);
+
+        vm.prank(burner);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, user1, 50, 100)
+        );
+        reserveLedger.burnFrom(user1, 100);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
