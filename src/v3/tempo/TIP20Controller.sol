@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
+import { ReserveStore } from "./ReserveStore.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 import {
     AccessControlEnumerableUpgradeable
@@ -147,8 +148,7 @@ contract TIP20Controller is
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
             ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
         } else {
-            address reserveStore = reserveStores[stablecoinContract];
-            require(reserveStore != address(0), ReserveStoreNotConfigured());
+            address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
             ITIP20(stablecoinContract).burn(amount);
             // Transfer reserve tokens from ReserveStore to this contract and burn them
@@ -167,8 +167,7 @@ contract TIP20Controller is
      * @param amount The amount of tokens to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
-        address reserveStore = reserveStores[stablecoinContract];
-        require(reserveStore != address(0), ReserveStoreNotConfigured());
+        address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
         // Transfer stablecoin from sender to this contract and burn it
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
@@ -191,8 +190,7 @@ contract TIP20Controller is
     function wrap(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
 
-        address reserveStore = reserveStores[stablecoinContract];
-        require(reserveStore != address(0), ReserveStoreNotConfigured());
+        address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
         // Transfer reserve tokens from caller to ReserveStore
         IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, reserveStore, amount);
@@ -239,7 +237,9 @@ contract TIP20Controller is
     }
 
     /**
-     * @notice Sets the reserve store for a stablecoin contract
+     * @notice Sets or overrides the reserve store for a stablecoin contract
+     * @dev Reserve stores are auto-deployed lazily if not set. This function allows
+     *      pre-configuration or migration to a different reserve store.
      * @param stablecoinContract The address of the stablecoin contract
      * @param reserveStore The address of the reserve store
      */
@@ -315,6 +315,27 @@ contract TIP20Controller is
                                 Internal Functions
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Gets the reserve store for a stablecoin, deploying one if it doesn't exist
+     * @dev Uses CREATE2 with salt derived from constructor args for deterministic addresses
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return reserveStore The address of the reserve store
+     */
+    function _getOrCreateReserveStore(address stablecoinContract) internal returns (address) {
+        address reserveStore = reserveStores[stablecoinContract];
+        if (reserveStore == address(0)) {
+            bytes32 salt = keccak256(
+                abi.encodePacked(RESERVE_LEDGER_TOKEN, address(this), stablecoinContract)
+            );
+            reserveStore = address(
+                new ReserveStore{ salt: salt }(RESERVE_LEDGER_TOKEN, address(this), stablecoinContract)
+            );
+            reserveStores[stablecoinContract] = reserveStore;
+            emit ReserveStoreSet(address(this), stablecoinContract, reserveStore);
+        }
+        return reserveStore;
+    }
+
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
 
@@ -322,8 +343,7 @@ contract TIP20Controller is
             // For reserve ledger token, just transfer from caller to recipient
             IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, to, amount);
         } else {
-            address reserveStore = reserveStores[stablecoinContract];
-            require(reserveStore != address(0), ReserveStoreNotConfigured());
+            address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
             // Transfer reserve tokens from caller to ReserveStore
             IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, reserveStore, amount);

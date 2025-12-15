@@ -30,9 +30,6 @@ interface ITIP20Controller {
     /// maximum amount
     error AmountExceedsAbsoluteMax();
 
-    /// @notice Thrown when no reserve store is configured for a stablecoin
-    error ReserveStoreNotConfigured();
-
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
@@ -170,7 +167,9 @@ interface ITIP20Controller {
         external;
 
     /**
-     * @notice Sets the reserve store for a stablecoin contract
+     * @notice Sets or overrides the reserve store for a stablecoin contract
+     * @dev Reserve stores are auto-deployed lazily if not set. This function allows
+     *      pre-configuration or migration to a different reserve store.
      * @param stablecoinContract The address of the stablecoin contract
      * @param reserveStore The address of the reserve store
      */
