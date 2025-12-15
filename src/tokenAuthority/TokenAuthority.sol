@@ -209,7 +209,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(mintTxnLimit < type(uint256).max / 2, AmountExceedsAbsoluteMax());
+        require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         mintTxnLimits[stablecoinContract] = mintTxnLimit;
 
         emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
@@ -225,7 +225,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(minterAllowance < type(uint256).max / 2, AmountExceedsAbsoluteMax());
+        require(minterAllowance < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         minterAllowances[stablecoinContract][minter] = minterAllowance;
 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
