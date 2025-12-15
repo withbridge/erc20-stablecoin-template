@@ -1,0 +1,57 @@
+name: Forge Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Add SSH key to checkout private repo
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.ERC20_STABLECOIN_CI_SSH_KEY }}
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: |
+          forge --version
+
+      - name: Run Forge fmt
+        run: |
+          forge fmt --check
+        id: fmt
+
+      - name: Run Forge soldeer install
+        run: |
+          forge soldeer install
+        id: soldeer
+
+      - name: Run Forge build
+        run: |
+          forge build
+        id: build
+
+      - name: Run Forge tests
+        run: |
+          forge test -vvv
+        id: test

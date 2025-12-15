@@ -18,6 +18,7 @@ dependencies
 lcov-html
 lcov.info
 .DS_Store
+coverage/
 
 forge-utils
 node_modules
