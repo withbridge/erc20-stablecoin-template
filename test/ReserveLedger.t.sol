@@ -118,6 +118,14 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertEq(reserveToken.getMaxSupply(), 0);
         assertEq(reserveToken.owner(), admin);
 
+        vm.startPrank(admin);
+        reserveToken.setMaxSupply(150);
+        reserveToken.grantRole(reserveToken.MINTER_ROLE(), minter);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        reserveToken.mint(minter, 100);
+
         reserveToken.reinitialize(
             "New Reserve", "NR", 8, minter, transferPolicyId, mintRecipientPolicyId
         );
@@ -125,7 +133,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         assertEq(reserveToken.name(), "New Reserve");
         assertEq(reserveToken.symbol(), "NR");
         assertEq(reserveToken.decimals(), 8);
-        assertEq(reserveToken.getMaxSupply(), 0);
+        assertEq(reserveToken.getMaxSupply(), 100);
         assertEq(reserveToken.owner(), minter);
     }
 
