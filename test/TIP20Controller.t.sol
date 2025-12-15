@@ -9,7 +9,9 @@ import { Test } from "forge-std/Test.sol";
 import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
 import { TIP20Controller } from "src/v3/tempo/TIP20Controller.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
+import { ITIP20Factory } from "tempo-std/interfaces/ITIP20Factory.sol";
 import { ITIP20RolesAuth } from "tempo-std/interfaces/ITIP20RolesAuth.sol";
+import { StdPrecompiles } from "tempo-std/StdPrecompiles.sol";
 import { StdTokens } from "tempo-std/StdTokens.sol";
 
 contract TIP20ControllerTest is Test {
@@ -30,9 +32,29 @@ contract TIP20ControllerTest is Test {
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
-        // Use TIP20 tokens from Tempo's precompiles
-        reserveLedgerToken = StdTokens.PATH_USD;
-        stablecoin = StdTokens.ALPHA_USD;
+        // Deploy new TIP20 tokens from factory using PATH_USD as quote token
+        ITIP20Factory factory = StdPrecompiles.TIP20_FACTORY;
+        ITIP20 quoteToken = StdTokens.PATH_USD;
+        
+        // Create reserve ledger token
+        address reserveAddr = factory.createToken(
+            "Reserve USD",
+            "rUSD",
+            "USD",
+            quoteToken,
+            admin
+        );
+        reserveLedgerToken = ITIP20(reserveAddr);
+
+        // Create stablecoin
+        address stablecoinAddr = factory.createToken(
+            "Test Stablecoin",
+            "tUSD",
+            "USD",
+            quoteToken,
+            admin
+        );
+        stablecoin = ITIP20(stablecoinAddr);
 
         // Deploy TIP20Controller implementation
         TIP20Controller implementation = new TIP20Controller(address(reserveLedgerToken), false);
@@ -47,8 +69,10 @@ contract TIP20ControllerTest is Test {
 
         // Grant controller the ISSUER_ROLE on stablecoin so it can mint/burn
         // Reserve stores are now auto-deployed lazily
-        vm.prank(address(0)); // System address for granting roles
         ITIP20RolesAuth(address(stablecoin)).grantRole(stablecoin.ISSUER_ROLE(), address(controller));
+
+        // Grant test contract (admin) the ISSUER_ROLE on reserveLedgerToken so _mintReserveTokens works
+        ITIP20RolesAuth(address(reserveLedgerToken)).grantRole(reserveLedgerToken.ISSUER_ROLE(), admin);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -160,7 +184,7 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
 
         // Give minter some reserve tokens and approve controller
-        deal(address(reserveLedgerToken), minter, mintAmount);
+        _mintReserveTokens(minter, mintAmount);
         vm.prank(minter);
         reserveLedgerToken.approve(address(controller), mintAmount);
 
@@ -218,7 +242,8 @@ contract TIP20ControllerTest is Test {
     }
 
     function test_mint_auto_deploys_reserve_store() public {
-        ITIP20 newToken = StdTokens.BETA_USD;
+        // Create a new token for this test
+        ITIP20 newToken = _createNewStablecoin("New Token", "NEW");
         uint256 mintAmount = 50e6;
 
         // Verify no reserve store exists yet
@@ -230,10 +255,9 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
 
         // Grant controller the ISSUER_ROLE on newToken so it can mint
-        vm.prank(address(0));
         ITIP20RolesAuth(address(newToken)).grantRole(newToken.ISSUER_ROLE(), address(controller));
 
-        deal(address(reserveLedgerToken), minter, mintAmount);
+        _mintReserveTokens(minter, mintAmount);
         vm.prank(minter);
         reserveLedgerToken.approve(address(controller), mintAmount);
 
@@ -266,7 +290,7 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
 
         // Give minter some reserve tokens
-        deal(address(reserveLedgerToken), minter, mintAmount);
+        _mintReserveTokens(minter, mintAmount);
         vm.prank(minter);
         reserveLedgerToken.approve(address(controller), mintAmount);
 
@@ -291,7 +315,7 @@ contract TIP20ControllerTest is Test {
         controller.grantRole(controller.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
 
         // Give bridge some reserve tokens
-        deal(address(reserveLedgerToken), bridgeContract, mintAmount);
+        _mintReserveTokens(bridgeContract, mintAmount);
         vm.prank(bridgeContract);
         reserveLedgerToken.approve(address(controller), mintAmount);
 
@@ -304,7 +328,6 @@ contract TIP20ControllerTest is Test {
     }
 
     function test_mintBridgeEcosystem_revert_not_bridge() public {
-        vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
@@ -312,6 +335,7 @@ contract TIP20ControllerTest is Test {
                 controller.BRIDGE_ECOSYSTEM_CONTRACT_ROLE()
             )
         );
+        vm.prank(user1);
         controller.mintBridgeEcosystem(address(stablecoin), user2, 100e6);
     }
 
@@ -330,8 +354,11 @@ contract TIP20ControllerTest is Test {
         controller.grantRole(controller.BURNER_ROLE(), minter);
         vm.stopPrank();
 
+        // Grant controller ISSUER_ROLE on reserve token for burning
+        ITIP20RolesAuth(address(reserveLedgerToken)).grantRole(reserveLedgerToken.ISSUER_ROLE(), address(controller));
+
         // Mint stablecoins
-        deal(address(reserveLedgerToken), minter, mintAmount);
+        _mintReserveTokens(minter, mintAmount);
         vm.startPrank(minter);
         reserveLedgerToken.approve(address(controller), mintAmount);
         controller.mint(address(stablecoin), minter, mintAmount);
@@ -383,7 +410,7 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
 
         // Mint stablecoins to minter
-        deal(address(reserveLedgerToken), minter, mintAmount);
+        _mintReserveTokens(minter, mintAmount);
         vm.startPrank(minter);
         reserveLedgerToken.approve(address(controller), mintAmount);
         controller.mint(address(stablecoin), minter, mintAmount);
@@ -419,7 +446,7 @@ contract TIP20ControllerTest is Test {
     }
 
     function test_unwrap_auto_deploys_reserve_store() public {
-        ITIP20 newToken = StdTokens.BETA_USD;
+        ITIP20 newToken = _createNewStablecoin("Unwrap Token", "UNW");
 
         vm.prank(admin);
         controller.grantRole(controller.UNWRAPPER_ROLE(), minter);
@@ -442,7 +469,7 @@ contract TIP20ControllerTest is Test {
         uint256 wrapAmount = 100e6;
 
         // Give user1 some reserve tokens
-        deal(address(reserveLedgerToken), user1, wrapAmount);
+        _mintReserveTokens(user1, wrapAmount);
 
         // User1 approves controller
         vm.prank(user1);
@@ -471,17 +498,16 @@ contract TIP20ControllerTest is Test {
     }
 
     function test_wrap_auto_deploys_reserve_store() public {
-        ITIP20 newToken = StdTokens.BETA_USD;
+        ITIP20 newToken = _createNewStablecoin("Wrap Token", "WRP");
         uint256 wrapAmount = 100e6;
 
         // Verify no reserve store exists yet
         assertEq(controller.getReserveStore(address(newToken)), address(0));
 
         // Grant controller the ISSUER_ROLE on newToken so it can mint
-        vm.prank(address(0));
         ITIP20RolesAuth(address(newToken)).grantRole(newToken.ISSUER_ROLE(), address(controller));
 
-        deal(address(reserveLedgerToken), user1, wrapAmount);
+        _mintReserveTokens(user1, wrapAmount);
         vm.prank(user1);
         reserveLedgerToken.approve(address(controller), wrapAmount);
 
@@ -561,6 +587,28 @@ contract TIP20ControllerTest is Test {
         vm.prank(admin);
         controller.upgradeToAndCall(newImplementation, "");
         // No revert - upgrade successful
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Helper Functions
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @dev Mints reserve tokens to an address using the ISSUER_ROLE
+    function _mintReserveTokens(address to, uint256 amount) internal {
+        reserveLedgerToken.mint(to, amount);
+    }
+
+    /// @dev Creates a new stablecoin from the factory
+    function _createNewStablecoin(string memory name, string memory symbol) internal returns (ITIP20) {
+        ITIP20Factory factory = StdPrecompiles.TIP20_FACTORY;
+        address tokenAddr = factory.createToken(
+            name,
+            symbol,
+            "USD",
+            StdTokens.PATH_USD,
+            admin
+        );
+        return ITIP20(tokenAddr);
     }
 
 }
