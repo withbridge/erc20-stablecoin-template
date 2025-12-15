@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import { ReserveStore } from "./ReserveStore.sol";
-import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
+import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import {
     AccessControlEnumerableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
@@ -12,17 +11,14 @@ import {
 } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 
 /// @title TIP20Controller
 /// @notice A singleton controller contract that manages minting rate limits and allowances for
 /// multiple stablecoins backed by a single reserve ledger token
 /// @dev Uses ReserveStore contracts to hold reserve ledger tokens for each stablecoin.
 ///      Each stablecoin has its own ReserveStore to keep ledger tokens separate for reconciliation.
-contract TIP20Controller is
-    ITIP20Controller,
-    AccessControlEnumerableUpgradeable,
-    UUPSUpgradeable
-{
+contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
 
     using SafeERC20 for IERC20;
     using SafeERC20 for ITIP20;
@@ -182,7 +178,8 @@ contract TIP20Controller is
     /**
      * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
      * recipient.
-     * @dev Transfers reserve tokens from caller to ReserveStore, then mints stablecoins to recipient.
+     * @dev Transfers reserve tokens from caller to ReserveStore, then mints stablecoins to
+     * recipient.
      * @param stablecoinContract The address of the target stablecoin contract.
      * @param to The address to receive the wrapped tokens.
      * @param amount The amount of reserve tokens to wrap.
@@ -328,7 +325,9 @@ contract TIP20Controller is
                 abi.encodePacked(RESERVE_LEDGER_TOKEN, address(this), stablecoinContract)
             );
             reserveStore = address(
-                new ReserveStore{ salt: salt }(RESERVE_LEDGER_TOKEN, address(this), stablecoinContract)
+                new ReserveStore{ salt: salt }(
+                    RESERVE_LEDGER_TOKEN, address(this), stablecoinContract
+                )
             );
             reserveStores[stablecoinContract] = reserveStore;
             emit ReserveStoreSet(address(this), stablecoinContract, reserveStore);

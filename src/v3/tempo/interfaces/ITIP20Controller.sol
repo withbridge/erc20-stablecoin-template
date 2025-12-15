@@ -143,7 +143,8 @@ interface ITIP20Controller {
     /**
      * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
      * recipient
-     * @dev Transfers reserve tokens from caller to ReserveStore, then mints stablecoins to recipient
+     * @dev Transfers reserve tokens from caller to ReserveStore, then mints stablecoins to
+     * recipient
      * @param stablecoinContract The address of the target stablecoin contract
      * @param to The address to receive the wrapped tokens
      * @param amount The amount of reserve tokens to wrap

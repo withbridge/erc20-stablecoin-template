@@ -2,14 +2,17 @@
 pragma solidity ^0.8.24;
 
 import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.sol";
-import { DeterministicProxyFactoryFixture } from
-    "deterministic-proxy-factory/fixtures/DeterministicProxyFactoryFixture.sol";
+import {
+    DeterministicProxyFactoryFixture
+} from "deterministic-proxy-factory/fixtures/DeterministicProxyFactoryFixture.sol";
 import { Test } from "forge-std/Test.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import { StablecoinTemplateV3ErrorsAndEvents } from "src/v3/StablecoinTemplateV3ErrorsAndEvents.sol";
+import {
+    StablecoinTemplateV3ErrorsAndEvents
+} from "src/v3/StablecoinTemplateV3ErrorsAndEvents.sol";
 import { StablecoinTemplateV3SampleUpgrade } from "src/v3/StablecoinTemplateV3SampleUpgrade.sol";
 
 contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {

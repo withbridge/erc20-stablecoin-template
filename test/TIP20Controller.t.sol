@@ -6,13 +6,13 @@ import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.so
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { Test } from "forge-std/Test.sol";
 
-import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
 import { TIP20Controller } from "src/v3/tempo/TIP20Controller.sol";
+import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
+import { StdPrecompiles } from "tempo-std/StdPrecompiles.sol";
+import { StdTokens } from "tempo-std/StdTokens.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 import { ITIP20Factory } from "tempo-std/interfaces/ITIP20Factory.sol";
 import { ITIP20RolesAuth } from "tempo-std/interfaces/ITIP20RolesAuth.sol";
-import { StdPrecompiles } from "tempo-std/StdPrecompiles.sol";
-import { StdTokens } from "tempo-std/StdTokens.sol";
 
 contract TIP20ControllerTest is Test {
 
@@ -35,25 +35,14 @@ contract TIP20ControllerTest is Test {
         // Deploy new TIP20 tokens from factory using PATH_USD as quote token
         ITIP20Factory factory = StdPrecompiles.TIP20_FACTORY;
         ITIP20 quoteToken = StdTokens.PATH_USD;
-        
+
         // Create reserve ledger token
-        address reserveAddr = factory.createToken(
-            "Reserve USD",
-            "rUSD",
-            "USD",
-            quoteToken,
-            admin
-        );
+        address reserveAddr = factory.createToken("Reserve USD", "rUSD", "USD", quoteToken, admin);
         reserveLedgerToken = ITIP20(reserveAddr);
 
         // Create stablecoin
-        address stablecoinAddr = factory.createToken(
-            "Test Stablecoin",
-            "tUSD",
-            "USD",
-            quoteToken,
-            admin
-        );
+        address stablecoinAddr =
+            factory.createToken("Test Stablecoin", "tUSD", "USD", quoteToken, admin);
         stablecoin = ITIP20(stablecoinAddr);
 
         // Deploy TIP20Controller implementation
@@ -69,10 +58,13 @@ contract TIP20ControllerTest is Test {
 
         // Grant controller the ISSUER_ROLE on stablecoin so it can mint/burn
         // Reserve stores are now auto-deployed lazily
-        ITIP20RolesAuth(address(stablecoin)).grantRole(stablecoin.ISSUER_ROLE(), address(controller));
+        ITIP20RolesAuth(address(stablecoin))
+            .grantRole(stablecoin.ISSUER_ROLE(), address(controller));
 
-        // Grant test contract (admin) the ISSUER_ROLE on reserveLedgerToken so _mintReserveTokens works
-        ITIP20RolesAuth(address(reserveLedgerToken)).grantRole(reserveLedgerToken.ISSUER_ROLE(), admin);
+        // Grant test contract (admin) the ISSUER_ROLE on reserveLedgerToken so _mintReserveTokens
+        // works
+        ITIP20RolesAuth(address(reserveLedgerToken))
+            .grantRole(reserveLedgerToken.ISSUER_ROLE(), admin);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -150,10 +142,10 @@ contract TIP20ControllerTest is Test {
 
     function test_setReserveStore_success() public {
         address customReserveStore = makeAddr("customReserveStore");
-        
+
         vm.prank(admin);
         controller.setReserveStore(address(stablecoin), customReserveStore);
-        
+
         assertEq(controller.getReserveStore(address(stablecoin)), customReserveStore);
     }
 
@@ -355,7 +347,8 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
 
         // Grant controller ISSUER_ROLE on reserve token for burning
-        ITIP20RolesAuth(address(reserveLedgerToken)).grantRole(reserveLedgerToken.ISSUER_ROLE(), address(controller));
+        ITIP20RolesAuth(address(reserveLedgerToken))
+            .grantRole(reserveLedgerToken.ISSUER_ROLE(), address(controller));
 
         // Mint stablecoins
         _mintReserveTokens(minter, mintAmount);
@@ -599,15 +592,12 @@ contract TIP20ControllerTest is Test {
     }
 
     /// @dev Creates a new stablecoin from the factory
-    function _createNewStablecoin(string memory name, string memory symbol) internal returns (ITIP20) {
+    function _createNewStablecoin(string memory name, string memory symbol)
+        internal
+        returns (ITIP20)
+    {
         ITIP20Factory factory = StdPrecompiles.TIP20_FACTORY;
-        address tokenAddr = factory.createToken(
-            name,
-            symbol,
-            "USD",
-            StdTokens.PATH_USD,
-            admin
-        );
+        address tokenAddr = factory.createToken(name, symbol, "USD", StdTokens.PATH_USD, admin);
         return ITIP20(tokenAddr);
     }
 
