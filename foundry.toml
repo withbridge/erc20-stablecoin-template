@@ -10,6 +10,7 @@ remappings = [
     "deterministic-proxy-factory/=dependencies/deterministic-proxy-factory-0.1.4/src/",
     "@openzeppelin/contracts-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.3.0/",
     "@openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.3.0/",
+    "tempo-std/=dependencies/tempo-std-0.1.1/src/",
 ]
 optimizer_runs = 9999999
 via_ir = true
@@ -43,5 +44,6 @@ create2-helpers = "0.5.0"
 deterministic-proxy-factory = "0.1.4"
 "@openzeppelin-contracts-upgradeable" = "5.3.0"
 "@openzeppelin-contracts" = "5.3.0"
+tempo-std = { version = "0.1.1", git = "https://github.com/tempoxyz/tempo-std.git" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
