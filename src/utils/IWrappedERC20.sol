@@ -4,11 +4,11 @@ pragma solidity ^0.8.20;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @title IERC20WrapUnwrap
+/// @title IWrappedERC20
 /// @notice Interface for ERC20 tokens that support wrapping and unwrapping functionality
 /// @dev Extends the standard ERC20 interface to enable conversion between wrapped and underlying
 /// tokens
-interface IERC20WrapUnwrap is IERC20 {
+interface IWrappedERC20 is IERC20 {
 
     /// @notice Wraps underlying tokens into wrapped tokens
     /// @dev Transfers underlying tokens from the caller and mints wrapped tokens to the specified

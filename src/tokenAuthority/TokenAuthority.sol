@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IERC20BurnMint } from "../utils/IERC20BurnMint.sol";
-import { IERC20WrapUnwrap } from "../utils/IERC20WrapUnwrap.sol";
+import { IERC20Mintable } from "../utils/IERC20Mintable.sol";
+import { IWrappedERC20 } from "../utils/IWrappedERC20.sol";
 
 import { ITokenAuthority } from "./ITokenAuthority.sol";
 import {
@@ -11,11 +11,14 @@ import {
 import {
     UUPSUpgradeable
 } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
 
-    using SafeERC20 for IERC20BurnMint;
+    using SafeERC20 for IERC20;
+    using SafeERC20 for IERC20Mintable;
+    using SafeERC20 for IWrappedERC20;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Immutable Variables
@@ -132,11 +135,13 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
+        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).burn(amount);
+            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
         } else {
-            IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).burn(amount);
+            IWrappedERC20(stablecoinContract).unwrap(amount);
+            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
         }
 
         emit Burn(msg.sender, stablecoinContract, amount);
@@ -158,10 +163,15 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
         // Unwrap the wrapped stablecoin, which will send underlying RESERVE_LEDGER_TOKEN to this
         // contract
-        IERC20WrapUnwrap(stablecoinContract).unwrap(amount);
+        IWrappedERC20 stablecoin = IWrappedERC20(stablecoinContract);
+        stablecoin.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceBefore = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
+        stablecoin.unwrap(amount);
+        uint256 balanceAfter = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
+        require(balanceAfter == balanceBefore + amount, ReserveLedgerBalanceMismatch());
 
         // Transfer the received RESERVE_LEDGER_TOKEN to the sender
-        IERC20BurnMint(RESERVE_LEDGER_TOKEN).transfer(msg.sender, amount);
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).transfer(msg.sender, amount);
 
         emit Unwrap(msg.sender, stablecoinContract, amount);
     }
@@ -179,9 +189,9 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
-        IERC20BurnMint(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
-        IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-        IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
+        IWrappedERC20(stablecoinContract).wrap(to, amount);
 
         emit Wrap(msg.sender, stablecoinContract, to, amount);
     }
@@ -275,11 +285,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(to, amount);
+            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(to, amount);
         } else {
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
-            IERC20BurnMint(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-            IERC20WrapUnwrap(stablecoinContract).wrap(to, amount);
+            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
+            IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
+            IWrappedERC20(stablecoinContract).wrap(to, amount);
         }
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
