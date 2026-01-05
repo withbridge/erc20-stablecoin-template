@@ -37,12 +37,13 @@ contract TIP20ControllerTest is Test {
         ITIP20 quoteToken = StdTokens.PATH_USD;
 
         // Create reserve ledger token
-        address reserveAddr = factory.createToken("Reserve USD", "rUSD", "USD", quoteToken, admin);
+        address reserveAddr =
+            factory.createToken("Reserve USD", "rUSD", "USD", quoteToken, admin, bytes32(0));
         reserveLedgerToken = ITIP20(reserveAddr);
 
         // Create stablecoin
         address stablecoinAddr =
-            factory.createToken("Test Stablecoin", "tUSD", "USD", quoteToken, admin);
+            factory.createToken("Test Stablecoin", "tUSD", "USD", quoteToken, admin, bytes32(0));
         stablecoin = ITIP20(stablecoinAddr);
 
         // Deploy TIP20Controller implementation
@@ -597,7 +598,8 @@ contract TIP20ControllerTest is Test {
         returns (ITIP20)
     {
         ITIP20Factory factory = StdPrecompiles.TIP20_FACTORY;
-        address tokenAddr = factory.createToken(name, symbol, "USD", StdTokens.PATH_USD, admin);
+        address tokenAddr =
+            factory.createToken(name, symbol, "USD", StdTokens.PATH_USD, admin, bytes32(0));
         return ITIP20(tokenAddr);
     }
 
