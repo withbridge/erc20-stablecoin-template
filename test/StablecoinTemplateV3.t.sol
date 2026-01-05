@@ -356,7 +356,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
                             Blocking/Unblocking Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_blockAddress_success() public {
+    function test_blockAddressFrom_success() public {
         vm.prank(minter);
         token.wrap(user1, 100);
 
@@ -366,6 +366,19 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(admin);
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
         assertTrue(token.isBlocked(user1));
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
+        assertFalse(token.transfer(user2, 100));
+    }
+
+    function test_blockAddressTo_success() public {
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        vm.prank(admin);
+        authRegistry.modifyPolicyBlacklist(transferPolicyId, user2, true);
+        assertTrue(token.isBlocked(user2));
 
         vm.prank(user1);
         vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));

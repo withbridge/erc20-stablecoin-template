@@ -366,7 +366,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
                             Blocking/Unblocking Tests
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_blockAddress_success() public {
+    function test_blockAddressFrom_success() public {
         vm.prank(admin);
         reserveLedger.setMaxSupply(100);
 
@@ -379,6 +379,22 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(admin);
         authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
         assertTrue(reserveLedger.isBlocked(user1));
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
+        assertFalse(reserveLedger.transfer(user2, 100));
+    }
+
+    function test_blockAddressTo_success() public {
+        vm.prank(admin);
+        reserveLedger.setMaxSupply(100);
+
+        vm.prank(minter);
+        reserveLedger.mint(user1, 100);
+
+        vm.prank(admin);
+        authRegistry.modifyPolicyBlacklist(transferPolicyId, user2, true);
+        assertTrue(reserveLedger.isBlocked(user2));
 
         vm.prank(user1);
         vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
