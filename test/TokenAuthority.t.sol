@@ -177,12 +177,12 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_mint_with_max_limits_no_decrement() public {
-        // Setup with max uint256 limits (unlimited)
+        // Setup with max limits
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
-        tokenAuthority.setTxnMintLimit(address(mockToken), type(uint256).max);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 1_000_000_000*1e6 + 1);
         vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
-        tokenAuthority.setMinterAllowance(address(mockToken), minter, type(uint256).max);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, 1_000_000_000*1e6 + 1);
         vm.stopPrank();
     }
 
