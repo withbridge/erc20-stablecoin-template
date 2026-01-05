@@ -5,6 +5,10 @@ import { StablecoinTemplateV3 } from "./StablecoinTemplateV3.sol";
 
 contract StablecoinTemplateV3SampleUpgrade is StablecoinTemplateV3 {
 
+    constructor(address _reserveLedgerAddress, address _authRegistry)
+        StablecoinTemplateV3(_reserveLedgerAddress, _authRegistry)
+    { }
+
     /**
      * @dev Retrieves the `name` of the token.
      */
