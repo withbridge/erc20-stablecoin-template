@@ -27,6 +27,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          network: ${{ matrix.network }}
 
       - name: Show Forge version
         run: |
