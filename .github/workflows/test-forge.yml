@@ -53,8 +53,8 @@ jobs:
       - name: Run Forge tests
         run: |
           if [[ "${{ matrix.network }}" == "tempo" ]]; then
-            forge test -vvvv
+            forge test -vv
           else
-            forge test --no-match-contract TIP20ControllerTest -vvvv
+            forge test --no-match-contract TIP20ControllerTest -vv
           fi
         id: test
