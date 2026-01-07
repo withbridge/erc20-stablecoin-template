@@ -180,9 +180,9 @@ contract TokenAuthorityTest is Test {
         // Setup with max limits
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
-        tokenAuthority.setTxnMintLimit(address(mockToken), 1_000_000_000*1e6 + 1);
+        tokenAuthority.setTxnMintLimit(address(mockToken), 1_000_000_000 * 1e6 + 1);
         vm.expectRevert(abi.encodeWithSelector(ITokenAuthority.AmountExceedsAbsoluteMax.selector));
-        tokenAuthority.setMinterAllowance(address(mockToken), minter, 1_000_000_000*1e6 + 1);
+        tokenAuthority.setMinterAllowance(address(mockToken), minter, 1_000_000_000 * 1e6 + 1);
         vm.stopPrank();
     }
 
