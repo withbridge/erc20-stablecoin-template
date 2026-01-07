@@ -10,6 +10,8 @@ jobs:
   check:
     strategy:
       fail-fast: true
+      matrix:
+        network: [ethereum, tempo]
 
     name: Foundry project
     runs-on: ubuntu-latest
@@ -47,5 +49,9 @@ jobs:
 
       - name: Run Forge tests
         run: |
-          forge test -vvv
+          if [[ "${{ matrix.network }}" == "tempo" ]]; then
+            forge test -vvvv
+          else
+            forge test --no-match-contract TIP20ControllerTest -vvvv
+          fi
         id: test
