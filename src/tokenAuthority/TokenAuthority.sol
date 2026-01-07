@@ -26,7 +26,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     address public immutable RESERVE_LEDGER_TOKEN;
 
-    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 10e6;
+    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Immutable Variables
