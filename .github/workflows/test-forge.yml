@@ -9,7 +9,6 @@ env:
 jobs:
   check:
     strategy:
-      fail-fast: true
       matrix:
         network: [ethereum, tempo]
 
