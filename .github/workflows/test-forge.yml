@@ -1,13 +1,7 @@
 name: Forge Tests
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
-  workflow_dispatch:
 
 env:
   FOUNDRY_PROFILE: ci
@@ -15,7 +9,9 @@ env:
 jobs:
   check:
     strategy:
-      fail-fast: true
+      fail-fast: false
+      matrix:
+        network: [ethereum, tempo]
 
     name: Foundry project
     runs-on: ubuntu-latest
@@ -31,6 +27,9 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          network: ${{ matrix.network }}
+          version: ${{ matrix.network == 'tempo' && 'nightly-88787e649ac644e08af040cc8881e8bfa9690ef3' || 'stable' }}
 
       - name: Show Forge version
         run: |
@@ -53,5 +52,9 @@ jobs:
 
       - name: Run Forge tests
         run: |
-          forge test -vvv
+          if [[ "${{ matrix.network }}" == "tempo" ]]; then
+            forge test -vv
+          else
+            forge test --no-match-contract TIP20ControllerTest -vv
+          fi
         id: test

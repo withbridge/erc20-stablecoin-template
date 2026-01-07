@@ -339,13 +339,12 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            // For reserve ledger token, just transfer from caller to recipient
-            IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, to, amount);
+            ITIP20(RESERVE_LEDGER_TOKEN).mint(to, amount);
         } else {
             address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
-            // Transfer reserve tokens from caller to ReserveStore
-            IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, reserveStore, amount);
+            // Mint reserve tokens to ReserveStore
+            ITIP20(RESERVE_LEDGER_TOKEN).mint(reserveStore, amount);
 
             // Mint stablecoins to recipient
             ITIP20(stablecoinContract).mint(to, amount);
