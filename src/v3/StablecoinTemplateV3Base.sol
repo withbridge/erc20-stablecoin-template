@@ -297,6 +297,7 @@ abstract contract StablecoinTemplateV3Base is
         internal
         override
         whenNotPaused
+        whenNotInBlockedList(to)
         whenNotInBlockedList(from)
     {
         super._update(from, to, amount);
