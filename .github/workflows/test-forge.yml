@@ -29,6 +29,11 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           network: ${{ matrix.network }}
+          version: if [[ "${{ matrix.network }}" == "tempo" ]]; then
+              nightly
+            else
+              stable
+            fi
 
       - name: Show Forge version
         run: |
