@@ -15,8 +15,8 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 contract DeployScript is Script {
     uint8 constant DECIMALS = 6;
     
-    address deployer;
-    address authRegistryPolicyAdmin;
+    address authRegistryBlockerPolicyAdmin;
+    address authRegistryWhitelistPolicyAdmin;
 
     address authRegistry;
     address reserveLedgerImplementation;
@@ -26,19 +26,20 @@ contract DeployScript is Script {
     address stablecoinTemplateV3Proxy;
 
     uint64 transferPolicyId;
-    uint64 mintRecipientPolicyId;
+    uint64 reserveLedgerMintRecipientPolicyId;
+    uint64 stablecoinMintRecipientPolicyId;
 
-    string reserveLedgerName = "";
-    string reserveLedgerSymbol = "";
+    string reserveLedgerName = "Reserve Ledger Euro";
+    string reserveLedgerSymbol = "RE";
     address reserveLedgerAdmin;
 
-    string stablecoinName = "";
-    string stablecoinSymbol = "";
+    string stablecoinName = "Revolut Euro";
+    string stablecoinSymbol = "EURR";
     address stablecoinAdmin;
 
     function setUp() public virtual {
-        deployer = vm.envAddress("DEPLOYER");
-        authRegistryPolicyAdmin = vm.envAddress("AUTH_REGISTRY_POLICY_ADMIN");
+        authRegistryBlockerPolicyAdmin = vm.envAddress("AUTH_REGISTRY_BLOCKER_POLICY_ADMIN");
+        authRegistryWhitelistPolicyAdmin = vm.envAddress("AUTH_REGISTRY_WHITELIST_POLICY_ADMIN");
 
         reserveLedgerAdmin = vm.envAddress("RESERVE_LEDGER_ADMIN");
         stablecoinAdmin = vm.envAddress("STABLECOIN_ADMIN");
@@ -65,10 +66,12 @@ contract DeployScript is Script {
         console.log();
 
         console.log("Setting up policies...");
-        transferPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryPolicyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
-        mintRecipientPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryPolicyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+        transferPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryBlockerPolicyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
+        reserveLedgerMintRecipientPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryWhitelistPolicyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+        stablecoinMintRecipientPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryWhitelistPolicyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("Transfer policy ID:", transferPolicyId);
-        console.log("Mint recipient policy ID:", mintRecipientPolicyId);
+        console.log("Reserve ledger mint recipient policy ID:", reserveLedgerMintRecipientPolicyId);
+        console.log("Stablecoin mint recipient policy ID:", stablecoinMintRecipientPolicyId);
         console.log();
 
         console.log("Deploying ReserveLedger proxy...");
@@ -83,11 +86,13 @@ contract DeployScript is Script {
                         DECIMALS,
                         reserveLedgerAdmin,
                         transferPolicyId,
-                        mintRecipientPolicyId
+                        reserveLedgerMintRecipientPolicyId
                     )
                 )
             )
         );
+
+        console.log(StablecoinTemplateV3(reserveLedgerProxy).name());
 
         console.log("ReserveLedger proxy deployed at", reserveLedgerProxy);
         console.log();
@@ -104,7 +109,7 @@ contract DeployScript is Script {
                         DECIMALS, 
                         stablecoinAdmin, 
                         transferPolicyId, 
-                        mintRecipientPolicyId
+                        stablecoinMintRecipientPolicyId
                     )
                 )
             )
