@@ -244,6 +244,17 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
+        address oldReserveStore = reserveStores[stablecoinContract];
+
+        if (oldReserveStore != address(0)) {
+            IERC20(RESERVE_LEDGER_TOKEN)
+                .safeTransferFrom(
+                    oldReserveStore,
+                    reserveStore,
+                    IERC20(RESERVE_LEDGER_TOKEN).balanceOf(oldReserveStore)
+                );
+        }
+
         reserveStores[stablecoinContract] = reserveStore;
 
         emit ReserveStoreSet(msg.sender, stablecoinContract, reserveStore);
