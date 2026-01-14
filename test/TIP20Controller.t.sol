@@ -143,6 +143,22 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
+    function test_setMinterAllowance_revert_amount_exceeds_absolute_max() public {
+        uint256 allowance = 1_000_000_000 * 1e6 + 1;
+
+        vm.prank(admin);
+        vm.expectRevert(ITIP20Controller.AmountExceedsAbsoluteMax.selector);
+        controller.setMinterAllowance(address(stablecoin), minter, allowance);
+    }
+
+    function test_setTxnMintLimit_revert_amount_exceeds_absolute_max() public {
+        uint256 txnLimit = 1_000_000_000 * 1e6 + 1;
+
+        vm.prank(admin);
+        vm.expectRevert(ITIP20Controller.AmountExceedsAbsoluteMax.selector);
+        controller.setTxnMintLimit(address(stablecoin), txnLimit);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                             Reserve Store Tests
     //////////////////////////////////////////////////////////////////////////*/
