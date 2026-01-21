@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {ITokenHandler} from "./ITokenHandler.sol";
+import { ITokenHandler } from "./ITokenHandler.sol";
 
 abstract contract TokenHandler is ITokenHandler {
+
     address public immutable TOKEN_AUTHORITY;
 
     modifier onlyTokenAuthority() {
@@ -14,4 +15,5 @@ abstract contract TokenHandler is ITokenHandler {
     constructor(address _tokenAuthority) {
         TOKEN_AUTHORITY = _tokenAuthority;
     }
+
 }

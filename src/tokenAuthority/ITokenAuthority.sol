@@ -118,8 +118,9 @@ interface ITokenAuthority {
     );
 
     /// @notice Emitted when a token handler is set for a stablecoin contract
-    /// @param sender The address that set the token handler (must have TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
-    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param sender The address that set the token handler (must have
+    /// TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) @param stablecoinContract The address of the stablecoin
+    /// contract
     /// @param tokenHandler The address of the token handler
     event TokenHandlerSet(
         address indexed sender, address indexed stablecoinContract, address indexed tokenHandler
@@ -222,4 +223,5 @@ interface ITokenAuthority {
         external
         view
         returns (address tokenHandler);
+
 }

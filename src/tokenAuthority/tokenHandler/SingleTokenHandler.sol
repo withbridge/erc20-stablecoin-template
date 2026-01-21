@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {TokenHandler} from "./TokenHandler.sol";
-import {IERC20Mintable} from "../../utils/IERC20Mintable.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { IERC20Mintable } from "../../utils/IERC20Mintable.sol";
+import { TokenHandler } from "./TokenHandler.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title SingleTokenHandler
 /// @notice A token handler that handles a single token
 contract SingleTokenHandler is TokenHandler {
+
     using SafeERC20 for IERC20Mintable;
 
     error NotSupported();
 
     constructor(address _tokenAuthority) TokenHandler(_tokenAuthority) { }
 
-    function mint(address stablecoinContract, address to, uint256 amount) external onlyTokenAuthority {
+    function mint(address stablecoinContract, address to, uint256 amount)
+        external
+        onlyTokenAuthority
+    {
         IERC20Mintable(stablecoinContract).mint(to, amount);
     }
 
@@ -31,4 +35,5 @@ contract SingleTokenHandler is TokenHandler {
     function unwrap(address, address, uint256) external view onlyTokenAuthority {
         revert NotSupported();
     }
+
 }

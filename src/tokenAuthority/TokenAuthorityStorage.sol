@@ -8,7 +8,7 @@ struct TokenAuthorityStorage {
     /// be minted by the user)
     mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance))
         minterAllowances;
-    
+
     /// @notice Maps each stablecoin contract address to its respective mint rate limits.
     /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
     /// mint limits for the stablecoin)
@@ -30,4 +30,5 @@ library TokenAuthorityStorageLib {
             s.slot := slot
         }
     }
+
 }
