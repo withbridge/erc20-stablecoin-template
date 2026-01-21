@@ -14,6 +14,9 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import { TokenAuthorityStorage, TokenAuthorityStorageLib } from "./TokenAuthorityStorage.sol";
+import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
+
 contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
 
     using SafeERC20 for IERC20;
@@ -37,22 +40,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
     bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE =
         keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
-
-    /*//////////////////////////////////////////////////////////////////////////
-                                State Variables
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /// @notice Maps each stablecoin contract address and user address to the minter allowance for
-    /// that user on the stablecoin.
-    /// @dev minterAllowances[stablecoinContract][user] = minterAllowance (remaining tokens that can
-    /// be minted by the user)
-    mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance)) public
-        minterAllowances;
-
-    /// @notice Maps each stablecoin contract address to its respective mint rate limits.
-    /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
-    /// mint limits for the stablecoin)
-    mapping(address stablecoinContract => uint256 mintTxnLimit) public mintTxnLimits;
+    bytes32 public constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE = keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -60,7 +48,6 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     /**
      * @notice Constructs the TokenAuthority contract
-     * @param _reserveLedgerToken The address of the reserve ledger token
      * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
      */
     constructor(address _reserveLedgerToken, bool _disableInitializer) {
@@ -100,13 +87,14 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
 
-        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
+        uint256 mintTxnLimit = $.mintTxnLimits[stablecoinContract];
+        uint256 minterAllowance = $.minterAllowances[stablecoinContract][msg.sender];
         require(minterAllowance >= amount, MinterAllowanceExceeded());
         require(mintTxnLimit >= amount, MintTxnLimitExceeded());
 
-        minterAllowances[stablecoinContract][msg.sender] -= amount;
+        $.minterAllowances[stablecoinContract][msg.sender] -= amount;
 
         _mint(stablecoinContract, to, amount);
     }
@@ -135,14 +123,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
-        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
-
-        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
-        } else {
-            IWrappedERC20(stablecoinContract).unwrap(amount);
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
-        }
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        address tokenHandler = $.tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+        IERC20Mintable(stablecoinContract).transferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(stablecoinContract).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).burn(stablecoinContract, amount);
 
         emit Burn(msg.sender, stablecoinContract, amount);
     }
@@ -159,19 +145,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * Emits a {Unwrap} event for tracking unwrapping operations.
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
-        require(stablecoinContract != RESERVE_LEDGER_TOKEN, CannotUnwrapReserveLedgerToken());
-
-        // Unwrap the wrapped stablecoin, which will send underlying RESERVE_LEDGER_TOKEN to this
-        // contract
-        IWrappedERC20 stablecoin = IWrappedERC20(stablecoinContract);
-        stablecoin.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 balanceBefore = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
-        stablecoin.unwrap(amount);
-        uint256 balanceAfter = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
-        require(balanceAfter == balanceBefore + amount, ReserveLedgerBalanceMismatch());
-
-        // Transfer the received RESERVE_LEDGER_TOKEN to the sender
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transfer(msg.sender, amount);
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        address tokenHandler = $.tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+        IERC20(stablecoinContract).transferFrom(msg.sender, address(this), amount);
+        IERC20(stablecoinContract).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).unwrap(stablecoinContract, msg.sender, amount);
 
         emit Unwrap(msg.sender, stablecoinContract, amount);
     }
@@ -189,9 +168,14 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
+
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        address tokenHandler = $.tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+
         IERC20Mintable(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-        IWrappedERC20(stablecoinContract).wrap(to, amount);
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).wrap(stablecoinContract, to, amount);
 
         emit Wrap(msg.sender, stablecoinContract, to, amount);
     }
@@ -210,7 +194,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
         require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
-        mintTxnLimits[stablecoinContract] = mintTxnLimit;
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        $.mintTxnLimits[stablecoinContract] = mintTxnLimit;
 
         emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
     }
@@ -226,9 +211,29 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
         require(minterAllowance < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
-        minterAllowances[stablecoinContract][minter] = minterAllowance;
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        $.minterAllowances[stablecoinContract][minter] = minterAllowance;
 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Token Handler Setters
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Sets the token authority handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     */
+    function setTokenHandler(address stablecoinContract, address tokenHandler)
+        public
+        onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
+    {
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        $.tokenHandlers[stablecoinContract] = tokenHandler;
+
+        emit TokenHandlerSet(msg.sender, stablecoinContract, tokenHandler);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -246,7 +251,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         view
         returns (uint256 minterAllowance)
     {
-        return minterAllowances[stablecoinContract][minter];
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        return $.minterAllowances[stablecoinContract][minter];
     }
 
     /**
@@ -259,7 +265,22 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         view
         returns (uint256 mintTxnLimit)
     {
-        return mintTxnLimits[stablecoinContract];
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        return $.mintTxnLimits[stablecoinContract];
+    }
+
+    /**
+     * @notice Gets the token handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return tokenHandler The address of the token handler
+     */
+    function getTokenHandler(address stablecoinContract)
+        public
+        view
+        returns (address tokenHandler)
+    {
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        return $.tokenHandlers[stablecoinContract];
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -283,14 +304,12 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        TokenAuthorityStorage storage $ = TokenAuthorityStorageLib.getStorage();
+        address tokenHandler = $.tokenHandlers[stablecoinContract];
 
-        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(to, amount);
-        } else {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-            IWrappedERC20(stablecoinContract).wrap(to, amount);
-        }
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+
+        ITokenHandler(tokenHandler).mint(stablecoinContract, to, amount);
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
     }

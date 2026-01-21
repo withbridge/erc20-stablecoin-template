@@ -41,6 +41,9 @@ interface ITokenAuthority {
     /// @notice Thrown when there is a mismatch in reserve ledger balance.
     error ReserveLedgerBalanceMismatch();
 
+    /// @notice Thrown when the token authority handler is not set
+    error TokenHandlerNotSet();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
@@ -112,6 +115,14 @@ interface ITokenAuthority {
     /// @param enabled Set to true to enable, false to disable
     event BridgeEcosystemContractSet(
         address indexed sender, address indexed bridgeEcosystemContract, bool enabled
+    );
+
+    /// @notice Emitted when a token handler is set for a stablecoin contract
+    /// @param sender The address that set the token handler (must have TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param tokenHandler The address of the token handler
+    event TokenHandlerSet(
+        address indexed sender, address indexed stablecoinContract, address indexed tokenHandler
     );
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -195,4 +206,20 @@ interface ITokenAuthority {
         view
         returns (uint256 mintTxnLimit);
 
+    /**
+     * @notice Sets the token handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     */
+    function setTokenHandler(address stablecoinContract, address tokenHandler) external;
+
+    /**
+     * @notice Gets the token handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return tokenHandler The address of the token handler
+     */
+    function getTokenHandler(address stablecoinContract)
+        external
+        view
+        returns (address tokenHandler);
 }

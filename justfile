@@ -15,4 +15,4 @@ gambit-report:
 gambit-full:
     gambit_runner full --test-cmd 'FOUNDRY_PROFILE=gambit forge test' --build-cmd 'FOUNDRY_PROFILE=gambit forge build' src
 coverage:
-    forge coverage --report lcov && genhtml lcov.info --branch-coverage --output-dir coverage
+    forge coverage --report lcov --exclude-tests && genhtml lcov.info --branch-coverage --output-dir coverage
