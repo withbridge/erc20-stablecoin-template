@@ -22,6 +22,7 @@ import {ReserveLedger} from "src/v3/ReserveLedger.sol";
 import {StablecoinTemplateV3} from "src/v3/StablecoinTemplateV3.sol";
 import {StablecoinTemplateV3Base} from "src/v3/StablecoinTemplateV3Base.sol";
 
+import {ITokenHandler} from "src/tokenAuthority/tokenHandler/ITokenHandler.sol";
 import {SingleTokenHandler} from "src/tokenAuthority/tokenHandler/SingleTokenHandler.sol";
 import {ReserveLedgerBackedHandler} from "src/tokenAuthority/tokenHandler/ReserveLedgerBackedHandler.sol";
 import {ReserveLedgerWrappedHandler} from "src/tokenAuthority/tokenHandler/ReserveLedgerWrappedHandler.sol";
@@ -504,8 +505,430 @@ contract TokenAuthorityTest is Test {
         TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
         vm.expectRevert(InvalidInitialization.selector);
         newTokenAuthority.initialize(bridgeAdmin);
-
     }
 
-    
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test mint error cases
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_mint_revertWhenAmountIsZero() public {
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.AmountCannotBeZero.selector);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 0);
+    }
+
+    function test_mint_revertWhenMinterAllowanceExceeded() public {
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.MinterAllowanceExceeded.selector);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 500e6); // allowance is 250e6
+    }
+
+    function test_mint_revertWhenMintTxnLimitExceeded() public {
+        // Set a low txn limit
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setTxnMintLimit(address(reserveLedgerToken), 50e6);
+
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.MintTxnLimitExceeded.selector);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
+    }
+
+    function test_mint_revertWhenTokenHandlerNotSet() public {
+        address randomToken = makeAddr("randomToken");
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setMinterAllowance(randomToken, minter, 1000e6);
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setTxnMintLimit(randomToken, 1000e6);
+
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.TokenHandlerNotSet.selector);
+        tokenAuthority.mint(randomToken, alice, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test mintBridgeEcosystem
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_mintBridgeEcosystem() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.mintBridgeEcosystem(address(wrappedStablecoin), bob, 100e6);
+
+        assertEq(wrappedStablecoin.balanceOf(bob), 100e6, "bob wrappedStablecoin bal");
+        assertEq(reserveLedgerToken.balanceOf(address(wrappedStablecoin)), 100e6, "rl wrappedStablecoin bal");
+    }
+
+    function test_mintBridgeEcosystem_revertWhenNotBridgeEcosystemRole() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                maliciousUser,
+                BRIDGE_ECOSYSTEM_CONTRACT_ROLE
+            )
+        );
+        tokenAuthority.mintBridgeEcosystem(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    function test_mintBridgeEcosystem_revertWhenTokenHandlerNotSet() public {
+        address randomToken = makeAddr("randomToken");
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.TokenHandlerNotSet.selector);
+        tokenAuthority.mintBridgeEcosystem(randomToken, bob, 100e6);
+    }
+
+    function test_mintBridgeEcosystem_revertWhenAmountExceedsAbsoluteMax() public {
+        uint256 exceedsMax = 1_000_000_001 * 1e6;
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
+        tokenAuthority.mintBridgeEcosystem(address(wrappedStablecoin), bob, exceedsMax);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test burn error cases
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_burn_revertWhenNotBurnerRole() public {
+        vm.prank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
+
+        vm.prank(alice);
+        reserveLedgerToken.approve(address(tokenAuthority), 100e6);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                BURNER_ROLE
+            )
+        );
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6);
+    }
+
+    function test_burn_revertWhenTokenHandlerNotSet() public {
+        address randomToken = makeAddr("randomToken");
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.TokenHandlerNotSet.selector);
+        tokenAuthority.burn(randomToken, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test unwrap error cases
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_unwrap_revertWhenNotUnwrapperRole() public {
+        vm.prank(minter);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6);
+
+        vm.prank(bob);
+        wrappedStablecoin.approve(address(tokenAuthority), 100e6);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                bob,
+                UNWRAPPER_ROLE
+            )
+        );
+        tokenAuthority.unwrap(address(wrappedStablecoin), 100e6);
+    }
+
+    function test_unwrap_revertWhenTokenHandlerNotSet() public {
+        address randomToken = makeAddr("randomToken");
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.TokenHandlerNotSet.selector);
+        tokenAuthority.unwrap(randomToken, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test wrap error cases
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_wrap_revertWhenAmountIsZero() public {
+        vm.prank(alice);
+        vm.expectRevert(ITokenAuthority.AmountCannotBeZero.selector);
+        tokenAuthority.wrap(address(wrappedStablecoin), bob, 0);
+    }
+
+    function test_wrap_revertWhenTokenHandlerNotSet() public {
+        address randomToken = makeAddr("randomToken");
+
+        vm.prank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
+
+        vm.prank(alice);
+        reserveLedgerToken.approve(address(tokenAuthority), 50e6);
+
+        vm.prank(alice);
+        vm.expectRevert(ITokenAuthority.TokenHandlerNotSet.selector);
+        tokenAuthority.wrap(randomToken, bob, 50e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test setTxnMintLimit
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_setTxnMintLimit() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setTxnMintLimit(address(wrappedStablecoin), 500e6);
+
+        assertEq(tokenAuthority.getStablecoinTxnMintLimit(address(wrappedStablecoin)), 500e6);
+    }
+
+    function test_setTxnMintLimit_revertWhenNotMintRateLimitSetterRole() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                maliciousUser,
+                MINT_RATE_LIMIT_SETTER_ROLE
+            )
+        );
+        tokenAuthority.setTxnMintLimit(address(wrappedStablecoin), 500e6);
+    }
+
+    function test_setTxnMintLimit_revertWhenAmountExceedsAbsoluteMax() public {
+        uint256 exceedsMax = 1_000_000_000 * 1e6; // exactly at absolute max, should fail
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
+        tokenAuthority.setTxnMintLimit(address(wrappedStablecoin), exceedsMax);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test setMinterAllowance
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_setMinterAllowance() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setMinterAllowance(address(wrappedStablecoin), alice, 500e6);
+
+        assertEq(tokenAuthority.getMinterAllowance(address(wrappedStablecoin), alice), 500e6);
+    }
+
+    function test_setMinterAllowance_revertWhenNotMintRateLimitSetterRole() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                maliciousUser,
+                MINT_RATE_LIMIT_SETTER_ROLE
+            )
+        );
+        tokenAuthority.setMinterAllowance(address(wrappedStablecoin), alice, 500e6);
+    }
+
+    function test_setMinterAllowance_revertWhenAmountExceedsAbsoluteMax() public {
+        uint256 exceedsMax = 1_000_000_000 * 1e6; // exactly at absolute max, should fail
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
+        tokenAuthority.setMinterAllowance(address(wrappedStablecoin), alice, exceedsMax);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test setTokenHandler
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_setTokenHandler() public {
+        address newHandler = makeAddr("newHandler");
+
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
+
+        assertEq(tokenAuthority.getTokenHandler(address(wrappedStablecoin)), newHandler);
+    }
+
+    function test_setTokenHandler_revertWhenNotTokenAuthorityHandlerSetterRole() public {
+        address newHandler = makeAddr("newHandler");
+
+        vm.prank(maliciousUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                maliciousUser,
+                TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
+            )
+        );
+        tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test getters
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_getStablecoinTxnMintLimit() public view {
+        assertEq(tokenAuthority.getStablecoinTxnMintLimit(address(wrappedStablecoin)), 1_000_000e6);
+    }
+
+    function test_getTokenHandler() public view {
+        assertEq(tokenAuthority.getTokenHandler(address(wrappedStablecoin)), address(reserveLedgerWrappedHandler));
+        assertEq(tokenAuthority.getTokenHandler(address(backedStablecoin)), address(reserveLedgerBackedHandler));
+        assertEq(tokenAuthority.getTokenHandler(address(reserveLedgerToken)), address(singleTokenHandler));
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test SingleTokenHandler onlyTokenAuthority modifier
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_singleTokenHandler_mint_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        singleTokenHandler.mint(address(reserveLedgerToken), alice, 100e6);
+    }
+
+    function test_singleTokenHandler_burn_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        singleTokenHandler.burn(address(reserveLedgerToken), 100e6);
+    }
+
+    function test_singleTokenHandler_wrap_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        singleTokenHandler.wrap(address(reserveLedgerToken), alice, 100e6);
+    }
+
+    function test_singleTokenHandler_unwrap_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        singleTokenHandler.unwrap(address(reserveLedgerToken), alice, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test ReserveLedgerWrappedHandler onlyTokenAuthority modifier
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_reserveLedgerWrappedHandler_mint_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerWrappedHandler.mint(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    function test_reserveLedgerWrappedHandler_burn_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerWrappedHandler.burn(address(wrappedStablecoin), 100e6);
+    }
+
+    function test_reserveLedgerWrappedHandler_wrap_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerWrappedHandler.wrap(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    function test_reserveLedgerWrappedHandler_unwrap_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerWrappedHandler.unwrap(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test ReserveLedgerBackedHandler onlyTokenAuthority modifier
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_reserveLedgerBackedHandler_mint_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerBackedHandler.mint(address(backedStablecoin), charles, 100e6);
+    }
+
+    function test_reserveLedgerBackedHandler_burn_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerBackedHandler.burn(address(backedStablecoin), 100e6);
+    }
+
+    function test_reserveLedgerBackedHandler_wrap_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerBackedHandler.wrap(address(backedStablecoin), charles, 100e6);
+    }
+
+    function test_reserveLedgerBackedHandler_unwrap_revertWhenNotTokenAuthority() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(ITokenHandler.OnlyTokenAuthority.selector);
+        reserveLedgerBackedHandler.unwrap(address(backedStablecoin), charles, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test ReserveLedgerBackedHandler ReserveStoreNotFound error
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_reserveLedgerBackedHandler_burn_revertWhenReserveStoreNotFound() public {
+        // Call the handler directly from tokenAuthority address to test ReserveStoreNotFound
+        // Use a random stablecoin address that has no reserve store
+        address randomStablecoin = makeAddr("randomStablecoin");
+
+        vm.prank(address(tokenAuthority));
+        vm.expectRevert(ReserveLedgerBackedHandler.ReserveStoreNotFound.selector);
+        reserveLedgerBackedHandler.burn(randomStablecoin, 100e6);
+    }
+
+    function test_reserveLedgerBackedHandler_unwrap_revertWhenReserveStoreNotFound() public {
+        // Call the handler directly from tokenAuthority address to test ReserveStoreNotFound
+        // Use a random stablecoin address that has no reserve store
+        address randomStablecoin = makeAddr("randomStablecoin");
+
+        vm.prank(address(tokenAuthority));
+        vm.expectRevert(ReserveLedgerBackedHandler.ReserveStoreNotFound.selector);
+        reserveLedgerBackedHandler.unwrap(randomStablecoin, alice, 100e6);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test ReserveLedgerBackedHandler existing reserveStore branch
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_mintStablecoinsBacked_existingReserveStore() public {
+        // First mint creates the reserve store
+        vm.prank(minter);
+        tokenAuthority.mint(address(backedStablecoin), charles, 100e6);
+
+        address reserveStore = reserveLedgerBackedHandler.reserveStores(address(backedStablecoin));
+        assertNotEq(reserveStore, address(0), "reserve store should be set");
+
+        // Second mint should use existing reserve store
+        vm.prank(minter);
+        tokenAuthority.mint(address(backedStablecoin), charles, 50e6);
+
+        // Verify reserve store is still the same
+        assertEq(reserveLedgerBackedHandler.reserveStores(address(backedStablecoin)), reserveStore, "reserve store should not change");
+
+        assertEq(reserveLedgerToken.balanceOf(reserveStore), 150e6, "rl reserve store bal");
+        assertEq(backedStablecoin.balanceOf(charles), 150e6, "charles backed stablecoin bal");
+        assertEq(reserveLedgerToken.totalSupply(), 150e6, "rl total supply");
+        assertEq(backedStablecoin.totalSupply(), 150e6, "backed stablecoin total supply");
+    }
+
+    function test_wrapIntoBacked_existingReserveStore() public {
+        // First mint to create the reserve store
+        vm.prank(minter);
+        tokenAuthority.mint(address(backedStablecoin), charles, 100e6);
+
+        address reserveStore = reserveLedgerBackedHandler.reserveStores(address(backedStablecoin));
+        assertNotEq(reserveStore, address(0), "reserve store should be set");
+
+        // Now mint some reserve ledger tokens to alice for wrapping
+        vm.prank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 50e6);
+
+        // Wrap should use existing reserve store
+        vm.startPrank(alice);
+        reserveLedgerToken.approve(address(tokenAuthority), 50e6);
+        tokenAuthority.wrap(address(backedStablecoin), charles, 50e6);
+        vm.stopPrank();
+
+        // Verify reserve store is still the same
+        assertEq(reserveLedgerBackedHandler.reserveStores(address(backedStablecoin)), reserveStore, "reserve store should not change");
+
+        assertEq(reserveLedgerToken.balanceOf(reserveStore), 150e6, "rl reserve store bal");
+        assertEq(backedStablecoin.balanceOf(charles), 150e6, "charles backed stablecoin bal");
+        assertEq(reserveLedgerToken.totalSupply(), 150e6, "rl total supply");
+        assertEq(backedStablecoin.totalSupply(), 150e6, "backed stablecoin total supply");
+    }
 }
