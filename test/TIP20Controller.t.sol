@@ -185,6 +185,29 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
+    function test_setReserveStore_revert_when_old_reserve_store_is_not_zero() public {
+        address oldReserveStore = makeAddr("oldReserveStore");
+        address newReserveStore = makeAddr("newReserveStore");
+
+        vm.prank(oldReserveStore);
+        reserveLedgerToken.approve(address(controller), type(uint256).max);
+
+        vm.prank(address(controller));
+        reserveLedgerToken.mint(oldReserveStore, 100e6);
+
+        vm.prank(admin);
+        controller.setReserveStore(address(stablecoin), oldReserveStore);
+
+        assertEq(reserveLedgerToken.balanceOf(oldReserveStore), 100e6);
+        assertEq(reserveLedgerToken.balanceOf(newReserveStore), 0);
+
+        vm.prank(admin);
+        controller.setReserveStore(address(stablecoin), newReserveStore);
+
+        assertEq(reserveLedgerToken.balanceOf(oldReserveStore), 0);
+        assertEq(reserveLedgerToken.balanceOf(newReserveStore), 100e6);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Mint Tests
     //////////////////////////////////////////////////////////////////////////*/
