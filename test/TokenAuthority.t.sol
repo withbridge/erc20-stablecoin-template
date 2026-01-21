@@ -259,6 +259,8 @@ contract TokenAuthorityTest is Test {
 
     function test_mintReserveLedgerTokens() public {
         vm.prank(minter);
+        vm.expectEmit(true, true, false, true, address(singleTokenHandler));
+        emit ITokenHandler.Minted(address(reserveLedgerToken), alice, 100e6);
         tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
 
         assertEq(reserveLedgerToken.balanceOf(alice), 100e6, "rl alice bal");
@@ -272,6 +274,8 @@ contract TokenAuthorityTest is Test {
 
     function test_mintStablecoinsWrapped() public {
         vm.prank(minter);
+        vm.expectEmit(true, true, false, true, address(reserveLedgerWrappedHandler));
+        emit ITokenHandler.Minted(address(wrappedStablecoin), bob, 100e6);
         tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6);
 
         assertEq(
@@ -291,6 +295,8 @@ contract TokenAuthorityTest is Test {
 
     function test_mintStablecoinsBacked() public {
         vm.prank(minter);
+        vm.expectEmit(true, true, false, true, address(reserveLedgerBackedHandler));
+        emit ITokenHandler.Minted(address(backedStablecoin), charles, 100e6);
         tokenAuthority.mint(address(backedStablecoin), charles, 100e6);
 
         address reserveStore = reserveLedgerBackedHandler.reserveStores(address(backedStablecoin));
@@ -321,6 +327,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         reserveLedgerToken.approve(address(tokenAuthority), 100e6);
+
+        vm.expectEmit(true, false, false, true, address(singleTokenHandler));
+        emit ITokenHandler.Burned(address(reserveLedgerToken), 100e6);
         tokenAuthority.burn(address(reserveLedgerToken), 100e6);
         vm.stopPrank();
 
@@ -343,6 +352,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         wrappedStablecoin.approve(address(tokenAuthority), 100e6);
+
+        vm.expectEmit(true, false, false, true, address(reserveLedgerWrappedHandler));
+        emit ITokenHandler.Burned(address(wrappedStablecoin), 100e6);
         tokenAuthority.burn(address(wrappedStablecoin), 100e6);
         vm.stopPrank();
 
@@ -368,6 +380,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         backedStablecoin.approve(address(tokenAuthority), 100e6);
+
+        vm.expectEmit(true, false, false, true, address(reserveLedgerBackedHandler));
+        emit ITokenHandler.Burned(address(backedStablecoin), 100e6);
         tokenAuthority.burn(address(backedStablecoin), 100e6);
         vm.stopPrank();
 
@@ -413,6 +428,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(alice);
         reserveLedgerToken.approve(address(tokenAuthority), 50e6);
+
+        vm.expectEmit(true, true, false, true, address(reserveLedgerWrappedHandler));
+        emit ITokenHandler.Wrapped(address(wrappedStablecoin), bob, 50e6);
         tokenAuthority.wrap(address(wrappedStablecoin), bob, 50e6);
         vm.stopPrank();
 
@@ -442,6 +460,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(alice);
         reserveLedgerToken.approve(address(tokenAuthority), 50e6);
+
+        vm.expectEmit(true, true, false, true, address(reserveLedgerBackedHandler));
+        emit ITokenHandler.Wrapped(address(backedStablecoin), charles, 50e6);
         tokenAuthority.wrap(address(backedStablecoin), charles, 50e6);
         vm.stopPrank();
 
@@ -496,6 +517,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         wrappedStablecoin.approve(address(tokenAuthority), 100e6);
+
+        vm.expectEmit(true, true, false, true, address(reserveLedgerWrappedHandler));
+        emit ITokenHandler.Unwrapped(address(wrappedStablecoin), tokenAuthorityAdmin, 100e6);
         tokenAuthority.unwrap(address(wrappedStablecoin), 100e6);
         vm.stopPrank();
 
@@ -533,6 +557,9 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         backedStablecoin.approve(address(tokenAuthority), 100e6);
+
+        vm.expectEmit(true, true, false, true, address(reserveLedgerBackedHandler));
+        emit ITokenHandler.Unwrapped(address(backedStablecoin), tokenAuthorityAdmin, 100e6);
         tokenAuthority.unwrap(address(backedStablecoin), 100e6);
         vm.stopPrank();
 
@@ -613,6 +640,8 @@ contract TokenAuthorityTest is Test {
 
     function test_mintBridgeEcosystem() public {
         vm.prank(tokenAuthorityAdmin);
+        vm.expectEmit(true, true, false, true, address(reserveLedgerWrappedHandler));
+        emit ITokenHandler.Minted(address(wrappedStablecoin), bob, 100e6);
         tokenAuthority.mintBridgeEcosystem(address(wrappedStablecoin), bob, 100e6);
 
         assertEq(wrappedStablecoin.balanceOf(bob), 100e6, "bob wrappedStablecoin bal");
