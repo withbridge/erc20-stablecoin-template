@@ -29,7 +29,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
 
     address public immutable RESERVE_LEDGER_TOKEN;
 
-    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 10e6;
+    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Role Constants
@@ -211,7 +211,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(mintTxnLimit < type(uint256).max / 2, AmountExceedsAbsoluteMax());
+        require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         mintTxnLimits[stablecoinContract] = mintTxnLimit;
 
         emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
@@ -227,7 +227,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(minterAllowance < type(uint256).max / 2, AmountExceedsAbsoluteMax());
+        require(minterAllowance < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         minterAllowances[stablecoinContract][minter] = minterAllowance;
 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
