@@ -483,6 +483,15 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
+    function test_unwrap_revert_stablecoin_is_reserve_ledger_token() public {
+        vm.prank(admin);
+        controller.grantRole(controller.UNWRAPPER_ROLE(), minter);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.InvalidStablecoinContract.selector);
+        controller.unwrap(address(reserveLedgerToken), 100e6);
+    }
+
     function test_unwrap_auto_deploys_reserve_store() public {
         ITIP20 newToken = _createNewStablecoin("Unwrap Token", "UNW");
 
@@ -533,6 +542,18 @@ contract TIP20ControllerTest is Test {
         vm.prank(user1);
         vm.expectRevert(ITIP20Controller.AmountCannotBeZero.selector);
         controller.wrap(address(stablecoin), user2, 0);
+    }
+
+    function test_wrap_revert_stablecoin_is_reserve_ledger_token() public {
+        uint256 wrapAmount = 100e6;
+
+        _mintReserveTokens(user1, wrapAmount);
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(controller), wrapAmount);
+
+        vm.prank(user1);
+        vm.expectRevert(ITIP20Controller.InvalidStablecoinContract.selector);
+        controller.wrap(address(reserveLedgerToken), user2, wrapAmount);
     }
 
     function test_wrap_auto_deploys_reserve_store() public {

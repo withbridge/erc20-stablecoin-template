@@ -163,6 +163,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @param amount The amount of tokens to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
+        require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
         // Transfer stablecoin from sender to this contract and burn it
@@ -185,6 +186,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         require(amount > 0, AmountCannotBeZero());
 
         address reserveStore = _getOrCreateReserveStore(stablecoinContract);
