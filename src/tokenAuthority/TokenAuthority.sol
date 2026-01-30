@@ -26,8 +26,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 Immutable Variables
     //////////////////////////////////////////////////////////////////////////*/
 
+    /// @notice The address of the reserve ledger token
     address public immutable RESERVE_LEDGER_TOKEN;
 
+    /// @notice The absolute maximum amount of tokens that can be minted
     uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -68,6 +70,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /**
      * @notice Constructs the TokenAuthority contract
      * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
+     * @param _reserveLedgerToken The address of the reserve ledger token
      */
     constructor(address _reserveLedgerToken, bool _disableInitializer) {
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
