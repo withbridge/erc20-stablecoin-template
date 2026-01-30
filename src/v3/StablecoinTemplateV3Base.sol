@@ -28,6 +28,10 @@ import {
 } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 
+/// @title StablecoinTemplateV3Base
+/// @author Bridge
+/// @notice Abstract base contract for stablecoin implementations with access control and pausability
+/// @dev Combines ERC20, permit, pausable, ownable, access control, and UUPS upgradeability
 abstract contract StablecoinTemplateV3Base is
     Initializable,
     ERC20Upgradeable,

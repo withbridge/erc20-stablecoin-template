@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title ReserveStore
+/// @author Bridge
 /// @notice A minimal contract to hold reserve ledger tokens for a specific stablecoin
 /// @dev Deployed per stablecoin to keep ledger token reserves separate for reconciliation purposes.
 ///      Pre-approves the controller to transfer tokens on its behalf.

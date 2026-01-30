@@ -6,7 +6,9 @@ import { TokenHandler } from "./TokenHandler.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title SingleTokenHandler
+/// @author Bridge
 /// @notice A token handler for simple tokens that only supports minting and burning (no wrapping)
+/// @dev Used for tokens like reserve ledger that don't need wrap/unwrap functionality
 contract SingleTokenHandler is TokenHandler {
 
     using SafeERC20 for IERC20Mintable;

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/// @title StablecoinTemplateV3Storage
+/// @author Bridge
+/// @notice Storage struct for StablecoinTemplateV3 contracts using EIP-7201 namespaced storage
+/// @dev Contains all persistent state variables for the stablecoin template
 struct StablecoinTemplateV3Storage {
     mapping(address => bool) __DEPRECATED_blockedList;
     mapping(address => bool) __DEPRECATED_mintRecipientList;
@@ -11,6 +15,10 @@ struct StablecoinTemplateV3Storage {
     bool _migrationToWrappedCompleted;
 }
 
+/// @title StablecoinTemplateV3StorageLib
+/// @author Bridge
+/// @notice Library for accessing StablecoinTemplateV3 namespaced storage
+/// @dev Provides helper functions to access EIP-7201 storage slots and transient storage
 library StablecoinTemplateV3StorageLib {
 
     /// @custom:storage-location eip7201:bridge.StablecoinTemplateV3

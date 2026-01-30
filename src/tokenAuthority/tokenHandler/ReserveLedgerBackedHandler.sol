@@ -9,8 +9,10 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title ReserveLedgerBackedHandler
+/// @author Bridge
 /// @notice Token handler for stablecoins backed by reserve ledger tokens held in separate reserve
-/// stores @dev Each stablecoin has its own ReserveStore contract that holds the collateral
+/// stores
+/// @dev Each stablecoin has its own ReserveStore contract that holds the collateral
 contract ReserveLedgerBackedHandler is TokenHandler {
 
     using SafeERC20 for IERC20;

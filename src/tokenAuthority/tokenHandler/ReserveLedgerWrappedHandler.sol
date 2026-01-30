@@ -8,9 +8,10 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title ReserveLedgerWrappedHandler
+/// @author Bridge
 /// @notice Token handler for wrapped stablecoins backed by reserve ledger tokens held in the
-/// stablecoin contract @dev The stablecoin contract holds the reserve ledger tokens directly as
-/// collateral
+/// stablecoin contract
+/// @dev The stablecoin contract holds the reserve ledger tokens directly as collateral
 contract ReserveLedgerWrappedHandler is TokenHandler {
 
     using SafeERC20 for IERC20Mintable;

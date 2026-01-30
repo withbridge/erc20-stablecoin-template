@@ -16,6 +16,10 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
+/// @title TokenAuthority
+/// @author Bridge
+/// @notice Central authority contract for managing stablecoin minting, burning, and wrapping
+/// @dev Coordinates token operations through pluggable token handlers and enforces rate limits
 contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
 
     using SafeERC20 for IERC20;

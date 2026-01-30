@@ -4,7 +4,9 @@ pragma solidity ^0.8.24;
 import { ITokenHandler } from "./ITokenHandler.sol";
 
 /// @title TokenHandler
+/// @author Bridge
 /// @notice Abstract base contract for token handlers that restricts access to the token authority
+/// @dev Implements access control modifier for token authority and stores the authority address
 abstract contract TokenHandler is ITokenHandler {
 
     /// @notice The address of the token authority that can call handler functions

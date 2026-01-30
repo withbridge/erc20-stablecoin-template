@@ -2,8 +2,10 @@
 pragma solidity ^0.8.24;
 
 /// @title ITokenHandler
+/// @author Bridge
 /// @notice Interface for token handlers that manage minting, burning, wrapping, and unwrapping of
 /// tokens
+/// @dev Token handlers are called by TokenAuthority to execute token operations
 interface ITokenHandler {
 
     /*//////////////////////////////////////////////////////////////////////////

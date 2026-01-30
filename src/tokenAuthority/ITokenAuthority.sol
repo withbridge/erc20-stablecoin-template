@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 /// @title ITokenAuthority
+/// @author Bridge
 /// @notice Interface for the TokenAuthority contract which manages minting rate limits and
 /// allowances for stablecoins
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
