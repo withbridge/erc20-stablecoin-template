@@ -69,8 +69,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     /**
      * @notice Constructs the TokenAuthority contract
-     * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
      * @param _reserveLedgerToken The address of the reserve ledger token
+     * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
      */
     constructor(address _reserveLedgerToken, bool _disableInitializer) {
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
