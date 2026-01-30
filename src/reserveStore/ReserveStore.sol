@@ -9,7 +9,10 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      Pre-approves the controller to transfer tokens on its behalf.
 contract ReserveStore {
 
-    /// @notice The reserve ledger token (backing token)
+    /// @notice Error thrown when zero address is used
+    error AmountCannotBeZero();
+
+    /// @notice The reserve ledger token
     IERC20 public immutable RESERVE_LEDGER;
 
     /// @notice The controller that can move tokens from this store
@@ -22,6 +25,10 @@ contract ReserveStore {
     /// @param controller The controller contract address
     /// @param stablecoin The stablecoin this store backs
     constructor(address reserveLedger, address controller, address stablecoin) {
+        require(reserveLedger != address(0), AmountCannotBeZero());
+        require(controller != address(0), AmountCannotBeZero());
+        require(stablecoin != address(0), AmountCannotBeZero());
+
         RESERVE_LEDGER = IERC20(reserveLedger);
         CONTROLLER = controller;
         STABLECOIN = IERC20(stablecoin);

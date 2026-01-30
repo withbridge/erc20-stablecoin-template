@@ -35,7 +35,6 @@ contract SingleTokenHandler is TokenHandler {
     /// @param amount The amount of tokens to burn
     function burn(address stablecoinContract, uint256 amount) external onlyTokenAuthority {
         IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
-        IERC20Mintable(stablecoinContract).approve(stablecoinContract, amount);
         IERC20Mintable(stablecoinContract).burn(amount);
         emit Burned(stablecoinContract, amount);
     }

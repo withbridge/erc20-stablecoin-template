@@ -44,6 +44,9 @@ interface ITokenAuthority {
     /// @notice Thrown when the token authority handler is not set
     error TokenHandlerNotSet();
 
+    /// @notice Thrown when the stablecoin is not registered
+    error StablecoinNotRegistered();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
@@ -125,6 +128,21 @@ interface ITokenAuthority {
     event TokenHandlerSet(
         address indexed sender, address indexed stablecoinContract, address indexed tokenHandler
     );
+
+    /// @notice Emitted when a stablecoin is registered
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param tokenHandler The address of the token handler
+    /// @param mintTxnLimit The mint transaction limit
+    event StablecoinRegistered(
+        address indexed sender,
+        address indexed stablecoinContract,
+        address indexed tokenHandler,
+        uint256 mintTxnLimit
+    );
+
+    /// @notice Emitted when a stablecoin is unregistered
+    /// @param stablecoinContract The address of the stablecoin contract
+    event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
