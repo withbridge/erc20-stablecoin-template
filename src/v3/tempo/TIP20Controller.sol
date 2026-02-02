@@ -29,7 +29,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
 
     address public immutable RESERVE_LEDGER_TOKEN;
 
-    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 10e6;
+    uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Role Constants
@@ -163,6 +163,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @param amount The amount of tokens to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
+        require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
         // Transfer stablecoin from sender to this contract and burn it
@@ -185,6 +186,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         require(amount > 0, AmountCannotBeZero());
 
         address reserveStore = _getOrCreateReserveStore(stablecoinContract);
@@ -211,7 +213,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(mintTxnLimit < type(uint256).max / 2, AmountExceedsAbsoluteMax());
+        require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         mintTxnLimits[stablecoinContract] = mintTxnLimit;
 
         emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
@@ -227,7 +229,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(minterAllowance < type(uint256).max / 2, AmountExceedsAbsoluteMax());
+        require(minterAllowance < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         minterAllowances[stablecoinContract][minter] = minterAllowance;
 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
@@ -244,6 +246,17 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
+        address oldReserveStore = reserveStores[stablecoinContract];
+
+        if (oldReserveStore != address(0)) {
+            IERC20(RESERVE_LEDGER_TOKEN)
+                .safeTransferFrom(
+                    oldReserveStore,
+                    reserveStore,
+                    IERC20(RESERVE_LEDGER_TOKEN).balanceOf(oldReserveStore)
+                );
+        }
+
         reserveStores[stablecoinContract] = reserveStore;
 
         emit ReserveStoreSet(msg.sender, stablecoinContract, reserveStore);
