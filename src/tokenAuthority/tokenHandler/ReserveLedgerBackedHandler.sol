@@ -48,6 +48,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
+        require(to != address(0), ZeroAddress());
         IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
         address reserveStore = reserveStores[stablecoinContract];
         if (reserveStore == address(0)) {
