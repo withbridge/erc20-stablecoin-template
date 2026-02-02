@@ -15,6 +15,9 @@ interface ITokenHandler {
     /// @notice Thrown when the caller is not the token authority
     error OnlyTokenAuthority();
 
+    /// @notice Thrown when the address is the zero address
+    error ZeroAddress();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

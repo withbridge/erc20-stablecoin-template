@@ -28,6 +28,7 @@ contract SingleTokenHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
+        require(to != address(0), ZeroAddress());
         IERC20Mintable(stablecoinContract).mint(to, amount);
         emit Minted(stablecoinContract, to, amount);
     }

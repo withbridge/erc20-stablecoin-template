@@ -150,7 +150,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
         address tokenHandler = tokenHandlers[stablecoinContract];
         require(tokenHandler != address(0), TokenHandlerNotSet());
-        IERC20Mintable(stablecoinContract).transferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
         IERC20Mintable(stablecoinContract).approve(tokenHandler, amount);
         ITokenHandler(tokenHandler).burn(stablecoinContract, amount);
 
@@ -171,7 +171,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
         address tokenHandler = tokenHandlers[stablecoinContract];
         require(tokenHandler != address(0), TokenHandlerNotSet());
-        IERC20(stablecoinContract).transferFrom(msg.sender, address(this), amount);
+        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
         IERC20(stablecoinContract).approve(tokenHandler, amount);
         ITokenHandler(tokenHandler).unwrap(stablecoinContract, msg.sender, amount);
 
@@ -190,12 +190,13 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        require(to != address(0), ZeroAddress());
         require(amount > 0, AmountCannotBeZero());
 
         address tokenHandler = tokenHandlers[stablecoinContract];
         require(tokenHandler != address(0), TokenHandlerNotSet());
 
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, address(this), amount);
         IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(tokenHandler, amount);
         ITokenHandler(tokenHandler).wrap(stablecoinContract, to, amount);
 
@@ -246,6 +247,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         public
         onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
     {
+        require(stablecoinContract != address(0), ZeroAddress());
+        require(tokenHandler != address(0), ZeroAddress());
         tokenHandlers[stablecoinContract] = tokenHandler;
 
         emit TokenHandlerSet(msg.sender, stablecoinContract, tokenHandler);
@@ -263,8 +266,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         address tokenHandler,
         uint256 mintTxnLimit
     ) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(stablecoinContract != address(0), AmountCannotBeZero());
-        require(tokenHandler != address(0), AmountCannotBeZero());
+        require(stablecoinContract != address(0), ZeroAddress());
+        require(tokenHandler != address(0), ZeroAddress());
         require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
 
         tokenHandlers[stablecoinContract] = tokenHandler;
@@ -279,7 +282,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param stablecoinContract The address of the stablecoin contract
      */
     function unregisterStablecoin(address stablecoinContract) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(stablecoinContract != address(0), AmountCannotBeZero());
+        require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         delete tokenHandlers[stablecoinContract];
         delete mintTxnLimits[stablecoinContract];

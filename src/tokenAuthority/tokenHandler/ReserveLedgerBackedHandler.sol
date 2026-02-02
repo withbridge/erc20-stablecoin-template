@@ -33,6 +33,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
     constructor(address _reserveLedgerToken, address _tokenAuthority)
         TokenHandler(_tokenAuthority)
     {
+        require(_reserveLedgerToken != address(0), ZeroAddress());
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
     }
 
@@ -54,7 +55,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
                 address(new ReserveStore(RESERVE_LEDGER_TOKEN, address(this), stablecoinContract));
             reserveStores[stablecoinContract] = reserveStore;
         }
-        IERC20(RESERVE_LEDGER_TOKEN).transfer(reserveStore, amount);
+        IERC20(RESERVE_LEDGER_TOKEN).safeTransfer(reserveStore, amount);
         IERC20Mintable(stablecoinContract).mint(to, amount);
         emit Minted(stablecoinContract, to, amount);
     }
@@ -85,6 +86,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
+        require(to != address(0), ZeroAddress());
         address reserveStore = reserveStores[stablecoinContract];
         if (reserveStore == address(0)) {
             reserveStore =
@@ -106,6 +108,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
+        require(to != address(0), ZeroAddress());
         address reserveStore = reserveStores[stablecoinContract];
         require(reserveStore != address(0), ReserveStoreNotFound());
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);

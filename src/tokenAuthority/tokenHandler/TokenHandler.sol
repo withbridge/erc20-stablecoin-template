@@ -21,6 +21,7 @@ abstract contract TokenHandler is ITokenHandler {
     /// @notice Initializes the token handler with the token authority address
     /// @param _tokenAuthority The address of the token authority
     constructor(address _tokenAuthority) {
+        require(_tokenAuthority != address(0), ZeroAddress());
         TOKEN_AUTHORITY = _tokenAuthority;
     }
 

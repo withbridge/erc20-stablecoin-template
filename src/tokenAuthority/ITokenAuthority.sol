@@ -48,6 +48,9 @@ interface ITokenAuthority {
     /// @notice Thrown when the stablecoin is not registered
     error StablecoinNotRegistered();
 
+    /// @notice Thrown when the address is the zero address
+    error ZeroAddress();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

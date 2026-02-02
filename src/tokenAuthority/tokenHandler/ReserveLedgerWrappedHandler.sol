@@ -27,6 +27,7 @@ contract ReserveLedgerWrappedHandler is TokenHandler {
     constructor(address _reserveLedgerToken, address _tokenAuthority)
         TokenHandler(_tokenAuthority)
     {
+        require(_reserveLedgerToken != address(0), ZeroAddress());
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
     }
 
@@ -40,6 +41,7 @@ contract ReserveLedgerWrappedHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
+        require(to != address(0), ZeroAddress());
         IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
         IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
         IWrappedERC20(stablecoinContract).wrap(to, amount);
@@ -69,7 +71,8 @@ contract ReserveLedgerWrappedHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
+        require(to != address(0), ZeroAddress());
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, address(this), amount);
         IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
         IWrappedERC20(stablecoinContract).wrap(to, amount);
         emit Wrapped(stablecoinContract, to, amount);
@@ -85,6 +88,7 @@ contract ReserveLedgerWrappedHandler is TokenHandler {
         external
         onlyTokenAuthority
     {
+        require(to != address(0), ZeroAddress());
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
         IWrappedERC20(stablecoinContract).unwrap(amount);
         IERC20(RESERVE_LEDGER_TOKEN).safeTransfer(to, amount);
