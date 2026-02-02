@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IERC20Mintable } from "../utils/IERC20Mintable.sol";
-import { IWrappedERC20 } from "../utils/IWrappedERC20.sol";
-
-import { ITokenAuthority } from "./ITokenAuthority.sol";
+import { ReserveStore } from "./ReserveStore.sol";
+import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import {
     AccessControlEnumerableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
@@ -13,12 +11,17 @@ import {
 } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 
-contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
+/// @title TIP20Controller
+/// @notice A singleton controller contract that manages minting rate limits and allowances for
+/// multiple stablecoins backed by a single reserve ledger token
+/// @dev Uses ReserveStore contracts to hold reserve ledger tokens for each stablecoin.
+///      Each stablecoin has its own ReserveStore to keep ledger tokens separate for reconciliation.
+contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
 
     using SafeERC20 for IERC20;
-    using SafeERC20 for IERC20Mintable;
-    using SafeERC20 for IWrappedERC20;
+    using SafeERC20 for ITIP20;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Immutable Variables
@@ -29,7 +32,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Immutable Variables
+                                Role Constants
     //////////////////////////////////////////////////////////////////////////*/
 
     bytes32 public constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
@@ -54,12 +57,15 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /// mint limits for the stablecoin)
     mapping(address stablecoinContract => uint256 mintTxnLimit) public mintTxnLimits;
 
+    /// @notice Maps stablecoin contract address to its ReserveStore address
+    mapping(address stablecoinContract => address reserveStore) public reserveStores;
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Constructs the TokenAuthority contract
+     * @notice Constructs the TIP20Controller contract
      * @param _reserveLedgerToken The address of the reserve ledger token
      * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
      */
@@ -76,7 +82,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Initializes the TokenAuthority contract
+     * @notice Initializes the TIP20Controller contract
      * @param _admin The address to be granted the admin role
      */
     function initialize(address _admin) public initializer {
@@ -128,9 +134,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
-     * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
-     * ledger token, it calls burn directly; otherwise, it calls unwrap on the ERC20WrapUnwrap
-     * interface.
+     * @dev Burns the stablecoin and also burns the underlying reserve ledger tokens.
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
      */
@@ -138,40 +142,36 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
+            ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
         } else {
-            IWrappedERC20(stablecoinContract).unwrap(amount);
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
+            address reserveStore = _getOrCreateReserveStore(stablecoinContract);
+
+            ITIP20(stablecoinContract).burn(amount);
+            // Transfer reserve tokens from ReserveStore to this contract and burn them
+            IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(reserveStore, address(this), amount);
+            ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
         }
 
         emit Burn(msg.sender, stablecoinContract, amount);
     }
 
     /**
-     * @notice Unwraps a given amount of a wrapped stablecoin for the caller
-     * @dev Reverts if the stablecoin contract provided is the reserve ledger token,
-     *      since unwrapping is only applicable to wrapped stablecoins.
-     *      Calls unwrap on the wrapped stablecoin, which should send the underlying reserve
-     *      tokens to this contract, then transfers those reserve tokens to the caller.
-     * @param stablecoinContract The address of the wrapped stablecoin contract
-     * @param amount The amount of wrapped tokens to unwrap
-     *
-     * Emits a {Unwrap} event for tracking unwrapping operations.
+     * @notice Unwraps a given amount of a stablecoin for the caller
+     * @dev Burns the stablecoin and transfers the underlying reserve tokens from
+     *      the ReserveStore to the caller.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of tokens to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
-        require(stablecoinContract != RESERVE_LEDGER_TOKEN, CannotUnwrapReserveLedgerToken());
+        require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
+        address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
-        // Unwrap the wrapped stablecoin, which will send underlying RESERVE_LEDGER_TOKEN to this
-        // contract
-        IWrappedERC20 stablecoin = IWrappedERC20(stablecoinContract);
-        stablecoin.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 balanceBefore = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
-        stablecoin.unwrap(amount);
-        uint256 balanceAfter = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
-        require(balanceAfter == balanceBefore + amount, ReserveLedgerBalanceMismatch());
+        // Transfer stablecoin from sender to this contract and burn it
+        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+        ITIP20(stablecoinContract).burn(amount);
 
-        // Transfer the received RESERVE_LEDGER_TOKEN to the sender
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transfer(msg.sender, amount);
+        // Transfer reserve tokens from ReserveStore to the sender
+        IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(reserveStore, msg.sender, amount);
 
         emit Unwrap(msg.sender, stablecoinContract, amount);
     }
@@ -179,19 +179,23 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /**
      * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
      * recipient.
-     * @dev Transfers the specified amount of reserve ledger tokens from the caller to this
-     * contract, approves the stablecoin contract to spend these tokens, and then wraps the tokens
-     * for the recipient.
-     * @dev Emits a {Wrap} event upon successful wrapping.
+     * @dev Transfers reserve tokens from caller to ReserveStore, then mints stablecoins to
+     * recipient.
      * @param stablecoinContract The address of the target stablecoin contract.
      * @param to The address to receive the wrapped tokens.
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         require(amount > 0, AmountCannotBeZero());
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-        IWrappedERC20(stablecoinContract).wrap(to, amount);
+
+        address reserveStore = _getOrCreateReserveStore(stablecoinContract);
+
+        // Transfer reserve tokens from caller to ReserveStore
+        IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, reserveStore, amount);
+
+        // Mint stablecoins to recipient
+        ITIP20(stablecoinContract).mint(to, amount);
 
         emit Wrap(msg.sender, stablecoinContract, to, amount);
     }
@@ -231,6 +235,33 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
     }
 
+    /**
+     * @notice Sets or overrides the reserve store for a stablecoin contract
+     * @dev Reserve stores are auto-deployed lazily if not set. This function allows
+     *      pre-configuration or migration to a different reserve store.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param reserveStore The address of the reserve store
+     */
+    function setReserveStore(address stablecoinContract, address reserveStore)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        address oldReserveStore = reserveStores[stablecoinContract];
+
+        if (oldReserveStore != address(0)) {
+            IERC20(RESERVE_LEDGER_TOKEN)
+                .safeTransferFrom(
+                    oldReserveStore,
+                    reserveStore,
+                    IERC20(RESERVE_LEDGER_TOKEN).balanceOf(oldReserveStore)
+                );
+        }
+
+        reserveStores[stablecoinContract] = reserveStore;
+
+        emit ReserveStoreSet(msg.sender, stablecoinContract, reserveStore);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Getters
     //////////////////////////////////////////////////////////////////////////*/
@@ -262,6 +293,19 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         return mintTxnLimits[stablecoinContract];
     }
 
+    /**
+     * @notice Gets the reserve store for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return reserveStore The address of the reserve store
+     */
+    function getReserveStore(address stablecoinContract)
+        public
+        view
+        returns (address reserveStore)
+    {
+        return reserveStores[stablecoinContract];
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Upgrade Logic
     //////////////////////////////////////////////////////////////////////////*/
@@ -281,15 +325,42 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 Internal Functions
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Gets the reserve store for a stablecoin, deploying one if it doesn't exist
+     * @dev Uses CREATE2 with salt derived from constructor args for deterministic addresses
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return reserveStore The address of the reserve store
+     */
+    function _getOrCreateReserveStore(address stablecoinContract) internal returns (address) {
+        address reserveStore = reserveStores[stablecoinContract];
+        if (reserveStore == address(0)) {
+            bytes32 salt = keccak256(
+                abi.encodePacked(RESERVE_LEDGER_TOKEN, address(this), stablecoinContract)
+            );
+            reserveStore = address(
+                new ReserveStore{ salt: salt }(
+                    RESERVE_LEDGER_TOKEN, address(this), stablecoinContract
+                )
+            );
+            reserveStores[stablecoinContract] = reserveStore;
+            emit ReserveStoreSet(address(this), stablecoinContract, reserveStore);
+        }
+        return reserveStore;
+    }
+
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(to, amount);
+            ITIP20(RESERVE_LEDGER_TOKEN).mint(to, amount);
         } else {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-            IWrappedERC20(stablecoinContract).wrap(to, amount);
+            address reserveStore = _getOrCreateReserveStore(stablecoinContract);
+
+            // Mint reserve tokens to ReserveStore
+            ITIP20(RESERVE_LEDGER_TOKEN).mint(reserveStore, amount);
+
+            // Mint stablecoins to recipient
+            ITIP20(stablecoinContract).mint(to, amount);
         }
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
