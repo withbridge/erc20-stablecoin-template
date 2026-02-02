@@ -30,6 +30,10 @@ interface ITIP20Controller {
     /// maximum amount
     error AmountExceedsAbsoluteMax();
 
+    /// @notice Thrown when attempting to perform an operation with an invalid stablecoin contract
+    /// @dev This prevents operations that would result in an invalid stablecoin contract
+    error InvalidStablecoinContract();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
