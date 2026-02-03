@@ -60,11 +60,6 @@ contract DeployScript is Script {
         console.log("ReserveLedger implementation deployed at", reserveLedgerImplementation);
         console.log();
 
-        console.log("Deploying StablecoinTemplateV3 implementation...");
-        stablecoinTemplateV3Implementation = address(new StablecoinTemplateV3(reserveLedgerImplementation, authRegistry));
-        console.log("StablecoinTemplateV3 implementation deployed at", stablecoinTemplateV3Implementation);
-        console.log();
-
         console.log("Setting up policies...");
         transferPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryBlockerPolicyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
         reserveLedgerMintRecipientPolicyId = AuthRegistry(authRegistry).createPolicy(authRegistryWhitelistPolicyAdmin, IAuthRegistry.PolicyType.WHITELIST);
@@ -95,6 +90,11 @@ contract DeployScript is Script {
         console.log(StablecoinTemplateV3(reserveLedgerProxy).name());
 
         console.log("ReserveLedger proxy deployed at", reserveLedgerProxy);
+        console.log();
+
+        console.log("Deploying StablecoinTemplateV3 implementation...");
+        stablecoinTemplateV3Implementation = address(new StablecoinTemplateV3(reserveLedgerProxy, authRegistry));
+        console.log("StablecoinTemplateV3 implementation deployed at", stablecoinTemplateV3Implementation);
         console.log();
 
         console.log("Deploying StablecoinTemplateV3 proxy...");

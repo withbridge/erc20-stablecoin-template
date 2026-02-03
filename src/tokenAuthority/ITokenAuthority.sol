@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 /// @title ITokenAuthority
+/// @author Bridge
 /// @notice Interface for the TokenAuthority contract which manages minting rate limits and
 /// allowances for stablecoins
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
@@ -40,6 +41,18 @@ interface ITokenAuthority {
 
     /// @notice Thrown when there is a mismatch in reserve ledger balance.
     error ReserveLedgerBalanceMismatch();
+
+    /// @notice Thrown when the token authority handler is not set
+    error TokenHandlerNotSet();
+
+    /// @notice Thrown when the stablecoin is not registered
+    error StablecoinNotRegistered();
+
+    /// @notice Thrown when the address is the zero address
+    error ZeroAddress();
+
+    /// @notice Thrown when the token handler is invalid
+    error InvalidTokenHandler();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -113,6 +126,30 @@ interface ITokenAuthority {
     event BridgeEcosystemContractSet(
         address indexed sender, address indexed bridgeEcosystemContract, bool enabled
     );
+
+    /// @notice Emitted when a token handler is set for a stablecoin contract
+    /// @param sender The address that set the token handler (must have
+    /// TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) @param stablecoinContract The address of the stablecoin
+    /// contract
+    /// @param tokenHandler The address of the token handler
+    event TokenHandlerSet(
+        address indexed sender, address indexed stablecoinContract, address indexed tokenHandler
+    );
+
+    /// @notice Emitted when a stablecoin is registered
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param tokenHandler The address of the token handler
+    /// @param mintTxnLimit The mint transaction limit
+    event StablecoinRegistered(
+        address indexed sender,
+        address indexed stablecoinContract,
+        address indexed tokenHandler,
+        uint256 mintTxnLimit
+    );
+
+    /// @notice Emitted when a stablecoin is unregistered
+    /// @param stablecoinContract The address of the stablecoin contract
+    event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
@@ -194,5 +231,22 @@ interface ITokenAuthority {
         external
         view
         returns (uint256 mintTxnLimit);
+
+    /**
+     * @notice Sets the token handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     */
+    function setTokenHandler(address stablecoinContract, address tokenHandler) external;
+
+    /**
+     * @notice Gets the token handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return tokenHandler The address of the token handler
+     */
+    function getTokenHandler(address stablecoinContract)
+        external
+        view
+        returns (address tokenHandler);
 
 }
