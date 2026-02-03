@@ -11,7 +11,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract ReserveStore {
 
     /// @notice Error thrown when zero address is used
-    error AmountCannotBeZero();
+    error ZeroAddress();
 
     /// @notice The reserve ledger token
     IERC20 public immutable RESERVE_LEDGER;
@@ -26,9 +26,9 @@ contract ReserveStore {
     /// @param controller The controller contract address
     /// @param stablecoin The stablecoin this store backs
     constructor(address reserveLedger, address controller, address stablecoin) {
-        require(reserveLedger != address(0), AmountCannotBeZero());
-        require(controller != address(0), AmountCannotBeZero());
-        require(stablecoin != address(0), AmountCannotBeZero());
+        require(reserveLedger != address(0), ZeroAddress());
+        require(controller != address(0), ZeroAddress());
+        require(stablecoin != address(0), ZeroAddress());
 
         RESERVE_LEDGER = IERC20(reserveLedger);
         CONTROLLER = controller;
