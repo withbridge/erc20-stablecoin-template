@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+
 /// @title ITokenHandler
 /// @author Bridge
 /// @notice Interface for token handlers that manage minting, burning, wrapping, and unwrapping of
 /// tokens
 /// @dev Token handlers are called by TokenAuthority to execute token operations
-interface ITokenHandler {
+interface ITokenHandler is IERC165 {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Errors

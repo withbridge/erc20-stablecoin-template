@@ -51,6 +51,9 @@ interface ITokenAuthority {
     /// @notice Thrown when the address is the zero address
     error ZeroAddress();
 
+    /// @notice Thrown when the token handler is invalid
+    error InvalidTokenHandler();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

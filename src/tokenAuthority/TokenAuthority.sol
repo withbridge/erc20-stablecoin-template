@@ -14,6 +14,8 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
+
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
 /// @title TokenAuthority
@@ -249,6 +251,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     {
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
+        require(
+            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
+            InvalidTokenHandler()
+        );
+
         tokenHandlers[stablecoinContract] = tokenHandler;
 
         emit TokenHandlerSet(msg.sender, stablecoinContract, tokenHandler);
@@ -269,6 +276,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
         require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        require(
+            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
+            InvalidTokenHandler()
+        );
 
         tokenHandlers[stablecoinContract] = tokenHandler;
         mintTxnLimits[stablecoinContract] = mintTxnLimit;

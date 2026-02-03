@@ -827,12 +827,20 @@ contract TokenAuthorityTest is Test {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     function test_setTokenHandler() public {
-        address newHandler = makeAddr("newHandler");
+        address newHandler = address(new SingleTokenHandler(address(tokenAuthority)));
 
         vm.prank(tokenAuthorityAdmin);
         tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
 
         assertEq(tokenAuthority.getTokenHandler(address(wrappedStablecoin)), newHandler);
+    }
+
+    function test_setTokenHandler_revertWhenTokenHandlerIsInvalid() public {
+        address newHandler = makeAddr("newHandler");
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.InvalidTokenHandler.selector);
+        tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
     }
 
     function test_setTokenHandler_revertWhenNotTokenAuthorityHandlerSetterRole() public {
