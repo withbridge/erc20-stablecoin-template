@@ -3,6 +3,10 @@ pragma solidity ^0.8.24;
 
 import { StablecoinTemplateV3 } from "./StablecoinTemplateV3.sol";
 
+/// @title StablecoinTemplateV3SampleUpgrade
+/// @author Bridge
+/// @notice Sample upgrade contract demonstrating how to upgrade the StablecoinTemplateV3 contract
+/// @dev Example implementation showing EIP712 name changes during upgrades
 contract StablecoinTemplateV3SampleUpgrade is StablecoinTemplateV3 {
 
     constructor(address _reserveLedgerAddress, address _authRegistry)

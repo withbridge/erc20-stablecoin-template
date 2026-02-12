@@ -9,6 +9,10 @@ import {
 } from "./StablecoinTemplateV3Storage.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+/// @title StablecoinTemplateV3
+/// @author Bridge
+/// @notice Wrapped stablecoin backed by reserve ledger tokens held in the contract
+/// @dev Supports wrap/unwrap operations and migration from direct mint/burn to wrapped mode
 contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
     using SafeERC20 for IERC20Mintable;
