@@ -29,7 +29,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           network: ${{ matrix.network }}
-          version: ${{ matrix.network == 'tempo' && 'nightly-88787e649ac644e08af040cc8881e8bfa9690ef3' || 'stable' }}
+          version: ${{ matrix.network == 'tempo' && '1.6.0-nightly-tempo' || 'stable' }}
 
       - name: Show Forge version
         run: |
