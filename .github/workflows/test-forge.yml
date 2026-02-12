@@ -3,9 +3,6 @@ name: Forge Tests
 on:
   pull_request:
 
-env:
-  FOUNDRY_PROFILE: ci
-
 jobs:
   check:
     strategy:
@@ -29,7 +26,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           network: ${{ matrix.network }}
-          version: ${{ matrix.network == 'tempo' && 'nightly-88787e649ac644e08af040cc8881e8bfa9690ef3' || 'stable' }}
+          version: ${{ matrix.network == 'tempo' && 'nightly-4ec4d7243c2b2d7afcebb0b6285f669412fc0697' || 'stable' }}
 
       - name: Show Forge version
         run: |

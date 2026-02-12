@@ -60,6 +60,7 @@ abstract contract StablecoinTemplateV3Base is
     }
 
     constructor(address _authRegistry) {
+        require(_authRegistry != address(0), ZeroAddress());
         AUTH_REGISTRY = IAuthRegistry(_authRegistry);
         _disableInitializers();
     }
@@ -113,7 +114,7 @@ abstract contract StablecoinTemplateV3Base is
         uint64 _transferPolicyId,
         uint64 _mintRecipientPolicyId
     ) internal onlyInitializing {
-        require(admin != address(0), AdminCannotBeZeroAddress());
+        require(admin != address(0), ZeroAddress());
 
         StablecoinTemplateV3Storage storage $ = StablecoinTemplateV3StorageLib.getStorage();
 
@@ -283,7 +284,7 @@ abstract contract StablecoinTemplateV3Base is
      * - `account` should not be the zero address.
      */
     function _grantRole(bytes32 role, address account) internal virtual override returns (bool) {
-        require(account != address(0), AdminCannotBeZeroAddress());
+        require(account != address(0), ZeroAddress());
 
         bool granted = super._grantRole(role, account);
 

@@ -9,6 +9,9 @@ import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 ///      Pre-approves the controller to transfer tokens on its behalf.
 contract ReserveStore {
 
+    /// @notice Error thrown when zero address is used
+    error ZeroAddress();
+
     /// @notice The reserve ledger token (backing token)
     ITIP20 public immutable RESERVE_LEDGER;
 
@@ -22,6 +25,10 @@ contract ReserveStore {
     /// @param controller The controller contract address
     /// @param stablecoin The stablecoin this store backs
     constructor(address reserveLedger, address controller, address stablecoin) {
+        require(reserveLedger != address(0), ZeroAddress());
+        require(controller != address(0), ZeroAddress());
+        require(stablecoin != address(0), ZeroAddress());
+
         RESERVE_LEDGER = ITIP20(reserveLedger);
         CONTROLLER = controller;
         STABLECOIN = ITIP20(stablecoin);

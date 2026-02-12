@@ -110,9 +110,9 @@ interface StablecoinTemplateV3ErrorsAndEvents {
     error AddressBlocked();
 
     /**
-     * @notice Thrown when the admin address is set to the zero address.
+     * @notice Thrown when the address is set to the zero address.
      */
-    error AdminCannotBeZeroAddress();
+    error ZeroAddress();
 
     /**
      * @notice Thrown when a minting operation exceeds the maximum supply.
