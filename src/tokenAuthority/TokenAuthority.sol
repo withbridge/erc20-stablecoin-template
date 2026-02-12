@@ -92,7 +92,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks and decrements global limit, transaction limit, and minter allowance before
+     * @dev Checks and decrements transaction limit, and minter allowance before
      * minting
      * @param stablecoinContract The address of the stablecoin contract to mint from
      * @param to The address to receive the minted tokens

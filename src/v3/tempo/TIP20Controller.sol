@@ -98,7 +98,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks and decrements global limit, transaction limit, and minter allowance before
+     * @dev Checks transaction limit and decrements minter allowance before
      * minting
      * @param stablecoinContract The address of the stablecoin contract to mint from
      * @param to The address to receive the minted tokens
