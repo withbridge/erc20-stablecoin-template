@@ -25,7 +25,6 @@ contract ReserveStore {
     /// @param controller The controller contract address
     /// @param stablecoin The stablecoin this store backs
     constructor(address reserveLedger, address controller, address stablecoin) {
-
         require(reserveLedger != address(0), ZeroAddress());
         require(controller != address(0), ZeroAddress());
         require(stablecoin != address(0), ZeroAddress());
