@@ -273,6 +273,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         address tokenHandler,
         uint256 mintTxnLimit
     ) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
+        require(tokenHandlers[stablecoinContract] == address(0), StablecoinAlreadyRegistered());
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
         require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());

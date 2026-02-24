@@ -858,6 +858,33 @@ contract TokenAuthorityTest is Test {
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test registerStablecoin
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_registerStablecoin() public {
+        address newStablecoin = makeAddr("newStablecoin");
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectEmit(true, true, false, true, address(tokenAuthority));
+        emit ITokenAuthority.StablecoinRegistered(
+            tokenAuthorityAdmin, newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
+        );
+        tokenAuthority.registerStablecoin(
+            newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
+        );
+
+        assertEq(tokenAuthority.getStablecoinTxnMintLimit(newStablecoin), 1_000_000e6);
+    }
+
+    function test_registerStablecoin_revertWhenStablecoinAlreadyRegistered() public {
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinAlreadyRegistered.selector);
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), 1_000_000e6
+        );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // Test getters
     ////////////////////////////////////////////////////////////////////////////////////////////
 

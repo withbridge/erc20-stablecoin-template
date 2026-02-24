@@ -50,6 +50,9 @@ interface ITokenAuthority {
     /// @notice Thrown when the token handler is invalid
     error InvalidTokenHandler();
 
+    /// @notice Thrown when a stablecoin is already registered
+    error StablecoinAlreadyRegistered();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
