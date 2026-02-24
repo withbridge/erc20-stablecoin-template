@@ -55,7 +55,6 @@ contract ReserveLedgerWrappedHandler is TokenHandler {
      */
     function burn(address stablecoinContract, uint256 amount) external onlyTokenAuthority {
         IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
-        IERC20Mintable(stablecoinContract).approve(stablecoinContract, amount);
         IWrappedERC20(stablecoinContract).unwrap(amount);
         IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
         emit Burned(stablecoinContract, amount);
