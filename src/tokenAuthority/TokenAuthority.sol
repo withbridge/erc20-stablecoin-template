@@ -272,7 +272,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         address stablecoinContract,
         address tokenHandler,
         uint256 mintTxnLimit
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
         require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
@@ -290,9 +290,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /**
      * @notice Unregisters a stablecoin contract from the TokenAuthority
      * @dev Only callable by the admin role
+     * @dev It it on the onus of the admin to ensure that all minter allowances are zeroed out
      * @param stablecoinContract The address of the stablecoin contract
      */
-    function unregisterStablecoin(address stablecoinContract) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unregisterStablecoin(address stablecoinContract) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         delete tokenHandlers[stablecoinContract];
