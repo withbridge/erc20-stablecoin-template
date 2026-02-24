@@ -293,7 +293,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @dev It it on the onus of the admin to ensure that all minter allowances are zeroed out
      * @param stablecoinContract The address of the stablecoin contract
      */
-    function unregisterStablecoin(address stablecoinContract) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
+    function unregisterStablecoin(address stablecoinContract)
+        public
+        onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
+    {
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         delete tokenHandlers[stablecoinContract];
