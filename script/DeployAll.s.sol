@@ -9,6 +9,7 @@ import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.sol";
 import {
@@ -27,8 +28,6 @@ import {
  *         block — not a single atomic transaction.
  */
 contract DeployAll is Script {
-
-    address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     function run() public {
         vm.startBroadcast();
@@ -55,34 +54,9 @@ contract DeployAll is Script {
     }
 
     function _deployAuthRegistry() internal returns (address) {
-        bytes32 salt = bytes32(0);
-        bytes memory creationCode = type(AuthRegistry).creationCode;
-        address predicted = address(
-            uint160(
-                uint256(
-                    keccak256(
-                        abi.encodePacked(
-                            bytes1(0xff), CREATE2_DEPLOYER, salt, keccak256(creationCode)
-                        )
-                    )
-                )
-            )
-        );
-
-        if (predicted.code.length > 0) {
-            console.log("AuthRegistry already deployed at", predicted);
-            return predicted;
-        }
-
-        (bool success, bytes memory result) =
-            CREATE2_DEPLOYER.call(abi.encodePacked(salt, creationCode));
-        require(success, "AuthRegistry CREATE2 failed");
-        address deployed;
-        assembly {
-            deployed := mload(add(result, 0x20))
-        }
-        console.log("AuthRegistry deployed at", deployed);
-        return deployed;
+        AuthRegistry registry = new AuthRegistry{ salt: bytes32(0) }();
+        console.log("AuthRegistry deployed at", address(registry));
+        return address(registry);
     }
 
     function _deployReserveLedger(address authRegistry)
@@ -106,7 +80,7 @@ contract DeployAll is Script {
             initialOwner: msg.sender,
             implementation: rlImpl,
             callData: abi.encodeCall(
-                StablecoinTemplateV3Base.initialize,
+                StablecoinTemplateV3Base.reinitialize,
                 (
                     vm.envString("RL_NAME"),
                     vm.envString("RL_SYMBOL"),
@@ -121,17 +95,17 @@ contract DeployAll is Script {
     }
 
     function _deployTokenAuthority(address rlProxy) internal returns (address taProxy) {
-        address taImpl = address(new TokenAuthority(rlProxy, true));
+        TokenAuthority taImpl = new TokenAuthority(rlProxy, true);
 
-        uint96 saltNonce = uint96(vm.envUint("TA_SALT_NONCE"));
-        taProxy = DeterministicProxyFactoryFixture.deterministicProxyOZ({
-            initialProxySalt: PermissionedSalt.createPermissionedSalt(msg.sender, saltNonce),
-            initialOwner: msg.sender,
-            implementation: taImpl,
-            callData: abi.encodeCall(
-                TokenAuthority.initialize, (vm.envAddress("TOKEN_AUTHORITY_ADMIN"))
+        // Use ERC1967Proxy directly (not DPF — TokenAuthority.initialize uses
+        // the `initializer` modifier which conflicts with DPF fixture's
+        // MinimalUpgradeableProxyOZ that consumes initializer version 1)
+        taProxy = address(
+            new ERC1967Proxy(
+                address(taImpl),
+                abi.encodeCall(TokenAuthority.initialize, (vm.envAddress("TOKEN_AUTHORITY_ADMIN")))
             )
-        });
+        );
         console.log("TokenAuthority proxy:", taProxy);
     }
 
@@ -152,7 +126,12 @@ contract DeployAll is Script {
         );
 
         AuthRegistry(authRegistry).modifyPolicyWhitelist(rlMintPolicyId, taProxy, true);
-        console.log("ReserveLedger configured");
+
+        // Grant MINT_RATE_LIMIT_SETTER_ROLE on TokenAuthority to the TA admin
+        TokenAuthority ta = TokenAuthority(taProxy);
+        ta.grantRole(ta.MINT_RATE_LIMIT_SETTER_ROLE(), vm.envAddress("TOKEN_AUTHORITY_ADMIN"));
+
+        console.log("ReserveLedger + TokenAuthority configured");
     }
 
     function _deployStablecoin(address authRegistry, address rlProxy, uint64 transferPolicyId)
@@ -173,7 +152,7 @@ contract DeployAll is Script {
             initialOwner: msg.sender,
             implementation: scImpl,
             callData: abi.encodeCall(
-                StablecoinTemplateV3Base.initialize,
+                StablecoinTemplateV3Base.reinitialize,
                 (
                     vm.envString("STABLECOIN_NAME"),
                     vm.envString("STABLECOIN_SYMBOL"),

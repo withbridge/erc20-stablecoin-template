@@ -54,7 +54,7 @@ contract DeployStablecoin is Common {
             initialOwner: msg.sender,
             implementation: scImplementation,
             callData: abi.encodeCall(
-                StablecoinTemplateV3Base.initialize,
+                StablecoinTemplateV3Base.reinitialize,
                 (
                     scName,
                     scSymbol,

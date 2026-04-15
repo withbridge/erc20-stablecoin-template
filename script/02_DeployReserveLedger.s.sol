@@ -54,7 +54,7 @@ contract DeployReserveLedger is Common {
             initialOwner: msg.sender,
             implementation: rlImplementation,
             callData: abi.encodeCall(
-                StablecoinTemplateV3Base.initialize,
+                StablecoinTemplateV3Base.reinitialize,
                 (rlName, rlSymbol, rlDecimals, rlAdmin, transferPolicyId, rlMintRecipientPolicyId)
             )
         });

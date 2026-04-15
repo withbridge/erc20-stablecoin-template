@@ -6,7 +6,7 @@ import { console } from "forge-std/console.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
-import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
+import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
 contract ConfigureReserveLedger is Common {
 
@@ -52,10 +52,16 @@ contract ConfigureReserveLedger is Common {
         );
         console.log("TokenAuthority whitelisted in RL mint recipient policy");
 
+        // Grant MINT_RATE_LIMIT_SETTER_ROLE on TokenAuthority to the TA admin
+        // (needed by 05b to call setTxnMintLimit and setMinterAllowance)
+        TokenAuthority ta = TokenAuthority(tokenAuthority);
+        ta.grantRole(ta.MINT_RATE_LIMIT_SETTER_ROLE(), vm.envAddress("TOKEN_AUTHORITY_ADMIN"));
+        console.log("TokenAuthority MINT_RATE_LIMIT_SETTER_ROLE granted to TA admin");
+
         vm.stopBroadcast();
 
         console.log("---");
-        console.log("ReserveLedger configuration complete");
+        console.log("ReserveLedger + TokenAuthority configuration complete");
     }
 
 }

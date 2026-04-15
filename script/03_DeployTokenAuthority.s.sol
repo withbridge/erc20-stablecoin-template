@@ -5,11 +5,7 @@ import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
-
-import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.sol";
-import {
-    DeterministicProxyFactoryFixture
-} from "deterministic-proxy-factory/fixtures/DeterministicProxyFactoryFixture.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract DeployTokenAuthority is Common {
 
@@ -18,30 +14,32 @@ contract DeployTokenAuthority is Common {
         requireDeployed(reserveLedger, "RESERVE_LEDGER");
 
         address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
-        uint96 saltNonce = uint96(vm.envUint("TA_SALT_NONCE"));
 
         require(taAdmin != address(0), "TOKEN_AUTHORITY_ADMIN not set");
 
         vm.startBroadcast();
 
         // Deploy TokenAuthority implementation with initializers disabled
-        address taImplementation = address(new TokenAuthority(reserveLedger, true));
-        console.log("TokenAuthority implementation:", taImplementation);
+        TokenAuthority taImplementation = new TokenAuthority(reserveLedger, true);
+        console.log("TokenAuthority implementation:", address(taImplementation));
 
-        // Deploy proxy via DeterministicProxyFactory
-        bytes32 salt = PermissionedSalt.createPermissionedSalt(msg.sender, saltNonce);
-        address taProxy = DeterministicProxyFactoryFixture.deterministicProxyOZ({
-            initialProxySalt: salt,
-            initialOwner: msg.sender,
-            implementation: taImplementation,
-            callData: abi.encodeCall(TokenAuthority.initialize, (taAdmin))
-        });
+        // Deploy proxy via ERC1967Proxy (not DPF — TokenAuthority.initialize uses
+        // the `initializer` modifier which conflicts with the DPF fixture's
+        // MinimalUpgradeableProxyOZ that consumes initializer version 1)
+        TokenAuthority taProxy = TokenAuthority(
+            address(
+                new ERC1967Proxy(
+                    address(taImplementation),
+                    abi.encodeCall(TokenAuthority.initialize, (taAdmin))
+                )
+            )
+        );
 
         vm.stopBroadcast();
 
-        console.log("TokenAuthority proxy:", taProxy);
+        console.log("TokenAuthority proxy:", address(taProxy));
         console.log("---");
-        console.log("Set in .env: TOKEN_AUTHORITY=%s", taProxy);
+        console.log("Set in .env: TOKEN_AUTHORITY=%s", address(taProxy));
     }
 
 }
