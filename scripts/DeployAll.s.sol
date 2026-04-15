@@ -20,9 +20,12 @@ import {
  * @title DeployAll
  * @notice Orchestrates a full greenfield deployment: AuthRegistry, ReserveLedger,
  *         TokenAuthority, and one stablecoin. For additional stablecoins, run
- *         04_DeployStablecoin + 05b_ConfigureStablecoin separately.
+ *         04_DeployStablecoin separately.
  *
- *         Execution order: 01 -> 02 -> 03 -> 05a -> 04 -> 05b
+ *         Execution order: 01 -> 02 -> 03 -> 04
+ *
+ *         Post-deployment configuration (role grants, max supply, mint limits,
+ *         whitelist population) is handled separately.
  *
  *         This sends multiple transactions within a single vm.startBroadcast()
  *         block — not a single atomic transaction.
@@ -36,10 +39,8 @@ contract DeployAll is Script {
         (address rlProxy, uint64 transferPolicyId, uint64 rlMintPolicyId) =
             _deployReserveLedger(authRegistry);
         address taProxy = _deployTokenAuthority(rlProxy);
-        _configureReserveLedger(authRegistry, rlProxy, taProxy, rlMintPolicyId);
         (address scProxy, uint64 scMintPolicyId) =
             _deployStablecoin(authRegistry, rlProxy, transferPolicyId);
-        _configureStablecoin(authRegistry, scProxy, taProxy, scMintPolicyId);
 
         vm.stopBroadcast();
 
@@ -107,31 +108,6 @@ contract DeployAll is Script {
         console.log("TokenAuthority proxy:", taProxy);
     }
 
-    function _configureReserveLedger(
-        address authRegistry,
-        address rlProxy,
-        address taProxy,
-        uint64 rlMintPolicyId
-    ) internal {
-        ReserveLedger rl = ReserveLedger(rlProxy);
-
-        rl.setMaxSupply(vm.envUint("RL_MAX_SUPPLY"));
-        rl.grantRole(rl.MINTER_ROLE(), taProxy);
-        rl.grantRole(rl.PAUSER_ROLE(), vm.envAddress("PAUSER_ADDRESS"));
-        rl.grantRole(rl.UNPAUSER_ROLE(), vm.envAddress("UNPAUSER_ADDRESS"));
-        rl.grantRole(
-            rl.BLOCKED_ADDRESS_BURNER_ROLE(), vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS")
-        );
-
-        AuthRegistry(authRegistry).modifyPolicyWhitelist(rlMintPolicyId, taProxy, true);
-
-        // Grant MINT_RATE_LIMIT_SETTER_ROLE on TokenAuthority to the TA admin
-        TokenAuthority ta = TokenAuthority(taProxy);
-        ta.grantRole(ta.MINT_RATE_LIMIT_SETTER_ROLE(), vm.envAddress("TOKEN_AUTHORITY_ADMIN"));
-
-        console.log("ReserveLedger + TokenAuthority configured");
-    }
-
     function _deployStablecoin(address authRegistry, address rlProxy, uint64 transferPolicyId)
         internal
         returns (address scProxy, uint64 scMintPolicyId)
@@ -161,39 +137,6 @@ contract DeployAll is Script {
             )
         });
         console.log("StablecoinTemplateV3 proxy:", scProxy);
-    }
-
-    function _configureStablecoin(
-        address authRegistry,
-        address scProxy,
-        address taProxy,
-        uint64 scMintPolicyId
-    ) internal {
-        StablecoinTemplateV3 sc = StablecoinTemplateV3(scProxy);
-        address minter = vm.envAddress("MINTER_ADDRESS");
-
-        sc.setMaxSupply(vm.envUint("STABLECOIN_MAX_SUPPLY"));
-        sc.grantRole(sc.MINTER_ROLE(), minter);
-        sc.grantRole(sc.PAUSER_ROLE(), vm.envAddress("PAUSER_ADDRESS"));
-        sc.grantRole(sc.UNPAUSER_ROLE(), vm.envAddress("UNPAUSER_ADDRESS"));
-        sc.grantRole(
-            sc.BLOCKED_ADDRESS_BURNER_ROLE(), vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS")
-        );
-
-        TokenAuthority ta = TokenAuthority(taProxy);
-        ta.setTxnMintLimit(scProxy, vm.envUint("TXN_MINT_LIMIT"));
-        ta.setMinterAllowance(scProxy, minter, vm.envUint("MINTER_ALLOWANCE"));
-
-        string memory recipientsRaw = vm.envOr("INITIAL_MINT_RECIPIENTS", string(""));
-        if (bytes(recipientsRaw).length > 0) {
-            string[] memory parts = vm.split(recipientsRaw, ",");
-            for (uint256 i = 0; i < parts.length; i++) {
-                address recipient = vm.parseAddress(parts[i]);
-                AuthRegistry(authRegistry).modifyPolicyWhitelist(scMintPolicyId, recipient, true);
-            }
-        }
-
-        console.log("Stablecoin configured");
     }
 
 }

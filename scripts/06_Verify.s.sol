@@ -4,13 +4,19 @@ pragma solidity ^0.8.24;
 import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
-import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 
+/**
+ * @title Verify
+ * @notice Read-only script that verifies deployed contracts are initialized correctly.
+ *         Checks deployment state only (name, symbol, policies, immutables).
+ *         Post-deployment configuration (roles, max supply, mint limits) is handled
+ *         separately and not checked here.
+ */
 contract Verify is Common {
 
     uint256 failures;
@@ -20,9 +26,8 @@ contract Verify is Common {
         address reserveLedger = reserveLedgerAddress();
         address tokenAuthority = tokenAuthorityAddress();
         address stablecoin = stablecoinAddress();
-        address minter = minterAddress();
 
-        // Prerequisites
+        // --- Contract existence ---
         _check(authRegistry.code.length > 0, "AuthRegistry has code");
         _check(reserveLedger.code.length > 0, "ReserveLedger has code");
         _check(tokenAuthority.code.length > 0, "TokenAuthority has code");
@@ -40,13 +45,12 @@ contract Verify is Common {
         _check(
             keccak256(bytes(rl.symbol())) == keccak256(bytes(expectedRlSymbol)), "RL symbol matches"
         );
-        _check(rl.getMaxSupply() > 0, "RL maxSupply is set");
         _check(rl.getTransferPolicyId() > 1, "RL transferPolicyId is set (>1)");
         _check(rl.getMintRecipientPolicyId() > 1, "RL mintRecipientPolicyId is set (>1)");
-        _check(rl.hasRole(rl.MINTER_ROLE(), tokenAuthority), "RL: TokenAuthority has MINTER_ROLE");
-        _check(
-            rl.isMintRecipient(tokenAuthority), "RL: TokenAuthority is whitelisted mint recipient"
-        );
+
+        address rlAdmin = vm.envAddress("RL_ADMIN");
+        _check(rl.hasRole(rl.DEFAULT_ADMIN_ROLE(), rlAdmin), "RL: admin has DEFAULT_ADMIN_ROLE");
+        _check(rl.owner() == rlAdmin, "RL: owner matches RL_ADMIN");
 
         // --- StablecoinTemplateV3 checks ---
         string memory expectedScName = vm.envString("STABLECOIN_NAME");
@@ -60,14 +64,18 @@ contract Verify is Common {
             keccak256(bytes(sc.symbol())) == keccak256(bytes(expectedScSymbol)),
             "Stablecoin symbol matches"
         );
-        _check(sc.getMaxSupply() > 0, "Stablecoin maxSupply is set");
         _check(sc.getTransferPolicyId() > 1, "Stablecoin transferPolicyId is set (>1)");
         _check(sc.getMintRecipientPolicyId() > 1, "Stablecoin mintRecipientPolicyId is set (>1)");
         _check(
             address(sc.RESERVE_LEDGER_ADDRESS()) == reserveLedger,
             "Stablecoin RESERVE_LEDGER_ADDRESS matches"
         );
-        _check(sc.hasRole(sc.MINTER_ROLE(), minter), "Stablecoin: minter has MINTER_ROLE");
+
+        address scAdmin = vm.envAddress("STABLECOIN_ADMIN");
+        _check(
+            sc.hasRole(sc.DEFAULT_ADMIN_ROLE(), scAdmin), "Stablecoin: admin has DEFAULT_ADMIN_ROLE"
+        );
+        _check(sc.owner() == scAdmin, "Stablecoin: owner matches STABLECOIN_ADMIN");
 
         // --- TokenAuthority checks ---
         address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
@@ -79,25 +87,6 @@ contract Verify is Common {
             ta.RESERVE_LEDGER_TOKEN() == reserveLedger,
             "TokenAuthority: RESERVE_LEDGER_TOKEN matches"
         );
-        _check(ta.mintTxnLimits(stablecoin) > 0, "TokenAuthority: mintTxnLimit > 0 for stablecoin");
-        _check(
-            ta.minterAllowances(stablecoin, minter) > 0,
-            "TokenAuthority: minterAllowance > 0 for minter"
-        );
-
-        // --- Deployer permission check ---
-        address deployer = vm.envOr("DEPLOYER_ADDRESS", address(0));
-        if (deployer != address(0)) {
-            _check(!rl.hasRole(rl.DEFAULT_ADMIN_ROLE(), deployer), "RL: deployer has NO admin role");
-            _check(
-                !sc.hasRole(sc.DEFAULT_ADMIN_ROLE(), deployer),
-                "Stablecoin: deployer has NO admin role"
-            );
-            _check(
-                !ta.hasRole(ta.DEFAULT_ADMIN_ROLE(), deployer),
-                "TokenAuthority: deployer has NO admin role"
-            );
-        }
 
         // --- Summary ---
         console.log("---");
