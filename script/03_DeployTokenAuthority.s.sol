@@ -4,8 +4,8 @@ pragma solidity ^0.8.24;
 import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
-import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
 contract DeployTokenAuthority is Common {
 
@@ -29,8 +29,7 @@ contract DeployTokenAuthority is Common {
         TokenAuthority taProxy = TokenAuthority(
             address(
                 new ERC1967Proxy(
-                    address(taImplementation),
-                    abi.encodeCall(TokenAuthority.initialize, (taAdmin))
+                    address(taImplementation), abi.encodeCall(TokenAuthority.initialize, (taAdmin))
                 )
             )
         );

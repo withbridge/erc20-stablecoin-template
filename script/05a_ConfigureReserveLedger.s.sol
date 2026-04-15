@@ -5,8 +5,8 @@ import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
-import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 
 contract ConfigureReserveLedger is Common {
 
@@ -47,9 +47,8 @@ contract ConfigureReserveLedger is Common {
         console.log("RL BLOCKED_ADDRESS_BURNER_ROLE granted to", blockedBurner);
 
         // Whitelist TokenAuthority as RL mint recipient (required for _update() hook)
-        AuthRegistry(authRegistry).modifyPolicyWhitelist(
-            rlMintRecipientPolicyId, tokenAuthority, true
-        );
+        AuthRegistry(authRegistry)
+            .modifyPolicyWhitelist(rlMintRecipientPolicyId, tokenAuthority, true);
         console.log("TokenAuthority whitelisted in RL mint recipient policy");
 
         // Grant MINT_RATE_LIMIT_SETTER_ROLE on TokenAuthority to the TA admin

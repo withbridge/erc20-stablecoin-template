@@ -34,13 +34,12 @@ contract DeployReserveLedger is Common {
         vm.startBroadcast();
 
         // Create policies in AuthRegistry
-        uint64 transferPolicyId =
-            AuthRegistry(authRegistry).createPolicy(policyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
+        uint64 transferPolicyId = AuthRegistry(authRegistry)
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
         console.log("Transfer policy ID:", transferPolicyId);
 
-        uint64 rlMintRecipientPolicyId = AuthRegistry(authRegistry).createPolicy(
-            policyAdmin, IAuthRegistry.PolicyType.WHITELIST
-        );
+        uint64 rlMintRecipientPolicyId = AuthRegistry(authRegistry)
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("RL mint recipient policy ID:", rlMintRecipientPolicyId);
 
         // Deploy ReserveLedger implementation

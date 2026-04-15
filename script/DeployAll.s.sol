@@ -3,13 +3,13 @@ pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
 
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
+import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
-import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
-import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.sol";
 import {
@@ -65,12 +65,10 @@ contract DeployAll is Script {
     {
         address policyAdmin = vm.envAddress("POLICY_ADMIN");
 
-        transferPolicyId = AuthRegistry(authRegistry).createPolicy(
-            policyAdmin, IAuthRegistry.PolicyType.BLACKLIST
-        );
-        rlMintPolicyId = AuthRegistry(authRegistry).createPolicy(
-            policyAdmin, IAuthRegistry.PolicyType.WHITELIST
-        );
+        transferPolicyId = AuthRegistry(authRegistry)
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
+        rlMintPolicyId = AuthRegistry(authRegistry)
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
 
         address rlImpl = address(new ReserveLedger(authRegistry));
 
@@ -140,9 +138,8 @@ contract DeployAll is Script {
     {
         address policyAdmin = vm.envAddress("POLICY_ADMIN");
 
-        scMintPolicyId = AuthRegistry(authRegistry).createPolicy(
-            policyAdmin, IAuthRegistry.PolicyType.WHITELIST
-        );
+        scMintPolicyId = AuthRegistry(authRegistry)
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
 
         address scImpl = address(new StablecoinTemplateV3(rlProxy, authRegistry));
 

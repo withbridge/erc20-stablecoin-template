@@ -37,14 +37,12 @@ contract DeployStablecoin is Common {
         vm.startBroadcast();
 
         // Create stablecoin mint recipient policy
-        uint64 scMintRecipientPolicyId = AuthRegistry(authRegistry).createPolicy(
-            policyAdmin, IAuthRegistry.PolicyType.WHITELIST
-        );
+        uint64 scMintRecipientPolicyId = AuthRegistry(authRegistry)
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("Stablecoin mint recipient policy ID:", scMintRecipientPolicyId);
 
         // Deploy StablecoinTemplateV3 implementation
-        address scImplementation =
-            address(new StablecoinTemplateV3(reserveLedger, authRegistry));
+        address scImplementation = address(new StablecoinTemplateV3(reserveLedger, authRegistry));
         console.log("StablecoinTemplateV3 implementation:", scImplementation);
 
         // Deploy proxy via DeterministicProxyFactory
@@ -55,14 +53,7 @@ contract DeployStablecoin is Common {
             implementation: scImplementation,
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
-                (
-                    scName,
-                    scSymbol,
-                    scDecimals,
-                    scAdmin,
-                    transferPolicyId,
-                    scMintRecipientPolicyId
-                )
+                (scName, scSymbol, scDecimals, scAdmin, transferPolicyId, scMintRecipientPolicyId)
             )
         });
 

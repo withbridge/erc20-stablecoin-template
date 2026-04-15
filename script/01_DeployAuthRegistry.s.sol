@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { Common } from "./Common.s.sol";
-import { console } from "forge-std/console.sol";
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
+import { console } from "forge-std/console.sol";
 
 contract DeployAuthRegistry is Common {
 

@@ -5,9 +5,9 @@ import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
+import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
-import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
 contract ConfigureStablecoin is Common {
 
@@ -68,9 +68,8 @@ contract ConfigureStablecoin is Common {
             string[] memory parts = vm.split(recipientsRaw, ",");
             for (uint256 i = 0; i < parts.length; i++) {
                 address recipient = vm.parseAddress(parts[i]);
-                AuthRegistry(authRegistry).modifyPolicyWhitelist(
-                    scMintRecipientPolicyId, recipient, true
-                );
+                AuthRegistry(authRegistry)
+                    .modifyPolicyWhitelist(scMintRecipientPolicyId, recipient, true);
                 console.log("Whitelisted mint recipient:", recipient);
             }
         }
