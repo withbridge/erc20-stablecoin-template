@@ -3,6 +3,9 @@ name: Forge Tests
 on:
   pull_request:
 
+env:
+  FOUNDRY_PROFILE: ci
+
 jobs:
   check:
     strategy:
