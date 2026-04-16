@@ -20,8 +20,6 @@ fs_permissions = [
     { access = "read", path = "forge-utils" },
 ]
 
-[profile.ci]
-
 [profile.gambit]
 optimizer = false
 via_ir = false
