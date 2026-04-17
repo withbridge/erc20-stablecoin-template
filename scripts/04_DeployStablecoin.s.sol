@@ -25,12 +25,10 @@ contract DeployStablecoin is Common {
         string memory scName = vm.envString("STABLECOIN_NAME");
         string memory scSymbol = vm.envString("STABLECOIN_SYMBOL");
         uint8 scDecimals = uint8(vm.envUint("STABLECOIN_DECIMALS"));
-        address scAdmin = vm.envAddress("STABLECOIN_ADMIN");
         address policyAdmin = policyAdminAddress();
         uint64 transferPolicyId = uint64(vm.envUint("TRANSFER_POLICY_ID"));
         uint96 saltNonce = uint96(vm.envUint("SC_SALT_NONCE"));
 
-        require(scAdmin != address(0), "STABLECOIN_ADMIN not set");
         require(bytes(scName).length != 0, "STABLECOIN_NAME not set");
         require(bytes(scSymbol).length != 0, "STABLECOIN_SYMBOL not set");
 
@@ -53,7 +51,14 @@ contract DeployStablecoin is Common {
             implementation: scImplementation,
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
-                (scName, scSymbol, scDecimals, scAdmin, transferPolicyId, scMintRecipientPolicyId)
+                (
+                    scName,
+                    scSymbol,
+                    scDecimals,
+                    msg.sender,
+                    transferPolicyId,
+                    scMintRecipientPolicyId
+                )
             )
         });
 

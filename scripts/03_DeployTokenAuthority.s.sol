@@ -13,10 +13,6 @@ contract DeployTokenAuthority is Common {
         address reserveLedger = reserveLedgerAddress();
         requireDeployed(reserveLedger, "RESERVE_LEDGER");
 
-        address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
-
-        require(taAdmin != address(0), "TOKEN_AUTHORITY_ADMIN not set");
-
         vm.startBroadcast();
 
         // Deploy TokenAuthority implementation with initializers disabled
@@ -25,11 +21,14 @@ contract DeployTokenAuthority is Common {
 
         // Deploy proxy via ERC1967Proxy (not DPF — TokenAuthority.initialize uses
         // the `initializer` modifier which conflicts with the DPF fixture's
-        // MinimalUpgradeableProxyOZ that consumes initializer version 1)
+        // MinimalUpgradeableProxyOZ that consumes initializer version 1).
+        // Admin is set to msg.sender so the deployer can configure roles before
+        // handing over to the final admin in step 05.
         TokenAuthority taProxy = TokenAuthority(
             address(
                 new ERC1967Proxy(
-                    address(taImplementation), abi.encodeCall(TokenAuthority.initialize, (taAdmin))
+                    address(taImplementation),
+                    abi.encodeCall(TokenAuthority.initialize, (msg.sender))
                 )
             )
         );

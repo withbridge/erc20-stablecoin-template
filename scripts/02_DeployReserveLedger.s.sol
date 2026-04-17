@@ -23,11 +23,9 @@ contract DeployReserveLedger is Common {
         string memory rlName = vm.envString("RL_NAME");
         string memory rlSymbol = vm.envString("RL_SYMBOL");
         uint8 rlDecimals = uint8(vm.envUint("RL_DECIMALS"));
-        address rlAdmin = vm.envAddress("RL_ADMIN");
         address policyAdmin = policyAdminAddress();
         uint96 saltNonce = uint96(vm.envUint("RL_SALT_NONCE"));
 
-        require(rlAdmin != address(0), "RL_ADMIN not set");
         require(bytes(rlName).length != 0, "RL_NAME not set");
         require(bytes(rlSymbol).length != 0, "RL_SYMBOL not set");
 
@@ -54,7 +52,14 @@ contract DeployReserveLedger is Common {
             implementation: rlImplementation,
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
-                (rlName, rlSymbol, rlDecimals, rlAdmin, transferPolicyId, rlMintRecipientPolicyId)
+                (
+                    rlName,
+                    rlSymbol,
+                    rlDecimals,
+                    msg.sender,
+                    transferPolicyId,
+                    rlMintRecipientPolicyId
+                )
             )
         });
 
