@@ -41,14 +41,47 @@ contract ConfigureAndHandover is Common {
         requireDeployed(ta, "TOKEN_AUTHORITY");
         requireDeployed(sc, "STABLECOIN");
 
-        address minter = vm.envAddress("MINTER_ADDRESS");
-        address pauser = vm.envAddress("PAUSER_ADDRESS");
-        address unpauser = vm.envAddress("UNPAUSER_ADDRESS");
-        address blockedBurner = vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS");
-        uint256 rlMaxSupply = vm.envUint("RL_MAX_SUPPLY");
-        uint256 scMaxSupply = vm.envUint("STABLECOIN_MAX_SUPPLY");
-        uint256 txnMintLimit = vm.envUint("TXN_MINT_LIMIT");
-        uint256 minterAllowance = vm.envUint("MINTER_ALLOWANCE");
+        vm.startBroadcast();
+
+        _configureRoles(rl, ta, sc);
+        _configureLimits(ta, sc);
+        _configureMaxSupply(rl, sc);
+        _handover(rl, ta, sc);
+
+        vm.stopBroadcast();
+    }
+
+    function _configureRoles(address rl, address ta, address sc) internal {
+        // TokenAuthority needs MINTER_ROLE on RL and SC
+        IAccessControl(rl).grantRole(MINTER_ROLE, ta);
+        IAccessControl(sc).grantRole(MINTER_ROLE, ta);
+
+        // Operational roles on stablecoin
+        IAccessControl(sc).grantRole(PAUSER_ROLE, vm.envAddress("PAUSER_ADDRESS"));
+        IAccessControl(sc).grantRole(UNPAUSER_ROLE, vm.envAddress("UNPAUSER_ADDRESS"));
+        IAccessControl(sc).grantRole(
+            BLOCKED_ADDRESS_BURNER_ROLE, vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS")
+        );
+        console.log("Granted roles on RL and SC");
+    }
+
+    function _configureLimits(address ta, address sc) internal {
+        // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily
+        IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
+        TokenAuthority(ta).setTxnMintLimit(sc, vm.envUint("TXN_MINT_LIMIT"));
+        TokenAuthority(ta).setMinterAllowance(
+            sc, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE")
+        );
+        console.log("Set txn mint limit and minter allowance on TA");
+    }
+
+    function _configureMaxSupply(address rl, address sc) internal {
+        StablecoinTemplateV3Base(rl).setMaxSupply(vm.envUint("RL_MAX_SUPPLY"));
+        StablecoinTemplateV3Base(sc).setMaxSupply(vm.envUint("STABLECOIN_MAX_SUPPLY"));
+        console.log("Set max supply on RL and SC");
+    }
+
+    function _handover(address rl, address ta, address sc) internal {
         address rlAdmin = vm.envAddress("RL_ADMIN");
         address scAdmin = vm.envAddress("STABLECOIN_ADMIN");
         address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
@@ -56,39 +89,6 @@ contract ConfigureAndHandover is Common {
         require(rlAdmin != address(0), "RL_ADMIN not set");
         require(scAdmin != address(0), "STABLECOIN_ADMIN not set");
         require(taAdmin != address(0), "TOKEN_AUTHORITY_ADMIN not set");
-
-        vm.startBroadcast();
-
-        // ── Configure Roles
-        // ─────────────────────────────────────────
-
-        // TokenAuthority needs MINTER_ROLE on RL and SC
-        IAccessControl(rl).grantRole(MINTER_ROLE, ta);
-        IAccessControl(sc).grantRole(MINTER_ROLE, ta);
-        console.log("Granted MINTER_ROLE to TokenAuthority on RL and SC");
-
-        // Operational roles on stablecoin
-        IAccessControl(sc).grantRole(PAUSER_ROLE, pauser);
-        IAccessControl(sc).grantRole(UNPAUSER_ROLE, unpauser);
-        IAccessControl(sc).grantRole(BLOCKED_ADDRESS_BURNER_ROLE, blockedBurner);
-        console.log("Granted PAUSER, UNPAUSER, BLOCKED_ADDRESS_BURNER on SC");
-
-        // ── Configure Limits
-        // ────────────────────────────────────────
-
-        // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily
-        IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
-        TokenAuthority(ta).setTxnMintLimit(sc, txnMintLimit);
-        TokenAuthority(ta).setMinterAllowance(sc, minter, minterAllowance);
-        console.log("Set txn mint limit and minter allowance on TA");
-
-        // Max supply
-        StablecoinTemplateV3Base(rl).setMaxSupply(rlMaxSupply);
-        StablecoinTemplateV3Base(sc).setMaxSupply(scMaxSupply);
-        console.log("Set max supply on RL and SC");
-
-        // ── Handover
-        // ────────────────────────────────────────────────
 
         // Grant admin to final addresses
         IAccessControl(rl).grantRole(DEFAULT_ADMIN_ROLE, rlAdmin);
@@ -115,8 +115,6 @@ contract ConfigureAndHandover is Common {
             IAccessControl(sc).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         console.log("Deployer handover complete");
-
-        vm.stopBroadcast();
     }
 
 }
