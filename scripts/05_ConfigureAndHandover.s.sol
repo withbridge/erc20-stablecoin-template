@@ -59,9 +59,8 @@ contract ConfigureAndHandover is Common {
         // Operational roles on stablecoin
         IAccessControl(sc).grantRole(PAUSER_ROLE, vm.envAddress("PAUSER_ADDRESS"));
         IAccessControl(sc).grantRole(UNPAUSER_ROLE, vm.envAddress("UNPAUSER_ADDRESS"));
-        IAccessControl(sc).grantRole(
-            BLOCKED_ADDRESS_BURNER_ROLE, vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS")
-        );
+        IAccessControl(sc)
+            .grantRole(BLOCKED_ADDRESS_BURNER_ROLE, vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS"));
         console.log("Granted roles on RL and SC");
     }
 
@@ -69,9 +68,8 @@ contract ConfigureAndHandover is Common {
         // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily
         IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
         TokenAuthority(ta).setTxnMintLimit(sc, vm.envUint("TXN_MINT_LIMIT"));
-        TokenAuthority(ta).setMinterAllowance(
-            sc, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE")
-        );
+        TokenAuthority(ta)
+            .setMinterAllowance(sc, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE"));
         console.log("Set txn mint limit and minter allowance on TA");
     }
 
