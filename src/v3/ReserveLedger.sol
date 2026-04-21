@@ -8,6 +8,10 @@ import {
 
 import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
 
+/// @title ReserveLedger
+/// @author Bridge
+/// @notice ERC20 stablecoin that serves as the reserve ledger token for the stablecoin system
+/// @dev Extends StablecoinTemplateV3Base with direct mint/burn capabilities for the reserve ledger
 contract ReserveLedger is StablecoinTemplateV3Base {
 
     constructor(address _authRegistry) StablecoinTemplateV3Base(_authRegistry) { }

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-/**
- * @title StablecoinTemplateV3ErrorsAndEvents
- * @notice Interface for common events and errors in Stablecoin Template V3 contracts.
- */
 pragma solidity ^0.8.24;
 
+/// @title StablecoinTemplateV3ErrorsAndEvents
+/// @author Bridge
+/// @notice Interface for common events and errors in Stablecoin Template V3 contracts
+/// @dev Defines all shared events and errors used across the stablecoin system
 interface StablecoinTemplateV3ErrorsAndEvents {
 
     /**
@@ -110,9 +110,9 @@ interface StablecoinTemplateV3ErrorsAndEvents {
     error AddressBlocked();
 
     /**
-     * @notice Thrown when the admin address is set to the zero address.
+     * @notice Thrown when the address is set to the zero address.
      */
-    error AdminCannotBeZeroAddress();
+    error ZeroAddress();
 
     /**
      * @notice Thrown when a minting operation exceeds the maximum supply.

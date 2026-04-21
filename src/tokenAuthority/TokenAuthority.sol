@@ -14,6 +14,14 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
+
+import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
+
+/// @title TokenAuthority
+/// @author Bridge
+/// @notice Central authority contract for managing stablecoin minting, burning, and wrapping
+/// @dev Coordinates token operations through pluggable token handlers and enforces rate limits
 contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
 
     using SafeERC20 for IERC20;
@@ -24,8 +32,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
                                 Immutable Variables
     //////////////////////////////////////////////////////////////////////////*/
 
+    /// @notice The address of the reserve ledger token
     address public immutable RESERVE_LEDGER_TOKEN;
 
+    /// @notice The absolute maximum amount of tokens that can be minted
     uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -37,6 +47,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
     bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE =
         keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
+    bytes32 public constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
+        keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -46,13 +58,16 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /// that user on the stablecoin.
     /// @dev minterAllowances[stablecoinContract][user] = minterAllowance (remaining tokens that can
     /// be minted by the user)
-    mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance)) public
+    mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance))
         minterAllowances;
 
     /// @notice Maps each stablecoin contract address to its respective mint rate limits.
     /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
     /// mint limits for the stablecoin)
-    mapping(address stablecoinContract => uint256 mintTxnLimit) public mintTxnLimits;
+    mapping(address stablecoinContract => uint256 mintTxnLimit) mintTxnLimits;
+
+    /// @notice Maps each stablecoin contract address to its respective token handler
+    mapping(address stablecoinContract => address tokenHandler) tokenHandlers;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -92,7 +107,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks and decrements global limit, transaction limit, and minter allowance before
+     * @dev Checks and decrements transaction limit, and minter allowance before
      * minting
      * @param stablecoinContract The address of the stablecoin contract to mint from
      * @param to The address to receive the minted tokens
@@ -135,14 +150,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
-        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
-
-        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
-        } else {
-            IWrappedERC20(stablecoinContract).unwrap(amount);
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).burn(amount);
-        }
+        address tokenHandler = tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+        IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(stablecoinContract).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).burn(stablecoinContract, amount);
 
         emit Burn(msg.sender, stablecoinContract, amount);
     }
@@ -159,19 +171,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * Emits a {Unwrap} event for tracking unwrapping operations.
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
-        require(stablecoinContract != RESERVE_LEDGER_TOKEN, CannotUnwrapReserveLedgerToken());
-
-        // Unwrap the wrapped stablecoin, which will send underlying RESERVE_LEDGER_TOKEN to this
-        // contract
-        IWrappedERC20 stablecoin = IWrappedERC20(stablecoinContract);
-        stablecoin.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 balanceBefore = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
-        stablecoin.unwrap(amount);
-        uint256 balanceAfter = IERC20Mintable(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
-        require(balanceAfter == balanceBefore + amount, ReserveLedgerBalanceMismatch());
-
-        // Transfer the received RESERVE_LEDGER_TOKEN to the sender
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transfer(msg.sender, amount);
+        address tokenHandler = tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(stablecoinContract).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).unwrap(stablecoinContract, msg.sender, amount);
 
         emit Unwrap(msg.sender, stablecoinContract, amount);
     }
@@ -188,16 +192,21 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        require(to != address(0), ZeroAddress());
         require(amount > 0, AmountCannotBeZero());
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).transferFrom(msg.sender, address(this), amount);
-        IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-        IWrappedERC20(stablecoinContract).wrap(to, amount);
+
+        address tokenHandler = tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).wrap(stablecoinContract, to, amount);
 
         emit Wrap(msg.sender, stablecoinContract, to, amount);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Mint Rate Setters
+                                    Setters
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
@@ -231,6 +240,72 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);
     }
 
+    /**
+     * @notice Sets the token authority handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     */
+    function setTokenHandler(address stablecoinContract, address tokenHandler)
+        public
+        onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
+    {
+        require(stablecoinContract != address(0), ZeroAddress());
+        require(tokenHandler != address(0), ZeroAddress());
+        require(
+            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
+            InvalidTokenHandler()
+        );
+
+        tokenHandlers[stablecoinContract] = tokenHandler;
+
+        emit TokenHandlerSet(msg.sender, stablecoinContract, tokenHandler);
+    }
+
+    /**
+     * @notice Registers a stablecoin contract with the TokenAuthority
+     * @dev Only callable by the admin role
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     * @param mintTxnLimit The mint transaction limit
+     */
+    function registerStablecoin(
+        address stablecoinContract,
+        address tokenHandler,
+        uint256 mintTxnLimit
+    ) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
+        require(tokenHandlers[stablecoinContract] == address(0), StablecoinAlreadyRegistered());
+        require(stablecoinContract != address(0), ZeroAddress());
+        require(tokenHandler != address(0), ZeroAddress());
+        require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        require(
+            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
+            InvalidTokenHandler()
+        );
+
+        tokenHandlers[stablecoinContract] = tokenHandler;
+        mintTxnLimits[stablecoinContract] = mintTxnLimit;
+
+        emit StablecoinRegistered(msg.sender, stablecoinContract, tokenHandler, mintTxnLimit);
+    }
+
+    /**
+     * @notice Unregisters a stablecoin contract from the TokenAuthority
+     * @dev Only callable by the admin role
+     * @dev It it on the onus of the admin to ensure that all minter allowances are zeroed out
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function unregisterStablecoin(address stablecoinContract)
+        public
+        onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
+    {
+        require(stablecoinContract != address(0), ZeroAddress());
+        require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
+        delete tokenHandlers[stablecoinContract];
+        delete mintTxnLimits[stablecoinContract];
+
+        emit StablecoinUnregistered(msg.sender, stablecoinContract);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Getters
     //////////////////////////////////////////////////////////////////////////*/
@@ -262,6 +337,19 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         return mintTxnLimits[stablecoinContract];
     }
 
+    /**
+     * @notice Gets the token handler for a specific stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return tokenHandler The address of the token handler
+     */
+    function getTokenHandler(address stablecoinContract)
+        public
+        view
+        returns (address tokenHandler)
+    {
+        return tokenHandlers[stablecoinContract];
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Upgrade Logic
     //////////////////////////////////////////////////////////////////////////*/
@@ -283,14 +371,11 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
 
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        address tokenHandler = tokenHandlers[stablecoinContract];
 
-        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(to, amount);
-        } else {
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
-            IERC20Mintable(RESERVE_LEDGER_TOKEN).approve(stablecoinContract, amount);
-            IWrappedERC20(stablecoinContract).wrap(to, amount);
-        }
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+
+        ITokenHandler(tokenHandler).mint(stablecoinContract, to, amount);
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
     }

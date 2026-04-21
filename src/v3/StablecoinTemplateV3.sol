@@ -7,27 +7,12 @@ import {
     StablecoinTemplateV3Storage,
     StablecoinTemplateV3StorageLib
 } from "./StablecoinTemplateV3Storage.sol";
-import {
-    OwnableUpgradeable
-} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import {
-    AccessControlEnumerableUpgradeable
-} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {
-    UUPSUpgradeable
-} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {
-    ERC20Upgradeable
-} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
-import {
-    ERC20PermitUpgradeable
-} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
-import {
-    PausableUpgradeable
-} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+/// @title StablecoinTemplateV3
+/// @author Bridge
+/// @notice Wrapped stablecoin backed by reserve ledger tokens held in the contract
+/// @dev Supports wrap/unwrap operations and migration from direct mint/burn to wrapped mode
 contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
     using SafeERC20 for IERC20Mintable;

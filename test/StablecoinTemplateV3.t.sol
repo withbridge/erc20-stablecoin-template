@@ -154,9 +154,9 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
             })
         );
 
-        // The proxy should revert with AdminCannotBeZeroAddress when trying to initialize with zero
+        // The proxy should revert with ZeroAddress when trying to initialize with zero
         // address
-        vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroAddress.selector));
         proxy.reinitialize(
             "Test Coin", "TC", 6, address(0), transferPolicyId, mintRecipientPolicyId
         );

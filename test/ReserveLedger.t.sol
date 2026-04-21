@@ -155,9 +155,9 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
             })
         );
 
-        // The proxy should revert with AdminCannotBeZeroAddress when trying to initialize with zero
+        // The proxy should revert with ZeroAddress when trying to initialize with zero
         // address
-        vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroAddress.selector));
         proxy.reinitialize(
             "Test Reserve", "TR", 6, address(0), transferPolicyId, mintRecipientPolicyId
         );
@@ -530,7 +530,7 @@ contract ReserveLedgerTest is Test, StablecoinTemplateV3ErrorsAndEvents {
     function test_grantRole_admin_reverts_zero_address() public {
         bytes32 role = reserveLedger.DEFAULT_ADMIN_ROLE();
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(AdminCannotBeZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroAddress.selector));
         reserveLedger.grantRole(role, address(0));
     }
 
