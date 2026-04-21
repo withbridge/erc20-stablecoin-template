@@ -23,7 +23,7 @@ import {
  *         TokenAuthority, and one stablecoin, followed by role configuration and
  *         admin handover.
  *
- *         Execution order: deploy (01→04) → configure → handover
+ *         Execution order: deploy (01->04) -> configure -> handover
  *
  *         The deployer retains DEFAULT_ADMIN_ROLE throughout deployment and
  *         configuration, then hands over admin to the final admin addresses
@@ -34,6 +34,16 @@ import {
  */
 contract DeployAll is Script {
 
+    struct DeployResult {
+        address authRegistry;
+        address reserveLedger;
+        address tokenAuthority;
+        address stablecoin;
+        uint64 transferPolicyId;
+        uint64 rlMintPolicyId;
+        uint64 scMintPolicyId;
+    }
+
     bytes32 constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
@@ -43,34 +53,37 @@ contract DeployAll is Script {
 
     function run() public {
         vm.startBroadcast();
-
-        // ── Deploy
-        // ──────────────────────────────────────────────────
-        address authRegistry = _deployAuthRegistry();
-        (address rlProxy, uint64 transferPolicyId, uint64 rlMintPolicyId) =
-            _deployReserveLedger(authRegistry);
-        address taProxy = _deployTokenAuthority(rlProxy);
-        (address scProxy, uint64 scMintPolicyId) =
-            _deployStablecoin(authRegistry, rlProxy, transferPolicyId);
-
-        // ── Configure
-        // ───────────────────────────────────────────────
-        _configure(rlProxy, taProxy, scProxy);
-
-        // ── Handover
-        // ────────────────────────────────────────────────
-        _handover(rlProxy, taProxy, scProxy);
-
+        DeployResult memory result = _execute(msg.sender);
         vm.stopBroadcast();
 
         console.log("===== Deployment Complete =====");
-        console.log("AuthRegistry:       ", authRegistry);
-        console.log("ReserveLedger:      ", rlProxy);
-        console.log("TokenAuthority:     ", taProxy);
-        console.log("Stablecoin:         ", scProxy);
-        console.log("Transfer Policy ID: ", uint256(transferPolicyId));
-        console.log("RL Mint Policy ID:  ", uint256(rlMintPolicyId));
-        console.log("SC Mint Policy ID:  ", uint256(scMintPolicyId));
+        console.log("AuthRegistry:       ", result.authRegistry);
+        console.log("ReserveLedger:      ", result.reserveLedger);
+        console.log("TokenAuthority:     ", result.tokenAuthority);
+        console.log("Stablecoin:         ", result.stablecoin);
+        console.log("Transfer Policy ID: ", uint256(result.transferPolicyId));
+        console.log("RL Mint Policy ID:  ", uint256(result.rlMintPolicyId));
+        console.log("SC Mint Policy ID:  ", uint256(result.scMintPolicyId));
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Execute
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @dev Core deployment logic, separated from run() so tests can call it
+    ///      without vm.startBroadcast(). Pass the deployer address explicitly
+    ///      since msg.sender semantics differ between script and test contexts.
+    function _execute(address deployer) internal returns (DeployResult memory result) {
+        result.authRegistry = _deployAuthRegistry();
+        (result.reserveLedger, result.transferPolicyId, result.rlMintPolicyId) =
+            _deployReserveLedger(result.authRegistry, deployer);
+        result.tokenAuthority = _deployTokenAuthority(result.reserveLedger, deployer);
+        (result.stablecoin, result.scMintPolicyId) = _deployStablecoin(
+            result.authRegistry, result.reserveLedger, result.transferPolicyId, deployer
+        );
+
+        _configure(result.reserveLedger, result.tokenAuthority, result.stablecoin, deployer);
+        _handover(result.reserveLedger, result.tokenAuthority, result.stablecoin, deployer);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -83,7 +96,7 @@ contract DeployAll is Script {
         return address(registry);
     }
 
-    function _deployReserveLedger(address authRegistry)
+    function _deployReserveLedger(address authRegistry, address deployer)
         internal
         returns (address rlProxy, uint64 transferPolicyId, uint64 rlMintPolicyId)
     {
@@ -101,26 +114,30 @@ contract DeployAll is Script {
             vm.envString("RL_SYMBOL"),
             uint8(vm.envUint("RL_DECIMALS")),
             transferPolicyId,
-            rlMintPolicyId
+            rlMintPolicyId,
+            deployer
         );
         console.log("ReserveLedger proxy:", rlProxy);
     }
 
-    function _deployTokenAuthority(address rlProxy) internal returns (address taProxy) {
+    function _deployTokenAuthority(address rlProxy, address deployer)
+        internal
+        returns (address taProxy)
+    {
         TokenAuthority taImpl = new TokenAuthority(rlProxy, true);
 
         taProxy = address(
-            new ERC1967Proxy(
-                address(taImpl), abi.encodeCall(TokenAuthority.initialize, (msg.sender))
-            )
+            new ERC1967Proxy(address(taImpl), abi.encodeCall(TokenAuthority.initialize, (deployer)))
         );
         console.log("TokenAuthority proxy:", taProxy);
     }
 
-    function _deployStablecoin(address authRegistry, address rlProxy, uint64 transferPolicyId)
-        internal
-        returns (address scProxy, uint64 scMintPolicyId)
-    {
+    function _deployStablecoin(
+        address authRegistry,
+        address rlProxy,
+        uint64 transferPolicyId,
+        address deployer
+    ) internal returns (address scProxy, uint64 scMintPolicyId) {
         address policyAdmin = vm.envAddress("POLICY_ADMIN");
 
         scMintPolicyId = AuthRegistry(authRegistry)
@@ -133,7 +150,8 @@ contract DeployAll is Script {
             vm.envString("STABLECOIN_SYMBOL"),
             uint8(vm.envUint("STABLECOIN_DECIMALS")),
             transferPolicyId,
-            scMintPolicyId
+            scMintPolicyId,
+            deployer
         );
         console.log("StablecoinTemplateV3 proxy:", scProxy);
     }
@@ -145,16 +163,17 @@ contract DeployAll is Script {
         string memory symbol,
         uint8 decimals,
         uint64 transferPolicyId,
-        uint64 mintRecipientPolicyId
+        uint64 mintRecipientPolicyId,
+        address deployer
     ) internal returns (address proxy) {
-        bytes32 salt = PermissionedSalt.createPermissionedSalt(msg.sender, saltNonce);
+        bytes32 salt = PermissionedSalt.createPermissionedSalt(deployer, saltNonce);
         proxy = DeterministicProxyFactoryFixture.deterministicProxyOZ({
             initialProxySalt: salt,
-            initialOwner: msg.sender,
+            initialOwner: deployer,
             implementation: implementation,
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
-                (name, symbol, decimals, msg.sender, transferPolicyId, mintRecipientPolicyId)
+                (name, symbol, decimals, deployer, transferPolicyId, mintRecipientPolicyId)
             )
         });
     }
@@ -163,9 +182,11 @@ contract DeployAll is Script {
                                     Configure
     //////////////////////////////////////////////////////////////////////////*/
 
-    function _configure(address rlProxy, address taProxy, address scProxy) internal {
+    function _configure(address rlProxy, address taProxy, address scProxy, address deployer)
+        internal
+    {
         _configureRoles(rlProxy, taProxy, scProxy);
-        _configureLimits(taProxy, scProxy);
+        _configureLimits(taProxy, scProxy, deployer);
         _configureMaxSupply(rlProxy, scProxy);
     }
 
@@ -182,9 +203,9 @@ contract DeployAll is Script {
         console.log("Granted roles on RL and SC");
     }
 
-    function _configureLimits(address taProxy, address scProxy) internal {
+    function _configureLimits(address taProxy, address scProxy, address deployer) internal {
         // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily to set limits
-        IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
+        IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer);
         TokenAuthority(taProxy).setTxnMintLimit(scProxy, vm.envUint("TXN_MINT_LIMIT"));
         TokenAuthority(taProxy)
             .setMinterAllowance(
@@ -203,7 +224,9 @@ contract DeployAll is Script {
                                     Handover
     //////////////////////////////////////////////////////////////////////////*/
 
-    function _handover(address rlProxy, address taProxy, address scProxy) internal {
+    function _handover(address rlProxy, address taProxy, address scProxy, address deployer)
+        internal
+    {
         address rlAdmin = vm.envAddress("RL_ADMIN");
         address scAdmin = vm.envAddress("STABLECOIN_ADMIN");
         address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
@@ -226,15 +249,15 @@ contract DeployAll is Script {
         console.log("TA: granted DEFAULT_ADMIN_ROLE and MINT_RATE_LIMIT_SETTER_ROLE to", taAdmin);
 
         // -- Renounce deployer's roles (skip if deployer == final admin) --
-        if (taAdmin != msg.sender) {
-            IAccessControl(taProxy).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
-            IAccessControl(taProxy).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        if (taAdmin != deployer) {
+            IAccessControl(taProxy).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer);
+            IAccessControl(taProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }
-        if (rlAdmin != msg.sender) {
-            IAccessControl(rlProxy).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        if (rlAdmin != deployer) {
+            IAccessControl(rlProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }
-        if (scAdmin != msg.sender) {
-            IAccessControl(scProxy).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        if (scAdmin != deployer) {
+            IAccessControl(scProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }
         console.log("Deployer handover complete");
     }
