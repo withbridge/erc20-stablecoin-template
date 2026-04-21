@@ -26,7 +26,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           network: ${{ matrix.network }}
-          version: ${{ matrix.network == 'tempo' && 'nightly-4ec4d7243c2b2d7afcebb0b6285f669412fc0697' || 'stable' }}
+          version: ${{ matrix.network == 'tempo' && 'nightly' || 'stable' }}
 
       - name: Show Forge version
         run: |
