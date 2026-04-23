@@ -219,9 +219,8 @@ contract Verify is Common {
                 "TA: deployer renounced MINT_RATE_LIMIT_SETTER_ROLE"
             );
             _check(
-                !TokenAuthority(tokenAuthority).hasRole(
-                    TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer
-                ),
+                !TokenAuthority(tokenAuthority)
+                    .hasRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer),
                 "TA: deployer renounced TOKEN_AUTHORITY_HANDLER_SETTER_ROLE"
             );
         }

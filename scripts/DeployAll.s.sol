@@ -8,7 +8,9 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
-import { ReserveLedgerWrappedHandler } from "src/tokenAuthority/tokenHandler/ReserveLedgerWrappedHandler.sol";
+import {
+    ReserveLedgerWrappedHandler
+} from "src/tokenAuthority/tokenHandler/ReserveLedgerWrappedHandler.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
@@ -227,9 +229,7 @@ contract DeployAll is Script {
         IAccessControl(scProxy).grantRole(MINTER_ROLE, handler);
 
         IAccessControl(taProxy).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);
-        TokenAuthority(taProxy).registerStablecoin(
-            scProxy, handler, vm.envUint("TXN_MINT_LIMIT")
-        );
+        TokenAuthority(taProxy).registerStablecoin(scProxy, handler, vm.envUint("TXN_MINT_LIMIT"));
         console.log("Registered stablecoin with handler on TA");
     }
 

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { Test } from "forge-std/Test.sol";
 import { Verify } from "scripts/06_Verify.s.sol";
 import { DeployAll } from "scripts/DeployAll.s.sol";
-import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
-import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
-import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
 /**
  * @title DeployAllE2ETest
@@ -75,11 +75,8 @@ contract DeployAllE2ETest is Test, DeployAll {
         (address secondSc,) = _deployStablecoin(
             r2.authRegistry, r2.reserveLedger, r2.transferPolicyId, address(this)
         );
-        address secondHandler =
-            _deployTokenHandler(r2.reserveLedger, r2.tokenAuthority);
-        _configure(
-            r2.reserveLedger, r2.tokenAuthority, secondHandler, secondSc, address(this)
-        );
+        address secondHandler = _deployTokenHandler(r2.reserveLedger, r2.tokenAuthority);
+        _configure(r2.reserveLedger, r2.tokenAuthority, secondHandler, secondSc, address(this));
         _handover(r2.reserveLedger, r2.tokenAuthority, secondSc, address(this));
 
         vm.setEnv("STABLECOIN", vm.toString(secondSc));
@@ -99,15 +96,17 @@ contract DeployAllE2ETest is Test, DeployAll {
         );
 
         TokenAuthority ta = TokenAuthority(r2.tokenAuthority);
-        assertEq(ta.getStablecoinTxnMintLimit(firstSc), 100000000000);
+        assertEq(ta.getStablecoinTxnMintLimit(firstSc), 100_000_000_000);
         // Minter allowance was reduced by 1_000_000 during the mint smoke test
-        assertEq(ta.getMinterAllowance(firstSc, makeAddr("minter")), 999999999999999 - 1_000_000);
+        assertEq(
+            ta.getMinterAllowance(firstSc, makeAddr("minter")), 999_999_999_999_999 - 1_000_000
+        );
 
         StablecoinTemplateV3 second = StablecoinTemplateV3(secondSc);
         assertEq(second.name(), "EUR Stablecoin");
         assertEq(second.symbol(), "EURB");
-        assertEq(ta.getStablecoinTxnMintLimit(secondSc), 50000000000);
-        assertEq(ta.getMinterAllowance(secondSc, makeAddr("minter_sc2")), 500000000000000);
+        assertEq(ta.getStablecoinTxnMintLimit(secondSc), 50_000_000_000);
+        assertEq(ta.getMinterAllowance(secondSc, makeAddr("minter_sc2")), 500_000_000_000_000);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
