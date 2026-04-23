@@ -6,6 +6,7 @@ import { console } from "forge-std/console.sol";
 
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ReserveLedgerWrappedHandler } from "src/tokenAuthority/tokenHandler/ReserveLedgerWrappedHandler.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 
 /**
@@ -31,6 +32,8 @@ contract ConfigureAndHandover is Common {
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
+    bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
+        keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
     function _run() internal override {
@@ -44,11 +47,26 @@ contract ConfigureAndHandover is Common {
         vm.startBroadcast();
 
         _configureRoles(rl, ta, sc);
+        _deployHandlerAndRegister(rl, ta, sc);
         _configureLimits(ta, sc);
         _configureMaxSupply(rl, sc);
         _handover(rl, ta, sc);
 
         vm.stopBroadcast();
+    }
+
+    function _deployHandlerAndRegister(address rl, address ta, address sc) internal {
+        // Deploy the wrapped handler and register the stablecoin on the TokenAuthority
+        address handler = address(new ReserveLedgerWrappedHandler(rl, ta));
+        console.log("ReserveLedgerWrappedHandler:", handler);
+
+        // Handler needs MINTER_ROLE on RL (to mint reserve tokens) and on SC (to unwrap)
+        IAccessControl(rl).grantRole(MINTER_ROLE, handler);
+        IAccessControl(sc).grantRole(MINTER_ROLE, handler);
+
+        IAccessControl(ta).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
+        TokenAuthority(ta).registerStablecoin(sc, handler, vm.envUint("TXN_MINT_LIMIT"));
+        console.log("Registered stablecoin with handler on TA");
     }
 
     function _configureRoles(address rl, address ta, address sc) internal {
@@ -67,10 +85,9 @@ contract ConfigureAndHandover is Common {
     function _configureLimits(address ta, address sc) internal {
         // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily
         IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
-        TokenAuthority(ta).setTxnMintLimit(sc, vm.envUint("TXN_MINT_LIMIT"));
         TokenAuthority(ta)
             .setMinterAllowance(sc, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE"));
-        console.log("Set txn mint limit and minter allowance on TA");
+        console.log("Set minter allowance on TA");
     }
 
     function _configureMaxSupply(address rl, address sc) internal {
@@ -99,10 +116,12 @@ contract ConfigureAndHandover is Common {
 
         IAccessControl(ta).grantRole(DEFAULT_ADMIN_ROLE, taAdmin);
         IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, taAdmin);
+        IAccessControl(ta).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, taAdmin);
         console.log("TA: admin handed over to", taAdmin);
 
         // Renounce deployer's roles (skip if deployer == final admin)
         if (taAdmin != msg.sender) {
+            IAccessControl(ta).renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
             IAccessControl(ta).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
             IAccessControl(ta).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }

@@ -8,6 +8,7 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ReserveLedgerWrappedHandler } from "src/tokenAuthority/tokenHandler/ReserveLedgerWrappedHandler.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
@@ -38,6 +39,7 @@ contract DeployAll is Script {
         address authRegistry;
         address reserveLedger;
         address tokenAuthority;
+        address tokenHandler;
         address stablecoin;
         uint64 transferPolicyId;
         uint64 rlMintPolicyId;
@@ -49,6 +51,8 @@ contract DeployAll is Script {
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
+    bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
+        keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
     function run() public {
@@ -60,6 +64,7 @@ contract DeployAll is Script {
         console.log("AuthRegistry:       ", result.authRegistry);
         console.log("ReserveLedger:      ", result.reserveLedger);
         console.log("TokenAuthority:     ", result.tokenAuthority);
+        console.log("TokenHandler:       ", result.tokenHandler);
         console.log("Stablecoin:         ", result.stablecoin);
         console.log("Transfer Policy ID: ", uint256(result.transferPolicyId));
         console.log("RL Mint Policy ID:  ", uint256(result.rlMintPolicyId));
@@ -78,11 +83,18 @@ contract DeployAll is Script {
         (result.reserveLedger, result.transferPolicyId, result.rlMintPolicyId) =
             _deployReserveLedger(result.authRegistry, deployer);
         result.tokenAuthority = _deployTokenAuthority(result.reserveLedger, deployer);
+        result.tokenHandler = _deployTokenHandler(result.reserveLedger, result.tokenAuthority);
         (result.stablecoin, result.scMintPolicyId) = _deployStablecoin(
             result.authRegistry, result.reserveLedger, result.transferPolicyId, deployer
         );
 
-        _configure(result.reserveLedger, result.tokenAuthority, result.stablecoin, deployer);
+        _configure(
+            result.reserveLedger,
+            result.tokenAuthority,
+            result.tokenHandler,
+            result.stablecoin,
+            deployer
+        );
         _handover(result.reserveLedger, result.tokenAuthority, result.stablecoin, deployer);
     }
 
@@ -103,7 +115,7 @@ contract DeployAll is Script {
         address policyAdmin = vm.envAddress("POLICY_ADMIN");
 
         transferPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         rlMintPolicyId = AuthRegistry(authRegistry)
             .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
 
@@ -130,6 +142,14 @@ contract DeployAll is Script {
             new ERC1967Proxy(address(taImpl), abi.encodeCall(TokenAuthority.initialize, (deployer)))
         );
         console.log("TokenAuthority proxy:", taProxy);
+    }
+
+    function _deployTokenHandler(address rlProxy, address taProxy)
+        internal
+        returns (address handler)
+    {
+        handler = address(new ReserveLedgerWrappedHandler(rlProxy, taProxy));
+        console.log("ReserveLedgerWrappedHandler:", handler);
     }
 
     function _deployStablecoin(
@@ -182,12 +202,35 @@ contract DeployAll is Script {
                                     Configure
     //////////////////////////////////////////////////////////////////////////*/
 
-    function _configure(address rlProxy, address taProxy, address scProxy, address deployer)
-        internal
-    {
+    function _configure(
+        address rlProxy,
+        address taProxy,
+        address handler,
+        address scProxy,
+        address deployer
+    ) internal {
         _configureRoles(rlProxy, taProxy, scProxy);
+        _registerStablecoin(rlProxy, taProxy, handler, scProxy, deployer);
         _configureLimits(taProxy, scProxy, deployer);
         _configureMaxSupply(rlProxy, scProxy);
+    }
+
+    function _registerStablecoin(
+        address rlProxy,
+        address taProxy,
+        address handler,
+        address scProxy,
+        address deployer
+    ) internal {
+        // Handler needs MINTER_ROLE on RL (to mint reserve tokens) and on SC (to unwrap)
+        IAccessControl(rlProxy).grantRole(MINTER_ROLE, handler);
+        IAccessControl(scProxy).grantRole(MINTER_ROLE, handler);
+
+        IAccessControl(taProxy).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);
+        TokenAuthority(taProxy).registerStablecoin(
+            scProxy, handler, vm.envUint("TXN_MINT_LIMIT")
+        );
+        console.log("Registered stablecoin with handler on TA");
     }
 
     function _configureRoles(address rlProxy, address taProxy, address scProxy) internal {
@@ -206,12 +249,11 @@ contract DeployAll is Script {
     function _configureLimits(address taProxy, address scProxy, address deployer) internal {
         // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily to set limits
         IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer);
-        TokenAuthority(taProxy).setTxnMintLimit(scProxy, vm.envUint("TXN_MINT_LIMIT"));
         TokenAuthority(taProxy)
             .setMinterAllowance(
                 scProxy, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE")
             );
-        console.log("Set txn mint limit and minter allowance on TA");
+        console.log("Set minter allowance on TA");
     }
 
     function _configureMaxSupply(address rlProxy, address scProxy) internal {
@@ -246,10 +288,12 @@ contract DeployAll is Script {
 
         IAccessControl(taProxy).grantRole(DEFAULT_ADMIN_ROLE, taAdmin);
         IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, taAdmin);
-        console.log("TA: granted DEFAULT_ADMIN_ROLE and MINT_RATE_LIMIT_SETTER_ROLE to", taAdmin);
+        IAccessControl(taProxy).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, taAdmin);
+        console.log("TA: granted admin roles to", taAdmin);
 
         // -- Renounce deployer's roles (skip if deployer == final admin) --
         if (taAdmin != deployer) {
+            IAccessControl(taProxy).renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);
             IAccessControl(taProxy).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer);
             IAccessControl(taProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }

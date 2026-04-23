@@ -30,6 +30,8 @@ contract Verify is Common {
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
+    bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
+        keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
     function _run() internal override {
@@ -156,6 +158,16 @@ contract Verify is Common {
             ta.hasRole(MINT_RATE_LIMIT_SETTER_ROLE, taAdmin),
             "TA: admin has MINT_RATE_LIMIT_SETTER_ROLE"
         );
+        _check(
+            ta.hasRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, taAdmin),
+            "TA: admin has TOKEN_AUTHORITY_HANDLER_SETTER_ROLE"
+        );
+
+        // Handler registration
+        _check(
+            ta.getTokenHandler(stablecoin) != address(0),
+            "TA: tokenHandler registered for stablecoin"
+        );
 
         // Limits from step 05
         _check(
@@ -205,6 +217,12 @@ contract Verify is Common {
             _check(
                 !TokenAuthority(tokenAuthority).hasRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer),
                 "TA: deployer renounced MINT_RATE_LIMIT_SETTER_ROLE"
+            );
+            _check(
+                !TokenAuthority(tokenAuthority).hasRole(
+                    TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer
+                ),
+                "TA: deployer renounced TOKEN_AUTHORITY_HANDLER_SETTER_ROLE"
             );
         }
     }

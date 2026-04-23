@@ -33,7 +33,7 @@ contract DeployReserveLedger is Common {
 
         // Create policies in AuthRegistry
         uint64 transferPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.BLACKLIST);
+            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("Transfer policy ID:", transferPolicyId);
 
         uint64 rlMintRecipientPolicyId = AuthRegistry(authRegistry)
