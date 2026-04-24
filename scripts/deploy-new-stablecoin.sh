@@ -1,41 +1,38 @@
 #!/usr/bin/env bash
-# deploy-new-stablecoin.sh — deploys an additional stablecoin on an existing
-# chain where AuthRegistry, ReserveLedger, and TokenAuthority are already live.
-# Runs steps 04 (deploy stablecoin) and 05 (configure + handover).
+# deploy-new-stablecoin.sh — deploys and configures a new stablecoin on an
+# existing chain that already has AuthRegistry, ReserveLedger, and
+# TokenAuthority deployed.
 #
 # Usage:
-#   cp .env.example .env && vi .env   # fill in stablecoin + config values
-#   source .env
-#   bash scripts/deploy-new-stablecoin.sh [extra forge flags]
+#   source .env   # fill in stablecoin config vars (see .env.example)
+#   bash scripts/deploy-new-stablecoin.sh \
+#     <AUTH_REGISTRY> <RESERVE_LEDGER> <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> \
+#     [extra forge flags]
 #
-# Required env vars (from prior deployment):
-#   AUTH_REGISTRY, RESERVE_LEDGER, TOKEN_AUTHORITY, TRANSFER_POLICY_ID
-#
-# Extra forge flags (e.g. --private-key, --ledger, --account) are forwarded
-# to every forge script invocation.
+# The first four positional arguments are the chain infrastructure addresses
+# output by deploy-new-chain.sh.
 #
 # Requires: forge
 
 set -euo pipefail
 
+if [[ $# -lt 4 ]]; then
+    echo "Usage: $0 <AUTH_REGISTRY> <RESERVE_LEDGER> <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> [forge flags]"
+    exit 1
+fi
+
+AUTH_REGISTRY="$1"
+RESERVE_LEDGER="$2"
+TOKEN_AUTHORITY="$3"
+TRANSFER_POLICY_ID="$4"
+shift 4
+
 FORGE_EXTRA_FLAGS=("$@")
-
-# ── Validate prerequisites ───────────────────────────────────────────────────
-
-for var in AUTH_REGISTRY RESERVE_LEDGER TOKEN_AUTHORITY TRANSFER_POLICY_ID \
-           STABLECOIN_NAME STABLECOIN_SYMBOL STABLECOIN_DECIMALS SC_SALT_NONCE \
-           POLICY_ADMIN RPC_URL; do
-    if [[ -z "${!var:-}" ]]; then
-        echo "ERROR: ${var} is not set. Source your .env first." >&2
-        exit 1
-    fi
-done
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 extract() {
-    local key="$1"
-    local text="$2"
+    local key="$1" text="$2"
     echo "$text" | grep -oE "${key}=0x[0-9a-fA-F]+" | head -1 | cut -d= -f2
 }
 
@@ -50,7 +47,9 @@ run_script() {
 }
 
 # ── Step 04: Deploy Stablecoin ────────────────────────────────────────────────
-
+#
+# TokenConfig tuple: (string name, string symbol, uint8 decimals, address policyAdmin, uint96 saltNonce)
+#
 SC_CONFIG="(\"${STABLECOIN_NAME}\",\"${STABLECOIN_SYMBOL}\",${STABLECOIN_DECIMALS},${POLICY_ADMIN},${SC_SALT_NONCE})"
 
 out=$(run_script "04: Deploy Stablecoin" \
@@ -59,11 +58,22 @@ out=$(run_script "04: Deploy Stablecoin" \
     "${AUTH_REGISTRY}" "${RESERVE_LEDGER}" "${TRANSFER_POLICY_ID}" "${SC_CONFIG}" 2>&1 | tee /dev/stderr)
 
 STABLECOIN=$(extract "STABLECOIN" "$out")
-echo ""
-echo "STABLECOIN=${STABLECOIN}"
 
 # ── Step 05: Configure and Handover ──────────────────────────────────────────
-
+#
+# HandoverConfig tuple fields (in order):
+#   uint256 txnMintLimit
+#   address minterAddress
+#   uint256 minterAllowance
+#   uint256 rlMaxSupply
+#   uint256 stablecoinMaxSupply
+#   address pauserAddress
+#   address unpauserAddress
+#   address blockedAddressBurnerAddress
+#   address rlAdmin
+#   address stablecoinAdmin
+#   address tokenAuthorityAdmin
+#
 HANDOVER_CONFIG="(${TXN_MINT_LIMIT},${MINTER_ADDRESS},${MINTER_ALLOWANCE},${RL_MAX_SUPPLY},${STABLECOIN_MAX_SUPPLY},${PAUSER_ADDRESS},${UNPAUSER_ADDRESS},${BLOCKED_ADDRESS_BURNER_ADDRESS},${RL_ADMIN},${STABLECOIN_ADMIN},${TOKEN_AUTHORITY_ADMIN})"
 
 run_script "05: Configure and Handover" \
