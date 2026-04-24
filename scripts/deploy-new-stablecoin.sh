@@ -43,6 +43,8 @@ run_script() {
     forge script "$@" \
         --rpc-url "${RPC_URL}" \
         --broadcast \
+        --verify \
+        --etherscan-api-key "${ETHERSCAN_API_KEY}" \
         "${FORGE_EXTRA_FLAGS[@]+"${FORGE_EXTRA_FLAGS[@]}"}"
 }
 
