@@ -64,74 +64,91 @@ contract ConfigureAndHandover is Common {
     }
 
     function _deployHandlerAndRegister(
-        address rl,
-        address ta,
-        address sc,
+        address reserveLedger,
+        address tokenAuthority,
+        address stablecoin,
         HandoverConfig calldata config
     ) internal {
-        address handler = address(new ReserveLedgerWrappedHandler(rl, ta));
+        address handler = address(new ReserveLedgerWrappedHandler(reserveLedger, tokenAuthority));
         console.log("ReserveLedgerWrappedHandler:", handler);
 
-        IAccessControl(rl).grantRole(MINTER_ROLE, handler);
-        IAccessControl(sc).grantRole(MINTER_ROLE, handler);
+        IAccessControl(reserveLedger).grantRole(MINTER_ROLE, handler);
+        IAccessControl(stablecoin).grantRole(MINTER_ROLE, handler);
 
-        IAccessControl(ta).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
-        TokenAuthority(ta).registerStablecoin(sc, handler, config.txnMintLimit);
+        IAccessControl(tokenAuthority).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
+        TokenAuthority(tokenAuthority).registerStablecoin(stablecoin, handler, config.txnMintLimit);
         console.log("Registered stablecoin with handler on TA");
     }
 
-    function _configureRoles(address rl, address ta, address sc, HandoverConfig calldata config)
-        internal
-    {
-        IAccessControl(rl).grantRole(MINTER_ROLE, ta);
-        IAccessControl(sc).grantRole(MINTER_ROLE, ta);
+    function _configureRoles(
+        address reserveLedger,
+        address tokenAuthority,
+        address stablecoin,
+        HandoverConfig calldata config
+    ) internal {
+        IAccessControl(reserveLedger).grantRole(MINTER_ROLE, tokenAuthority);
+        IAccessControl(stablecoin).grantRole(MINTER_ROLE, tokenAuthority);
 
-        IAccessControl(sc).grantRole(PAUSER_ROLE, config.pauserAddress);
-        IAccessControl(sc).grantRole(UNPAUSER_ROLE, config.unpauserAddress);
-        IAccessControl(sc)
+        IAccessControl(stablecoin).grantRole(PAUSER_ROLE, config.pauserAddress);
+        IAccessControl(stablecoin).grantRole(UNPAUSER_ROLE, config.unpauserAddress);
+        IAccessControl(stablecoin)
             .grantRole(BLOCKED_ADDRESS_BURNER_ROLE, config.blockedAddressBurnerAddress);
         console.log("Granted roles on RL and SC");
     }
 
-    function _configureLimits(address ta, address sc, HandoverConfig calldata config) internal {
-        IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
-        TokenAuthority(ta).setMinterAllowance(sc, config.minterAddress, config.minterAllowance);
+    function _configureLimits(
+        address tokenAuthority,
+        address stablecoin,
+        HandoverConfig calldata config
+    ) internal {
+        IAccessControl(tokenAuthority).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
+        TokenAuthority(tokenAuthority)
+            .setMinterAllowance(stablecoin, config.minterAddress, config.minterAllowance);
         console.log("Set minter allowance on TA");
     }
 
-    function _configureMaxSupply(address rl, address sc, HandoverConfig calldata config) internal {
-        StablecoinTemplateV3Base(rl).setMaxSupply(config.rlMaxSupply);
-        StablecoinTemplateV3Base(sc).setMaxSupply(config.stablecoinMaxSupply);
+    function _configureMaxSupply(
+        address reserveLedger,
+        address stablecoin,
+        HandoverConfig calldata config
+    ) internal {
+        StablecoinTemplateV3Base(reserveLedger).setMaxSupply(config.rlMaxSupply);
+        StablecoinTemplateV3Base(stablecoin).setMaxSupply(config.stablecoinMaxSupply);
         console.log("Set max supply on RL and SC");
     }
 
-    function _handover(address rl, address ta, address sc, HandoverConfig calldata config)
-        internal
-    {
-        IAccessControl(rl).grantRole(DEFAULT_ADMIN_ROLE, config.rlAdmin);
-        StablecoinTemplateV3Base(rl).transferOwnership(config.rlAdmin);
+    function _handover(
+        address reserveLedger,
+        address tokenAuthority,
+        address stablecoin,
+        HandoverConfig calldata config
+    ) internal {
+        IAccessControl(reserveLedger).grantRole(DEFAULT_ADMIN_ROLE, config.rlAdmin);
+        StablecoinTemplateV3Base(reserveLedger).transferOwnership(config.rlAdmin);
         console.log("RL: admin handed over to", config.rlAdmin);
 
-        IAccessControl(sc).grantRole(DEFAULT_ADMIN_ROLE, config.stablecoinAdmin);
-        StablecoinTemplateV3Base(sc).transferOwnership(config.stablecoinAdmin);
+        IAccessControl(stablecoin).grantRole(DEFAULT_ADMIN_ROLE, config.stablecoinAdmin);
+        StablecoinTemplateV3Base(stablecoin).transferOwnership(config.stablecoinAdmin);
         console.log("SC: admin handed over to", config.stablecoinAdmin);
 
-        IAccessControl(ta).grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
-        IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, config.tokenAuthorityAdmin);
-        IAccessControl(ta)
+        IAccessControl(tokenAuthority).grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
+        IAccessControl(tokenAuthority)
+            .grantRole(MINT_RATE_LIMIT_SETTER_ROLE, config.tokenAuthorityAdmin);
+        IAccessControl(tokenAuthority)
             .grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, config.tokenAuthorityAdmin);
         console.log("TA: admin handed over to", config.tokenAuthorityAdmin);
 
         if (config.tokenAuthorityAdmin != msg.sender) {
-            IAccessControl(ta).renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
-            IAccessControl(ta).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
-            IAccessControl(ta).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+            IAccessControl(tokenAuthority)
+                .renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
+            IAccessControl(tokenAuthority).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
+            IAccessControl(tokenAuthority).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         if (config.rlAdmin != msg.sender) {
-            IAccessControl(rl).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+            IAccessControl(reserveLedger).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         if (config.stablecoinAdmin != msg.sender) {
-            IAccessControl(sc).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+            IAccessControl(stablecoin).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         console.log("Deployer handover complete");
     }
