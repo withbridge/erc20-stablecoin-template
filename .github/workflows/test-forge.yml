@@ -10,23 +10,39 @@ jobs:
       matrix:
         network: [ethereum, tempo]
 
-    name: Foundry project
+    name: Foundry project (${{ matrix.network }})
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Add SSH key to checkout private repo
         uses: webfactory/ssh-agent@v0.8.0
         with:
           ssh-private-key: ${{ secrets.ERC20_STABLECOIN_CI_SSH_KEY }}
 
-      - name: Install Foundry
+      - name: Install Foundry (ethereum)
+        if: matrix.network == 'ethereum'
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          network: ${{ matrix.network }}
-          version: ${{ matrix.network == 'tempo' && 'nightly' || 'stable' }}
+          version: stable
+
+      - name: Install Foundry (tempo)
+        if: matrix.network == 'tempo'
+        run: |
+          # Upstream foundryup deprecated --network, so we install the Tempo
+          # fork directly from its GitHub release.
+          TAG="v1.6.0-t3"
+          ASSET="foundry_${TAG}_linux_amd64.tar.gz"
+          URL="https://github.com/tempoxyz/tempo-foundry/releases/download/${TAG}/${ASSET}"
+          echo "Downloading Tempo Foundry ${TAG}..."
+          curl -sSfL "$URL" -o /tmp/foundry.tar.gz
+          mkdir -p "$HOME/.foundry/bin"
+          tar xzf /tmp/foundry.tar.gz -C "$HOME/.foundry/bin"
+          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Show Forge version
         run: |
