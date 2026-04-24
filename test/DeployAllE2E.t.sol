@@ -13,11 +13,7 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 
 /**
  * @title DeployAllE2ETest
- * @notice End-to-end test for the full deployment via DeployAll. All scenarios
- *         live in a single test function because vm.setEnv is process-global in
- *         Foundry — multiple test functions leak env vars and cause flaky
- *         failures. Chain state is isolated between scenarios via vm.snapshot /
- *         vm.revertTo.
+ * @notice End-to-end test for the full deployment via DeployAll.
  *
  *         Scenarios covered:
  *         1. Deployer != admin: full handover + renunciation
@@ -35,10 +31,12 @@ contract DeployAllE2ETest is Test, DeployAll {
         // ================================================================
         uint256 snap = vm.snapshotState();
 
-        _setEnvVars(false);
+        TokenConfig memory rlConfig = _defaultRlConfig();
+        TokenConfig memory scConfig = _defaultScConfig();
+        HandoverConfig memory handover = _handoverConfig(false);
 
-        DeployResult memory r1 = _execute(address(this));
-        _setVerifyEnvVars(r1);
+        DeployResult memory r1 = _execute(address(this), rlConfig, scConfig, handover);
+        _setVerifyEnvVars(r1, handover);
         (new Verify()).run();
 
         vm.revertToState(snap);
@@ -46,41 +44,63 @@ contract DeployAllE2ETest is Test, DeployAll {
         // ================================================================
         // Scenario 2: deployer == admin + mint/burn + second stablecoin
         // ================================================================
-        _setEnvVars(true);
+        handover = _handoverConfig(true);
 
-        DeployResult memory r2 = _execute(address(this));
-        _setVerifyEnvVars(r2);
+        DeployResult memory r2 = _execute(address(this), rlConfig, scConfig, handover);
+        _setVerifyEnvVars(r2, handover);
         (new Verify()).run();
 
         // --- Mint and burn smoke test ---
         _smokeTestMintAndBurn(r2);
 
         // --- Add a second stablecoin ---
-        vm.setEnv("STABLECOIN_NAME", "EUR Stablecoin");
-        vm.setEnv("STABLECOIN_SYMBOL", "EURB");
-        vm.setEnv("STABLECOIN_DECIMALS", "6");
-        vm.setEnv("SC_SALT_NONCE", "50");
-        vm.setEnv("STABLECOIN_MAX_SUPPLY", "500000000000000");
-
-        vm.setEnv("MINTER_ADDRESS", vm.toString(makeAddr("minter_sc2")));
-        vm.setEnv("TXN_MINT_LIMIT", "50000000000");
-        vm.setEnv("MINTER_ALLOWANCE", "500000000000000");
-        vm.setEnv("PAUSER_ADDRESS", vm.toString(makeAddr("pauser_sc2")));
-        vm.setEnv("UNPAUSER_ADDRESS", vm.toString(makeAddr("unpauser_sc2")));
-        vm.setEnv("BLOCKED_ADDRESS_BURNER_ADDRESS", vm.toString(makeAddr("blockedBurner_sc2")));
-        vm.setEnv("STABLECOIN_ADMIN", vm.toString(makeAddr("scAdmin_sc2")));
+        TokenConfig memory sc2Config = TokenConfig({
+            name: "EUR Stablecoin",
+            symbol: "EURB",
+            decimals: 6,
+            policyAdmin: address(this),
+            saltNonce: 50
+        });
+        HandoverConfig memory handover2 = HandoverConfig({
+            txnMintLimit: 50_000_000_000,
+            minterAddress: makeAddr("minter_sc2"),
+            minterAllowance: 500_000_000_000_000,
+            rlMaxSupply: 999_999_999_999_999,
+            stablecoinMaxSupply: 500_000_000_000_000,
+            pauserAddress: makeAddr("pauser_sc2"),
+            unpauserAddress: makeAddr("unpauser_sc2"),
+            blockedAddressBurnerAddress: makeAddr("blockedBurner_sc2"),
+            rlAdmin: address(this),
+            stablecoinAdmin: makeAddr("scAdmin_sc2"),
+            tokenAuthorityAdmin: address(this)
+        });
 
         address firstSc = r2.stablecoin;
 
         (address secondSc,) = _deployStablecoin(
-            r2.authRegistry, r2.reserveLedger, r2.transferPolicyId, address(this)
+            r2.authRegistry, r2.reserveLedger, r2.transferPolicyId, address(this), sc2Config
         );
         address secondHandler = _deployTokenHandler(r2.reserveLedger, r2.tokenAuthority);
-        _configure(r2.reserveLedger, r2.tokenAuthority, secondHandler, secondSc, address(this));
-        _handover(r2.reserveLedger, r2.tokenAuthority, secondSc, address(this));
+        _configure(
+            r2.reserveLedger, r2.tokenAuthority, secondHandler, secondSc, address(this), handover2
+        );
+        _handover(r2.reserveLedger, r2.tokenAuthority, secondSc, address(this), handover2);
 
         vm.setEnv("STABLECOIN", vm.toString(secondSc));
         vm.setEnv("DEPLOYER_ADDRESS", vm.toString(address(this)));
+        vm.setEnv("STABLECOIN_NAME", sc2Config.name);
+        vm.setEnv("STABLECOIN_SYMBOL", sc2Config.symbol);
+        vm.setEnv("STABLECOIN_DECIMALS", vm.toString(sc2Config.decimals));
+        vm.setEnv("STABLECOIN_MAX_SUPPLY", vm.toString(handover2.stablecoinMaxSupply));
+        vm.setEnv("STABLECOIN_ADMIN", vm.toString(handover2.stablecoinAdmin));
+        vm.setEnv("TXN_MINT_LIMIT", vm.toString(handover2.txnMintLimit));
+        vm.setEnv("MINTER_ADDRESS", vm.toString(handover2.minterAddress));
+        vm.setEnv("MINTER_ALLOWANCE", vm.toString(handover2.minterAllowance));
+        vm.setEnv("PAUSER_ADDRESS", vm.toString(handover2.pauserAddress));
+        vm.setEnv("UNPAUSER_ADDRESS", vm.toString(handover2.unpauserAddress));
+        vm.setEnv(
+            "BLOCKED_ADDRESS_BURNER_ADDRESS", vm.toString(handover2.blockedAddressBurnerAddress)
+        );
         (new Verify()).run();
 
         // First stablecoin should be unaffected
@@ -123,8 +143,6 @@ contract DeployAllE2ETest is Test, DeployAll {
         address recipient = makeAddr("recipient");
         uint256 mintAmount = 1_000_000; // 1 USDB (6 decimals)
 
-        // Whitelist addresses on the transfer policy. address(0) must be
-        // whitelisted for ERC20 mint/burn (_update checks both from and to).
         uint64 transferPolicyId = rl.getTransferPolicyId();
         registry.modifyPolicyWhitelist(transferPolicyId, address(0), true);
         registry.modifyPolicyWhitelist(transferPolicyId, recipient, true);
@@ -132,11 +150,9 @@ contract DeployAllE2ETest is Test, DeployAll {
         registry.modifyPolicyWhitelist(transferPolicyId, result.tokenHandler, true);
         registry.modifyPolicyWhitelist(transferPolicyId, result.tokenAuthority, true);
 
-        // Whitelist recipient on SC mint recipient policy
         uint64 scMintPolicyId = sc.getMintRecipientPolicyId();
         registry.modifyPolicyWhitelist(scMintPolicyId, recipient, true);
 
-        // Whitelist handler on RL mint recipient policy
         uint64 rlMintPolicyId = rl.getMintRecipientPolicyId();
         registry.modifyPolicyWhitelist(rlMintPolicyId, result.tokenHandler, true);
 
@@ -165,51 +181,76 @@ contract DeployAllE2ETest is Test, DeployAll {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Env Var Helpers
+                                Config Helpers
     //////////////////////////////////////////////////////////////////////////*/
 
-    function _setEnvVars(bool deployerIsAdmin) internal {
-        address deployer = address(this);
-
-        vm.setEnv("POLICY_ADMIN", vm.toString(deployer));
-        vm.setEnv("RL_NAME", "Reserve Ledger Dollar");
-        vm.setEnv("RL_SYMBOL", "RD");
-        vm.setEnv("RL_DECIMALS", "6");
-        vm.setEnv("RL_SALT_NONCE", "0");
-
-        vm.setEnv("STABLECOIN_NAME", "USD Stablecoin");
-        vm.setEnv("STABLECOIN_SYMBOL", "USDB");
-        vm.setEnv("STABLECOIN_DECIMALS", "6");
-        vm.setEnv("SC_SALT_NONCE", "2");
-
-        vm.setEnv("MINTER_ADDRESS", vm.toString(makeAddr("minter")));
-        vm.setEnv("TXN_MINT_LIMIT", "100000000000");
-        vm.setEnv("MINTER_ALLOWANCE", "999999999999999");
-
-        vm.setEnv("RL_MAX_SUPPLY", "999999999999999");
-        vm.setEnv("STABLECOIN_MAX_SUPPLY", "999999999999999");
-
-        vm.setEnv("PAUSER_ADDRESS", vm.toString(makeAddr("pauser")));
-        vm.setEnv("UNPAUSER_ADDRESS", vm.toString(makeAddr("unpauser")));
-        vm.setEnv("BLOCKED_ADDRESS_BURNER_ADDRESS", vm.toString(makeAddr("blockedBurner")));
-
-        if (deployerIsAdmin) {
-            vm.setEnv("RL_ADMIN", vm.toString(deployer));
-            vm.setEnv("STABLECOIN_ADMIN", vm.toString(deployer));
-            vm.setEnv("TOKEN_AUTHORITY_ADMIN", vm.toString(deployer));
-        } else {
-            vm.setEnv("RL_ADMIN", vm.toString(makeAddr("rlAdmin")));
-            vm.setEnv("STABLECOIN_ADMIN", vm.toString(makeAddr("scAdmin")));
-            vm.setEnv("TOKEN_AUTHORITY_ADMIN", vm.toString(makeAddr("taAdmin")));
-        }
+    function _defaultRlConfig() internal view returns (TokenConfig memory) {
+        return TokenConfig({
+            name: "Reserve Ledger Dollar",
+            symbol: "RD",
+            decimals: 6,
+            policyAdmin: address(this),
+            saltNonce: 0
+        });
     }
 
-    function _setVerifyEnvVars(DeployResult memory result) internal {
+    function _defaultScConfig() internal view returns (TokenConfig memory) {
+        return TokenConfig({
+            name: "USD Stablecoin",
+            symbol: "USDB",
+            decimals: 6,
+            policyAdmin: address(this),
+            saltNonce: 2
+        });
+    }
+
+    function _handoverConfig(bool deployerIsAdmin) internal returns (HandoverConfig memory) {
+        return HandoverConfig({
+            txnMintLimit: 100_000_000_000,
+            minterAddress: makeAddr("minter"),
+            minterAllowance: 999_999_999_999_999,
+            rlMaxSupply: 999_999_999_999_999,
+            stablecoinMaxSupply: 999_999_999_999_999,
+            pauserAddress: makeAddr("pauser"),
+            unpauserAddress: makeAddr("unpauser"),
+            blockedAddressBurnerAddress: makeAddr("blockedBurner"),
+            rlAdmin: deployerIsAdmin ? address(this) : makeAddr("rlAdmin"),
+            stablecoinAdmin: deployerIsAdmin ? address(this) : makeAddr("scAdmin"),
+            tokenAuthorityAdmin: deployerIsAdmin ? address(this) : makeAddr("taAdmin")
+        });
+    }
+
+    function _setVerifyEnvVars(DeployResult memory result, HandoverConfig memory handover)
+        internal
+    {
         vm.setEnv("AUTH_REGISTRY", vm.toString(result.authRegistry));
         vm.setEnv("RESERVE_LEDGER", vm.toString(result.reserveLedger));
         vm.setEnv("TOKEN_AUTHORITY", vm.toString(result.tokenAuthority));
         vm.setEnv("STABLECOIN", vm.toString(result.stablecoin));
         vm.setEnv("DEPLOYER_ADDRESS", vm.toString(address(this)));
+
+        // Config vars read by Verify
+        vm.setEnv("RL_NAME", "Reserve Ledger Dollar");
+        vm.setEnv("RL_SYMBOL", "RD");
+        vm.setEnv("RL_DECIMALS", "6");
+        vm.setEnv("RL_MAX_SUPPLY", vm.toString(handover.rlMaxSupply));
+        vm.setEnv("RL_ADMIN", vm.toString(handover.rlAdmin));
+
+        vm.setEnv("STABLECOIN_NAME", "USD Stablecoin");
+        vm.setEnv("STABLECOIN_SYMBOL", "USDB");
+        vm.setEnv("STABLECOIN_DECIMALS", "6");
+        vm.setEnv("STABLECOIN_MAX_SUPPLY", vm.toString(handover.stablecoinMaxSupply));
+        vm.setEnv("STABLECOIN_ADMIN", vm.toString(handover.stablecoinAdmin));
+        vm.setEnv("TOKEN_AUTHORITY_ADMIN", vm.toString(handover.tokenAuthorityAdmin));
+
+        vm.setEnv("TXN_MINT_LIMIT", vm.toString(handover.txnMintLimit));
+        vm.setEnv("MINTER_ADDRESS", vm.toString(handover.minterAddress));
+        vm.setEnv("MINTER_ALLOWANCE", vm.toString(handover.minterAllowance));
+        vm.setEnv("PAUSER_ADDRESS", vm.toString(handover.pauserAddress));
+        vm.setEnv("UNPAUSER_ADDRESS", vm.toString(handover.unpauserAddress));
+        vm.setEnv(
+            "BLOCKED_ADDRESS_BURNER_ADDRESS", vm.toString(handover.blockedAddressBurnerAddress)
+        );
     }
 
 }

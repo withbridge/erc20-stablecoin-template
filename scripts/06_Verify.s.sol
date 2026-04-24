@@ -34,7 +34,7 @@ contract Verify is Common {
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    function _run() internal override {
+    function run() public {
         address authRegistry = authRegistryAddress();
         address reserveLedger = reserveLedgerAddress();
         address tokenAuthority = tokenAuthorityAddress();

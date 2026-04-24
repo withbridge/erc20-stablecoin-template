@@ -16,36 +16,26 @@ import {
 
 contract DeployReserveLedger is Common {
 
-    function _run() internal override {
-        address authRegistry = authRegistryAddress();
-        requireDeployed(authRegistry, "AUTH_REGISTRY");
+    function run(address authRegistry, TokenConfig calldata config) public {
+        requireDeployed(authRegistry, "authRegistry");
 
-        string memory rlName = vm.envString("RL_NAME");
-        string memory rlSymbol = vm.envString("RL_SYMBOL");
-        uint8 rlDecimals = uint8(vm.envUint("RL_DECIMALS"));
-        address policyAdmin = policyAdminAddress();
-        uint96 saltNonce = uint96(vm.envUint("RL_SALT_NONCE"));
-
-        require(bytes(rlName).length != 0, "RL_NAME not set");
-        require(bytes(rlSymbol).length != 0, "RL_SYMBOL not set");
+        require(bytes(config.name).length != 0, "name is empty");
+        require(bytes(config.symbol).length != 0, "symbol is empty");
 
         vm.startBroadcast();
 
-        // Create policies in AuthRegistry
         uint64 transferPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+            .createPolicy(config.policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("Transfer policy ID:", transferPolicyId);
 
         uint64 rlMintRecipientPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+            .createPolicy(config.policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("RL mint recipient policy ID:", rlMintRecipientPolicyId);
 
-        // Deploy ReserveLedger implementation
         address rlImplementation = address(new ReserveLedger(authRegistry));
         console.log("ReserveLedger implementation:", rlImplementation);
 
-        // Deploy proxy via DeterministicProxyFactory
-        bytes32 salt = PermissionedSalt.createPermissionedSalt(msg.sender, saltNonce);
+        bytes32 salt = PermissionedSalt.createPermissionedSalt(msg.sender, config.saltNonce);
         address rlProxy = DeterministicProxyFactoryFixture.deterministicProxyOZ({
             initialProxySalt: salt,
             initialOwner: msg.sender,
@@ -53,9 +43,9 @@ contract DeployReserveLedger is Common {
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
                 (
-                    rlName,
-                    rlSymbol,
-                    rlDecimals,
+                    config.name,
+                    config.symbol,
+                    config.decimals,
                     msg.sender,
                     transferPolicyId,
                     rlMintRecipientPolicyId
@@ -67,10 +57,10 @@ contract DeployReserveLedger is Common {
 
         console.log("ReserveLedger proxy:", rlProxy);
         console.log("---");
-        console.log("Set these in .env for subsequent steps:");
-        console.log("  RESERVE_LEDGER=%s", rlProxy);
-        console.log("  TRANSFER_POLICY_ID=%d", uint256(transferPolicyId));
-        console.log("  RL_MINT_RECIPIENT_POLICY_ID=%d", uint256(rlMintRecipientPolicyId));
+        console.log("Outputs for subsequent steps:");
+        console.log("RESERVE_LEDGER=%s", rlProxy);
+        console.log("TRANSFER_POLICY_ID=%d", uint256(transferPolicyId));
+        console.log("RL_MINT_RECIPIENT_POLICY_ID=%d", uint256(rlMintRecipientPolicyId));
     }
 
 }

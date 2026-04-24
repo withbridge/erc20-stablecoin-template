@@ -17,7 +17,7 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  *         admin to the final admin addresses and renounces the deployer's roles.
  *
  *         Prerequisites: steps 01-04 must have been run with the deployer as
- *         admin (msg.sender). All contract addresses must be set in .env.
+ *         admin (msg.sender).
  *
  *         This script:
  *         1. Grants MINTER_ROLE on RL and SC to TokenAuthority
@@ -38,99 +38,99 @@ contract ConfigureAndHandover is Common {
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    function _run() internal override {
-        address rl = reserveLedgerAddress();
-        address ta = tokenAuthorityAddress();
-        address sc = stablecoinAddress();
-        requireDeployed(rl, "RESERVE_LEDGER");
-        requireDeployed(ta, "TOKEN_AUTHORITY");
-        requireDeployed(sc, "STABLECOIN");
+    function run(
+        address reserveLedger,
+        address tokenAuthority,
+        address stablecoin,
+        HandoverConfig calldata config
+    ) public {
+        requireDeployed(reserveLedger, "reserveLedger");
+        requireDeployed(tokenAuthority, "tokenAuthority");
+        requireDeployed(stablecoin, "stablecoin");
+
+        require(config.rlAdmin != address(0), "rlAdmin is zero");
+        require(config.stablecoinAdmin != address(0), "stablecoinAdmin is zero");
+        require(config.tokenAuthorityAdmin != address(0), "tokenAuthorityAdmin is zero");
 
         vm.startBroadcast();
 
-        _configureRoles(rl, ta, sc);
-        _deployHandlerAndRegister(rl, ta, sc);
-        _configureLimits(ta, sc);
-        _configureMaxSupply(rl, sc);
-        _handover(rl, ta, sc);
+        _configureRoles(reserveLedger, tokenAuthority, stablecoin, config);
+        _deployHandlerAndRegister(reserveLedger, tokenAuthority, stablecoin, config);
+        _configureLimits(tokenAuthority, stablecoin, config);
+        _configureMaxSupply(reserveLedger, stablecoin, config);
+        _handover(reserveLedger, tokenAuthority, stablecoin, config);
 
         vm.stopBroadcast();
     }
 
-    function _deployHandlerAndRegister(address rl, address ta, address sc) internal {
-        // Deploy the wrapped handler and register the stablecoin on the TokenAuthority
+    function _deployHandlerAndRegister(
+        address rl,
+        address ta,
+        address sc,
+        HandoverConfig calldata config
+    ) internal {
         address handler = address(new ReserveLedgerWrappedHandler(rl, ta));
         console.log("ReserveLedgerWrappedHandler:", handler);
 
-        // Handler needs MINTER_ROLE on RL (to mint reserve tokens) and on SC (to unwrap)
         IAccessControl(rl).grantRole(MINTER_ROLE, handler);
         IAccessControl(sc).grantRole(MINTER_ROLE, handler);
 
         IAccessControl(ta).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
-        TokenAuthority(ta).registerStablecoin(sc, handler, vm.envUint("TXN_MINT_LIMIT"));
+        TokenAuthority(ta).registerStablecoin(sc, handler, config.txnMintLimit);
         console.log("Registered stablecoin with handler on TA");
     }
 
-    function _configureRoles(address rl, address ta, address sc) internal {
-        // TokenAuthority needs MINTER_ROLE on RL and SC
+    function _configureRoles(address rl, address ta, address sc, HandoverConfig calldata config)
+        internal
+    {
         IAccessControl(rl).grantRole(MINTER_ROLE, ta);
         IAccessControl(sc).grantRole(MINTER_ROLE, ta);
 
-        // Operational roles on stablecoin
-        IAccessControl(sc).grantRole(PAUSER_ROLE, vm.envAddress("PAUSER_ADDRESS"));
-        IAccessControl(sc).grantRole(UNPAUSER_ROLE, vm.envAddress("UNPAUSER_ADDRESS"));
+        IAccessControl(sc).grantRole(PAUSER_ROLE, config.pauserAddress);
+        IAccessControl(sc).grantRole(UNPAUSER_ROLE, config.unpauserAddress);
         IAccessControl(sc)
-            .grantRole(BLOCKED_ADDRESS_BURNER_ROLE, vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS"));
+            .grantRole(BLOCKED_ADDRESS_BURNER_ROLE, config.blockedAddressBurnerAddress);
         console.log("Granted roles on RL and SC");
     }
 
-    function _configureLimits(address ta, address sc) internal {
-        // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily
+    function _configureLimits(address ta, address sc, HandoverConfig calldata config) internal {
         IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
-        TokenAuthority(ta)
-            .setMinterAllowance(sc, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE"));
+        TokenAuthority(ta).setMinterAllowance(sc, config.minterAddress, config.minterAllowance);
         console.log("Set minter allowance on TA");
     }
 
-    function _configureMaxSupply(address rl, address sc) internal {
-        StablecoinTemplateV3Base(rl).setMaxSupply(vm.envUint("RL_MAX_SUPPLY"));
-        StablecoinTemplateV3Base(sc).setMaxSupply(vm.envUint("STABLECOIN_MAX_SUPPLY"));
+    function _configureMaxSupply(address rl, address sc, HandoverConfig calldata config) internal {
+        StablecoinTemplateV3Base(rl).setMaxSupply(config.rlMaxSupply);
+        StablecoinTemplateV3Base(sc).setMaxSupply(config.stablecoinMaxSupply);
         console.log("Set max supply on RL and SC");
     }
 
-    function _handover(address rl, address ta, address sc) internal {
-        address rlAdmin = vm.envAddress("RL_ADMIN");
-        address scAdmin = vm.envAddress("STABLECOIN_ADMIN");
-        address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
+    function _handover(address rl, address ta, address sc, HandoverConfig calldata config)
+        internal
+    {
+        IAccessControl(rl).grantRole(DEFAULT_ADMIN_ROLE, config.rlAdmin);
+        StablecoinTemplateV3Base(rl).transferOwnership(config.rlAdmin);
+        console.log("RL: admin handed over to", config.rlAdmin);
 
-        require(rlAdmin != address(0), "RL_ADMIN not set");
-        require(scAdmin != address(0), "STABLECOIN_ADMIN not set");
-        require(taAdmin != address(0), "TOKEN_AUTHORITY_ADMIN not set");
+        IAccessControl(sc).grantRole(DEFAULT_ADMIN_ROLE, config.stablecoinAdmin);
+        StablecoinTemplateV3Base(sc).transferOwnership(config.stablecoinAdmin);
+        console.log("SC: admin handed over to", config.stablecoinAdmin);
 
-        // Grant admin to final addresses
-        IAccessControl(rl).grantRole(DEFAULT_ADMIN_ROLE, rlAdmin);
-        StablecoinTemplateV3Base(rl).transferOwnership(rlAdmin);
-        console.log("RL: admin handed over to", rlAdmin);
+        IAccessControl(ta).grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
+        IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, config.tokenAuthorityAdmin);
+        IAccessControl(ta)
+            .grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, config.tokenAuthorityAdmin);
+        console.log("TA: admin handed over to", config.tokenAuthorityAdmin);
 
-        IAccessControl(sc).grantRole(DEFAULT_ADMIN_ROLE, scAdmin);
-        StablecoinTemplateV3Base(sc).transferOwnership(scAdmin);
-        console.log("SC: admin handed over to", scAdmin);
-
-        IAccessControl(ta).grantRole(DEFAULT_ADMIN_ROLE, taAdmin);
-        IAccessControl(ta).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, taAdmin);
-        IAccessControl(ta).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, taAdmin);
-        console.log("TA: admin handed over to", taAdmin);
-
-        // Renounce deployer's roles (skip if deployer == final admin)
-        if (taAdmin != msg.sender) {
+        if (config.tokenAuthorityAdmin != msg.sender) {
             IAccessControl(ta).renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
             IAccessControl(ta).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
             IAccessControl(ta).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
-        if (rlAdmin != msg.sender) {
+        if (config.rlAdmin != msg.sender) {
             IAccessControl(rl).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
-        if (scAdmin != msg.sender) {
+        if (config.stablecoinAdmin != msg.sender) {
             IAccessControl(sc).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         console.log("Deployer handover complete");

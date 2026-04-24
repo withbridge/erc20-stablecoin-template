@@ -1,15 +1,37 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Script, console } from "forge-std/Script.sol";
+import { Script } from "forge-std/Script.sol";
 
 abstract contract Common is Script {
 
-    function run() public {
-        _run();
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Structs
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @dev Token deployment config shared by ReserveLedger and Stablecoin scripts.
+    struct TokenConfig {
+        string name;
+        string symbol;
+        uint8 decimals;
+        address policyAdmin;
+        uint96 saltNonce;
     }
 
-    function _run() internal virtual;
+    /// @dev Configuration and handover params for step 05.
+    struct HandoverConfig {
+        uint256 txnMintLimit;
+        address minterAddress;
+        uint256 minterAllowance;
+        uint256 rlMaxSupply;
+        uint256 stablecoinMaxSupply;
+        address pauserAddress;
+        address unpauserAddress;
+        address blockedAddressBurnerAddress;
+        address rlAdmin;
+        address stablecoinAdmin;
+        address tokenAuthorityAdmin;
+    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Prerequisite Checks
@@ -20,7 +42,7 @@ abstract contract Common is Script {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Env Var Helpers
+                                Env Var Helpers (used by 06_Verify.s.sol)
     //////////////////////////////////////////////////////////////////////////*/
 
     function authRegistryAddress() internal view returns (address) {
@@ -44,12 +66,6 @@ abstract contract Common is Script {
     function stablecoinAddress() internal view returns (address) {
         address addr = vm.envAddress("STABLECOIN");
         require(addr != address(0), "STABLECOIN not set");
-        return addr;
-    }
-
-    function policyAdminAddress() internal view returns (address) {
-        address addr = vm.envAddress("POLICY_ADMIN");
-        require(addr != address(0), "POLICY_ADMIN not set");
         return addr;
     }
 

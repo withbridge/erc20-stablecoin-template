@@ -16,35 +16,28 @@ import {
 
 contract DeployStablecoin is Common {
 
-    function _run() internal override {
-        address authRegistry = authRegistryAddress();
-        address reserveLedger = reserveLedgerAddress();
-        requireDeployed(authRegistry, "AUTH_REGISTRY");
-        requireDeployed(reserveLedger, "RESERVE_LEDGER");
+    function run(
+        address authRegistry,
+        address reserveLedger,
+        uint64 transferPolicyId,
+        TokenConfig calldata config
+    ) public {
+        requireDeployed(authRegistry, "authRegistry");
+        requireDeployed(reserveLedger, "reserveLedger");
 
-        string memory scName = vm.envString("STABLECOIN_NAME");
-        string memory scSymbol = vm.envString("STABLECOIN_SYMBOL");
-        uint8 scDecimals = uint8(vm.envUint("STABLECOIN_DECIMALS"));
-        address policyAdmin = policyAdminAddress();
-        uint64 transferPolicyId = uint64(vm.envUint("TRANSFER_POLICY_ID"));
-        uint96 saltNonce = uint96(vm.envUint("SC_SALT_NONCE"));
-
-        require(bytes(scName).length != 0, "STABLECOIN_NAME not set");
-        require(bytes(scSymbol).length != 0, "STABLECOIN_SYMBOL not set");
+        require(bytes(config.name).length != 0, "name is empty");
+        require(bytes(config.symbol).length != 0, "symbol is empty");
 
         vm.startBroadcast();
 
-        // Create stablecoin mint recipient policy
         uint64 scMintRecipientPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+            .createPolicy(config.policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         console.log("Stablecoin mint recipient policy ID:", scMintRecipientPolicyId);
 
-        // Deploy StablecoinTemplateV3 implementation
         address scImplementation = address(new StablecoinTemplateV3(reserveLedger, authRegistry));
         console.log("StablecoinTemplateV3 implementation:", scImplementation);
 
-        // Deploy proxy via DeterministicProxyFactory
-        bytes32 salt = PermissionedSalt.createPermissionedSalt(msg.sender, saltNonce);
+        bytes32 salt = PermissionedSalt.createPermissionedSalt(msg.sender, config.saltNonce);
         address scProxy = DeterministicProxyFactoryFixture.deterministicProxyOZ({
             initialProxySalt: salt,
             initialOwner: msg.sender,
@@ -52,9 +45,9 @@ contract DeployStablecoin is Common {
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
                 (
-                    scName,
-                    scSymbol,
-                    scDecimals,
+                    config.name,
+                    config.symbol,
+                    config.decimals,
                     msg.sender,
                     transferPolicyId,
                     scMintRecipientPolicyId
@@ -66,9 +59,9 @@ contract DeployStablecoin is Common {
 
         console.log("StablecoinTemplateV3 proxy:", scProxy);
         console.log("---");
-        console.log("Set these in .env for subsequent steps:");
-        console.log("  STABLECOIN=%s", scProxy);
-        console.log("  SC_MINT_RECIPIENT_POLICY_ID=%d", uint256(scMintRecipientPolicyId));
+        console.log("Outputs for subsequent steps:");
+        console.log("STABLECOIN=%s", scProxy);
+        console.log("SC_MINT_RECIPIENT_POLICY_ID=%d", uint256(scMintRecipientPolicyId));
     }
 
 }

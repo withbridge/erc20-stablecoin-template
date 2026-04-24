@@ -7,12 +7,14 @@ import { console } from "forge-std/console.sol";
 
 contract DeployAuthRegistry is Common {
 
-    function _run() internal override {
+    function run() public {
         vm.startBroadcast();
         AuthRegistry registry = new AuthRegistry{ salt: bytes32(0) }();
         vm.stopBroadcast();
 
         console.log("AuthRegistry deployed at", address(registry));
+        console.log("---");
+        console.log("Set in .env: AUTH_REGISTRY=%s", address(registry));
     }
 
 }

@@ -15,6 +15,7 @@ import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 
+import { Common } from "./Common.s.sol";
 import { PermissionedSalt } from "deterministic-proxy-factory/PermissionedSalt.sol";
 import {
     DeterministicProxyFactoryFixture
@@ -35,7 +36,7 @@ import {
  *         For additional stablecoins on an existing chain, run
  *         04_DeployStablecoin + 05_ConfigureAndHandover separately.
  */
-contract DeployAll is Script {
+contract DeployAll is Common {
 
     struct DeployResult {
         address authRegistry;
@@ -57,9 +58,13 @@ contract DeployAll is Script {
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    function run() public {
+    function run(
+        TokenConfig calldata rlConfig,
+        TokenConfig calldata scConfig,
+        HandoverConfig calldata handover
+    ) public {
         vm.startBroadcast();
-        DeployResult memory result = _execute(msg.sender);
+        DeployResult memory result = _execute(msg.sender, rlConfig, scConfig, handover);
         vm.stopBroadcast();
 
         console.log("===== Deployment Complete =====");
@@ -80,14 +85,19 @@ contract DeployAll is Script {
     /// @dev Core deployment logic, separated from run() so tests can call it
     ///      without vm.startBroadcast(). Pass the deployer address explicitly
     ///      since msg.sender semantics differ between script and test contexts.
-    function _execute(address deployer) internal returns (DeployResult memory result) {
+    function _execute(
+        address deployer,
+        TokenConfig memory rlConfig,
+        TokenConfig memory scConfig,
+        HandoverConfig memory handover
+    ) internal returns (DeployResult memory result) {
         result.authRegistry = _deployAuthRegistry();
         (result.reserveLedger, result.transferPolicyId, result.rlMintPolicyId) =
-            _deployReserveLedger(result.authRegistry, deployer);
+            _deployReserveLedger(result.authRegistry, deployer, rlConfig);
         result.tokenAuthority = _deployTokenAuthority(result.reserveLedger, deployer);
         result.tokenHandler = _deployTokenHandler(result.reserveLedger, result.tokenAuthority);
         (result.stablecoin, result.scMintPolicyId) = _deployStablecoin(
-            result.authRegistry, result.reserveLedger, result.transferPolicyId, deployer
+            result.authRegistry, result.reserveLedger, result.transferPolicyId, deployer, scConfig
         );
 
         _configure(
@@ -95,9 +105,12 @@ contract DeployAll is Script {
             result.tokenAuthority,
             result.tokenHandler,
             result.stablecoin,
-            deployer
+            deployer,
+            handover
         );
-        _handover(result.reserveLedger, result.tokenAuthority, result.stablecoin, deployer);
+        _handover(
+            result.reserveLedger, result.tokenAuthority, result.stablecoin, deployer, handover
+        );
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -110,23 +123,18 @@ contract DeployAll is Script {
         return address(registry);
     }
 
-    function _deployReserveLedger(address authRegistry, address deployer)
+    function _deployReserveLedger(address authRegistry, address deployer, TokenConfig memory config)
         internal
         returns (address rlProxy, uint64 transferPolicyId, uint64 rlMintPolicyId)
     {
-        address policyAdmin = vm.envAddress("POLICY_ADMIN");
-
         transferPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+            .createPolicy(config.policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
         rlMintPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+            .createPolicy(config.policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
 
         rlProxy = _deployProxy(
             address(new ReserveLedger(authRegistry)),
-            uint96(vm.envUint("RL_SALT_NONCE")),
-            vm.envString("RL_NAME"),
-            vm.envString("RL_SYMBOL"),
-            uint8(vm.envUint("RL_DECIMALS")),
+            config,
             transferPolicyId,
             rlMintPolicyId,
             deployer
@@ -158,19 +166,15 @@ contract DeployAll is Script {
         address authRegistry,
         address rlProxy,
         uint64 transferPolicyId,
-        address deployer
+        address deployer,
+        TokenConfig memory config
     ) internal returns (address scProxy, uint64 scMintPolicyId) {
-        address policyAdmin = vm.envAddress("POLICY_ADMIN");
-
         scMintPolicyId = AuthRegistry(authRegistry)
-            .createPolicy(policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
+            .createPolicy(config.policyAdmin, IAuthRegistry.PolicyType.WHITELIST);
 
         scProxy = _deployProxy(
             address(new StablecoinTemplateV3(rlProxy, authRegistry)),
-            uint96(vm.envUint("SC_SALT_NONCE")),
-            vm.envString("STABLECOIN_NAME"),
-            vm.envString("STABLECOIN_SYMBOL"),
-            uint8(vm.envUint("STABLECOIN_DECIMALS")),
+            config,
             transferPolicyId,
             scMintPolicyId,
             deployer
@@ -180,22 +184,26 @@ contract DeployAll is Script {
 
     function _deployProxy(
         address implementation,
-        uint96 saltNonce,
-        string memory name,
-        string memory symbol,
-        uint8 decimals,
+        TokenConfig memory config,
         uint64 transferPolicyId,
         uint64 mintRecipientPolicyId,
         address deployer
     ) internal returns (address proxy) {
-        bytes32 salt = PermissionedSalt.createPermissionedSalt(deployer, saltNonce);
+        bytes32 salt = PermissionedSalt.createPermissionedSalt(deployer, config.saltNonce);
         proxy = DeterministicProxyFactoryFixture.deterministicProxyOZ({
             initialProxySalt: salt,
             initialOwner: deployer,
             implementation: implementation,
             callData: abi.encodeCall(
                 StablecoinTemplateV3Base.reinitialize,
-                (name, symbol, decimals, deployer, transferPolicyId, mintRecipientPolicyId)
+                (
+                    config.name,
+                    config.symbol,
+                    config.decimals,
+                    deployer,
+                    transferPolicyId,
+                    mintRecipientPolicyId
+                )
             )
         });
     }
@@ -209,12 +217,13 @@ contract DeployAll is Script {
         address taProxy,
         address handler,
         address scProxy,
-        address deployer
+        address deployer,
+        HandoverConfig memory handover
     ) internal {
-        _configureRoles(rlProxy, taProxy, scProxy);
-        _registerStablecoin(rlProxy, taProxy, handler, scProxy, deployer);
-        _configureLimits(taProxy, scProxy, deployer);
-        _configureMaxSupply(rlProxy, scProxy);
+        _configureRoles(rlProxy, taProxy, scProxy, handover);
+        _registerStablecoin(rlProxy, taProxy, handler, scProxy, deployer, handover);
+        _configureLimits(taProxy, scProxy, deployer, handover);
+        _configureMaxSupply(rlProxy, scProxy, handover);
     }
 
     function _registerStablecoin(
@@ -222,43 +231,50 @@ contract DeployAll is Script {
         address taProxy,
         address handler,
         address scProxy,
-        address deployer
+        address deployer,
+        HandoverConfig memory handover
     ) internal {
-        // Handler needs MINTER_ROLE on RL (to mint reserve tokens) and on SC (to unwrap)
         IAccessControl(rlProxy).grantRole(MINTER_ROLE, handler);
         IAccessControl(scProxy).grantRole(MINTER_ROLE, handler);
 
         IAccessControl(taProxy).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);
-        TokenAuthority(taProxy).registerStablecoin(scProxy, handler, vm.envUint("TXN_MINT_LIMIT"));
+        TokenAuthority(taProxy).registerStablecoin(scProxy, handler, handover.txnMintLimit);
         console.log("Registered stablecoin with handler on TA");
     }
 
-    function _configureRoles(address rlProxy, address taProxy, address scProxy) internal {
-        // TokenAuthority needs MINTER_ROLE on RL and SC
+    function _configureRoles(
+        address rlProxy,
+        address taProxy,
+        address scProxy,
+        HandoverConfig memory handover
+    ) internal {
         IAccessControl(rlProxy).grantRole(MINTER_ROLE, taProxy);
         IAccessControl(scProxy).grantRole(MINTER_ROLE, taProxy);
 
-        // Operational roles on stablecoin
-        IAccessControl(scProxy).grantRole(PAUSER_ROLE, vm.envAddress("PAUSER_ADDRESS"));
-        IAccessControl(scProxy).grantRole(UNPAUSER_ROLE, vm.envAddress("UNPAUSER_ADDRESS"));
+        IAccessControl(scProxy).grantRole(PAUSER_ROLE, handover.pauserAddress);
+        IAccessControl(scProxy).grantRole(UNPAUSER_ROLE, handover.unpauserAddress);
         IAccessControl(scProxy)
-            .grantRole(BLOCKED_ADDRESS_BURNER_ROLE, vm.envAddress("BLOCKED_ADDRESS_BURNER_ADDRESS"));
+            .grantRole(BLOCKED_ADDRESS_BURNER_ROLE, handover.blockedAddressBurnerAddress);
         console.log("Granted roles on RL and SC");
     }
 
-    function _configureLimits(address taProxy, address scProxy, address deployer) internal {
-        // Deployer grants itself MINT_RATE_LIMIT_SETTER_ROLE temporarily to set limits
+    function _configureLimits(
+        address taProxy,
+        address scProxy,
+        address deployer,
+        HandoverConfig memory handover
+    ) internal {
         IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer);
         TokenAuthority(taProxy)
-            .setMinterAllowance(
-                scProxy, vm.envAddress("MINTER_ADDRESS"), vm.envUint("MINTER_ALLOWANCE")
-            );
+            .setMinterAllowance(scProxy, handover.minterAddress, handover.minterAllowance);
         console.log("Set minter allowance on TA");
     }
 
-    function _configureMaxSupply(address rlProxy, address scProxy) internal {
-        StablecoinTemplateV3Base(rlProxy).setMaxSupply(vm.envUint("RL_MAX_SUPPLY"));
-        StablecoinTemplateV3Base(scProxy).setMaxSupply(vm.envUint("STABLECOIN_MAX_SUPPLY"));
+    function _configureMaxSupply(address rlProxy, address scProxy, HandoverConfig memory handover)
+        internal
+    {
+        StablecoinTemplateV3Base(rlProxy).setMaxSupply(handover.rlMaxSupply);
+        StablecoinTemplateV3Base(scProxy).setMaxSupply(handover.stablecoinMaxSupply);
         console.log("Set max supply on RL and SC");
     }
 
@@ -266,41 +282,36 @@ contract DeployAll is Script {
                                     Handover
     //////////////////////////////////////////////////////////////////////////*/
 
-    function _handover(address rlProxy, address taProxy, address scProxy, address deployer)
-        internal
-    {
-        address rlAdmin = vm.envAddress("RL_ADMIN");
-        address scAdmin = vm.envAddress("STABLECOIN_ADMIN");
-        address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
+    function _handover(
+        address rlProxy,
+        address taProxy,
+        address scProxy,
+        address deployer,
+        HandoverConfig memory handover
+    ) internal {
+        IAccessControl(rlProxy).grantRole(DEFAULT_ADMIN_ROLE, handover.rlAdmin);
+        StablecoinTemplateV3Base(rlProxy).transferOwnership(handover.rlAdmin);
+        console.log("RL: granted DEFAULT_ADMIN_ROLE and ownership to", handover.rlAdmin);
 
-        require(rlAdmin != address(0), "RL_ADMIN not set");
-        require(scAdmin != address(0), "STABLECOIN_ADMIN not set");
-        require(taAdmin != address(0), "TOKEN_AUTHORITY_ADMIN not set");
+        IAccessControl(scProxy).grantRole(DEFAULT_ADMIN_ROLE, handover.stablecoinAdmin);
+        StablecoinTemplateV3Base(scProxy).transferOwnership(handover.stablecoinAdmin);
+        console.log("SC: granted DEFAULT_ADMIN_ROLE and ownership to", handover.stablecoinAdmin);
 
-        // -- Grant admin to final addresses --
-        IAccessControl(rlProxy).grantRole(DEFAULT_ADMIN_ROLE, rlAdmin);
-        StablecoinTemplateV3Base(rlProxy).transferOwnership(rlAdmin);
-        console.log("RL: granted DEFAULT_ADMIN_ROLE and ownership to", rlAdmin);
+        IAccessControl(taProxy).grantRole(DEFAULT_ADMIN_ROLE, handover.tokenAuthorityAdmin);
+        IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, handover.tokenAuthorityAdmin);
+        IAccessControl(taProxy)
+            .grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, handover.tokenAuthorityAdmin);
+        console.log("TA: granted admin roles to", handover.tokenAuthorityAdmin);
 
-        IAccessControl(scProxy).grantRole(DEFAULT_ADMIN_ROLE, scAdmin);
-        StablecoinTemplateV3Base(scProxy).transferOwnership(scAdmin);
-        console.log("SC: granted DEFAULT_ADMIN_ROLE and ownership to", scAdmin);
-
-        IAccessControl(taProxy).grantRole(DEFAULT_ADMIN_ROLE, taAdmin);
-        IAccessControl(taProxy).grantRole(MINT_RATE_LIMIT_SETTER_ROLE, taAdmin);
-        IAccessControl(taProxy).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, taAdmin);
-        console.log("TA: granted admin roles to", taAdmin);
-
-        // -- Renounce deployer's roles (skip if deployer == final admin) --
-        if (taAdmin != deployer) {
+        if (handover.tokenAuthorityAdmin != deployer) {
             IAccessControl(taProxy).renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);
             IAccessControl(taProxy).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, deployer);
             IAccessControl(taProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }
-        if (rlAdmin != deployer) {
+        if (handover.rlAdmin != deployer) {
             IAccessControl(rlProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }
-        if (scAdmin != deployer) {
+        if (handover.stablecoinAdmin != deployer) {
             IAccessControl(scProxy).renounceRole(DEFAULT_ADMIN_ROLE, deployer);
         }
         console.log("Deployer handover complete");

@@ -9,9 +9,8 @@ import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
 contract DeployTokenAuthority is Common {
 
-    function _run() internal override {
-        address reserveLedger = reserveLedgerAddress();
-        requireDeployed(reserveLedger, "RESERVE_LEDGER");
+    function run(address reserveLedger) public {
+        requireDeployed(reserveLedger, "reserveLedger");
 
         vm.startBroadcast();
 
