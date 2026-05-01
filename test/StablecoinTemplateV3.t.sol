@@ -724,3 +724,486 @@ contract StablecoinTemplateV3SampleUpgradeTest is Test {
     }
 
 }
+
+contract StablecoinTemplateV3EIP3009Test is Test, StablecoinTemplateV3ErrorsAndEvents {
+
+    // Re-declare the EIP-3009 events so we can use vm.expectEmit
+    event AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce);
+    event AuthorizationCanceled(address indexed authorizer, bytes32 indexed nonce);
+
+    // Re-declare the EIP-3009 errors so we can use abi.encodeWithSelector
+    error EIP3009AuthorizationAlreadyUsed(address authorizer, bytes32 nonce);
+    error EIP3009AuthorizationNotYetValid(uint256 validAfter);
+    error EIP3009AuthorizationExpired(uint256 validBefore);
+    error EIP3009InvalidSignature();
+    error EIP3009InvalidCaller(address expected, address actual);
+
+    bytes32 constant TRANSFER_WITH_AUTHORIZATION_TYPEHASH = keccak256(
+        "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
+    bytes32 constant RECEIVE_WITH_AUTHORIZATION_TYPEHASH = keccak256(
+        "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
+    bytes32 constant CANCEL_AUTHORIZATION_TYPEHASH =
+        keccak256("CancelAuthorization(address authorizer,bytes32 nonce)");
+
+    StablecoinTemplateV3 token;
+    ReserveLedger reserveLedger;
+    AuthRegistry authRegistry;
+
+    address admin;
+    address minter;
+    address recipient;
+    uint64 transferPolicyId;
+    uint64 mintRecipientPolicyId;
+
+    uint256 senderPk = uint256(keccak256("eip3009-sender"));
+    address sender;
+
+    function setUp() public {
+        admin = address(this);
+        sender = vm.addr(senderPk);
+        minter = makeAddr("eip3009-minter");
+        recipient = makeAddr("eip3009-recipient");
+
+        authRegistry = new AuthRegistry();
+        transferPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.BLACKLIST);
+        mintRecipientPolicyId = authRegistry.createPolicy(admin, IAuthRegistry.PolicyType.WHITELIST);
+
+        address reserveLedgerImplementation = address(new ReserveLedger(address(authRegistry)));
+        reserveLedger = ReserveLedger(
+            DeterministicProxyFactoryFixture.deterministicProxyOZ({
+                initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 5),
+                initialOwner: address(this),
+                implementation: reserveLedgerImplementation,
+                callData: abi.encodeCall(
+                    StablecoinTemplateV3Base.reinitialize,
+                    (
+                        "Test Reserve",
+                        "TR",
+                        6,
+                        address(this),
+                        transferPolicyId,
+                        mintRecipientPolicyId
+                    )
+                )
+            })
+        );
+        reserveLedger.setTransferPolicyId(transferPolicyId);
+        reserveLedger.setMintRecipientPolicyId(mintRecipientPolicyId);
+
+        address implementation =
+            address(new StablecoinTemplateV3(address(reserveLedger), address(authRegistry)));
+        token = StablecoinTemplateV3(
+            DeterministicProxyFactoryFixture.deterministicProxyOZ({
+                initialProxySalt: PermissionedSalt.createPermissionedSalt(address(this), 6),
+                initialOwner: address(this),
+                implementation: implementation,
+                callData: abi.encodeCall(
+                    StablecoinTemplateV3Base.reinitialize,
+                    ("Test Coin", "TC", 6, address(this), transferPolicyId, mintRecipientPolicyId)
+                )
+            })
+        );
+        token.setTransferPolicyId(transferPolicyId);
+
+        // whitelist who can receive minted/wrapped tokens
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, sender, true);
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, recipient, true);
+        authRegistry.modifyPolicyWhitelist(mintRecipientPolicyId, minter, true);
+
+        // grant roles
+        token.grantRole(token.MINTER_ROLE(), minter);
+
+        // seed sender with token balance via wrap()
+        reserveLedger.setMaxSupply(1000);
+        reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), admin);
+        reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), address(token));
+        reserveLedger.mint(minter, 1000);
+        vm.startPrank(minter);
+        reserveLedger.approve(address(token), 1000);
+        token.wrap(sender, 500);
+        vm.stopPrank();
+
+        // Move to a deterministic timestamp so that `block.timestamp - 1` and similar
+        // bounds are non-zero in tests.
+        vm.warp(1000);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                  Helpers
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function _signAuthorization(
+        uint256 pk,
+        bytes32 typeHash,
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce
+    ) internal view returns (uint8 v, bytes32 r, bytes32 s) {
+        bytes32 structHash = keccak256(
+            abi.encode(typeHash, from, to, value, validAfter, validBefore, nonce)
+        );
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
+        (v, r, s) = vm.sign(pk, digest);
+    }
+
+    function _signCancel(uint256 pk, address authorizer, bytes32 nonce)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 structHash = keccak256(abi.encode(CANCEL_AUTHORIZATION_TYPEHASH, authorizer, nonce));
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
+        (v, r, s) = vm.sign(pk, digest);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                  Typehashes
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_typehashes_match_eip3009_spec() public view {
+        assertEq(token.TRANSFER_WITH_AUTHORIZATION_TYPEHASH(), TRANSFER_WITH_AUTHORIZATION_TYPEHASH);
+        assertEq(token.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(), RECEIVE_WITH_AUTHORIZATION_TYPEHASH);
+        assertEq(token.CANCEL_AUTHORIZATION_TYPEHASH(), CANCEL_AUTHORIZATION_TYPEHASH);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            transferWithAuthorization
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_transferWithAuthorization_success() public {
+        bytes32 nonce = bytes32(uint256(1));
+        uint256 validAfter = 0;
+        uint256 validBefore = type(uint256).max;
+        uint256 value = 100;
+
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            value,
+            validAfter,
+            validBefore,
+            nonce
+        );
+
+        assertFalse(token.authorizationState(sender, nonce));
+
+        vm.expectEmit(true, true, true, true);
+        emit AuthorizationUsed(sender, nonce);
+        token.transferWithAuthorization(
+            sender, recipient, value, validAfter, validBefore, nonce, v, r, s
+        );
+
+        assertEq(token.balanceOf(sender), 400);
+        assertEq(token.balanceOf(recipient), 100);
+        assertTrue(token.authorizationState(sender, nonce));
+    }
+
+    function test_transferWithAuthorization_callable_by_anyone() public {
+        bytes32 nonce = bytes32(uint256(2));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            50,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        // A random relayer submits the transaction
+        address relayer = makeAddr("relayer");
+        vm.prank(relayer);
+        token.transferWithAuthorization(sender, recipient, 50, 0, type(uint256).max, nonce, v, r, s);
+
+        assertEq(token.balanceOf(recipient), 50);
+    }
+
+    function test_transferWithAuthorization_revert_not_yet_valid() public {
+        uint256 validAfter = block.timestamp + 100;
+        uint256 validBefore = type(uint256).max;
+        bytes32 nonce = bytes32(uint256(3));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            validAfter,
+            validBefore,
+            nonce
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(EIP3009AuthorizationNotYetValid.selector, validAfter)
+        );
+        token.transferWithAuthorization(
+            sender, recipient, 100, validAfter, validBefore, nonce, v, r, s
+        );
+    }
+
+    function test_transferWithAuthorization_revert_expired() public {
+        uint256 validAfter = 0;
+        // strict less-than means equal counts as expired
+        uint256 validBefore = block.timestamp;
+        bytes32 nonce = bytes32(uint256(4));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            validAfter,
+            validBefore,
+            nonce
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(EIP3009AuthorizationExpired.selector, validBefore));
+        token.transferWithAuthorization(
+            sender, recipient, 100, validAfter, validBefore, nonce, v, r, s
+        );
+    }
+
+    function test_transferWithAuthorization_revert_already_used() public {
+        bytes32 nonce = bytes32(uint256(5));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        token.transferWithAuthorization(
+            sender, recipient, 100, 0, type(uint256).max, nonce, v, r, s
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(EIP3009AuthorizationAlreadyUsed.selector, sender, nonce)
+        );
+        token.transferWithAuthorization(
+            sender, recipient, 100, 0, type(uint256).max, nonce, v, r, s
+        );
+    }
+
+    function test_transferWithAuthorization_revert_invalid_signer() public {
+        // Sign with a different key but claim it came from `sender`
+        uint256 wrongPk = uint256(keccak256("wrong-key"));
+        bytes32 nonce = bytes32(uint256(6));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            wrongPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(EIP3009InvalidSignature.selector));
+        token.transferWithAuthorization(
+            sender, recipient, 100, 0, type(uint256).max, nonce, v, r, s
+        );
+    }
+
+    function test_transferWithAuthorization_revert_tampered_value() public {
+        bytes32 nonce = bytes32(uint256(7));
+        // Sign for value=10 but try to call with value=11 -> recovered signer != sender
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            10,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(EIP3009InvalidSignature.selector));
+        token.transferWithAuthorization(sender, recipient, 11, 0, type(uint256).max, nonce, v, r, s);
+    }
+
+    function test_transferWithAuthorization_revert_when_sender_blocked() public {
+        bytes32 nonce = bytes32(uint256(8));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        vm.prank(admin);
+        authRegistry.modifyPolicyBlacklist(transferPolicyId, sender, true);
+
+        vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
+        token.transferWithAuthorization(
+            sender, recipient, 100, 0, type(uint256).max, nonce, v, r, s
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            receiveWithAuthorization
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_receiveWithAuthorization_success() public {
+        bytes32 nonce = bytes32(uint256(20));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            RECEIVE_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            75,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        vm.prank(recipient);
+        vm.expectEmit(true, true, true, true);
+        emit AuthorizationUsed(sender, nonce);
+        token.receiveWithAuthorization(sender, recipient, 75, 0, type(uint256).max, nonce, v, r, s);
+
+        assertEq(token.balanceOf(sender), 425);
+        assertEq(token.balanceOf(recipient), 75);
+        assertTrue(token.authorizationState(sender, nonce));
+    }
+
+    function test_receiveWithAuthorization_revert_when_caller_is_not_payee() public {
+        bytes32 nonce = bytes32(uint256(21));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            RECEIVE_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            75,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        address frontRunner = makeAddr("frontRunner");
+        vm.prank(frontRunner);
+        vm.expectRevert(
+            abi.encodeWithSelector(EIP3009InvalidCaller.selector, recipient, frontRunner)
+        );
+        token.receiveWithAuthorization(sender, recipient, 75, 0, type(uint256).max, nonce, v, r, s);
+    }
+
+    function test_receiveWithAuthorization_revert_with_transfer_typehash_signature() public {
+        // Signature created using TRANSFER_WITH_AUTHORIZATION typehash should not be valid
+        // for receiveWithAuthorization (different domain of authorization).
+        bytes32 nonce = bytes32(uint256(22));
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            10,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        vm.prank(recipient);
+        vm.expectRevert(abi.encodeWithSelector(EIP3009InvalidSignature.selector));
+        token.receiveWithAuthorization(sender, recipient, 10, 0, type(uint256).max, nonce, v, r, s);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            cancelAuthorization
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_cancelAuthorization_success() public {
+        bytes32 nonce = bytes32(uint256(30));
+        (uint8 v, bytes32 r, bytes32 s) = _signCancel(senderPk, sender, nonce);
+
+        vm.expectEmit(true, true, true, true);
+        emit AuthorizationCanceled(sender, nonce);
+        token.cancelAuthorization(sender, nonce, v, r, s);
+
+        assertTrue(token.authorizationState(sender, nonce));
+    }
+
+    function test_cancelAuthorization_blocks_subsequent_transfer() public {
+        bytes32 nonce = bytes32(uint256(31));
+
+        // Sign a future transfer authorization
+        (uint8 tv, bytes32 tr, bytes32 ts_) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            0,
+            type(uint256).max,
+            nonce
+        );
+
+        // Cancel before it's used
+        (uint8 cv, bytes32 cr, bytes32 cs) = _signCancel(senderPk, sender, nonce);
+        token.cancelAuthorization(sender, nonce, cv, cr, cs);
+
+        // Now the transfer should fail
+        vm.expectRevert(
+            abi.encodeWithSelector(EIP3009AuthorizationAlreadyUsed.selector, sender, nonce)
+        );
+        token.transferWithAuthorization(
+            sender, recipient, 100, 0, type(uint256).max, nonce, tv, tr, ts_
+        );
+    }
+
+    function test_cancelAuthorization_revert_already_used() public {
+        bytes32 nonce = bytes32(uint256(32));
+
+        // Use the authorization first
+        (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(
+            senderPk,
+            TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+            sender,
+            recipient,
+            100,
+            0,
+            type(uint256).max,
+            nonce
+        );
+        token.transferWithAuthorization(
+            sender, recipient, 100, 0, type(uint256).max, nonce, v, r, s
+        );
+
+        // Cancel should now fail
+        (uint8 cv, bytes32 cr, bytes32 cs) = _signCancel(senderPk, sender, nonce);
+        vm.expectRevert(
+            abi.encodeWithSelector(EIP3009AuthorizationAlreadyUsed.selector, sender, nonce)
+        );
+        token.cancelAuthorization(sender, nonce, cv, cr, cs);
+    }
+
+    function test_cancelAuthorization_revert_invalid_signer() public {
+        bytes32 nonce = bytes32(uint256(33));
+        // Sign with the wrong key
+        uint256 wrongPk = uint256(keccak256("not-the-sender"));
+        (uint8 v, bytes32 r, bytes32 s) = _signCancel(wrongPk, sender, nonce);
+
+        vm.expectRevert(abi.encodeWithSelector(EIP3009InvalidSignature.selector));
+        token.cancelAuthorization(sender, nonce, v, r, s);
+    }
+
+}
