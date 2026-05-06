@@ -143,8 +143,8 @@ Simplest handler - no collateral management.
 |-----------|----------|
 | `mint` | Direct mint on stablecoin |
 | `burn` | Direct burn on stablecoin |
-| `wrap` | Reverts with `NotSupported()` |
-| `unwrap` | Reverts with `NotSupported()` |
+| `wrap` | Reverts with `NotSupported()` (`0xa0387940`) |
+| `unwrap` | Reverts with `NotSupported()` (`0xa0387940`) |
 
 ---
 
@@ -208,23 +208,61 @@ Pre-approves the controller for unlimited transfers on deployment.
 
 ## Custom Errors
 
-```solidity
-// Stablecoin errors
-error AddressBlocked();
-error MaxSupplyExceeded();
-error AccountNotValidRecipient();
-error AmountCannotBeZero();
-error ReserveLedgerBalanceMismatch();
-error MintingNotAllowed();
+Each error's 4-byte selector is the first four bytes of `keccak256` over its canonical signature. Use these to decode revert data off-chain.
 
-// TokenAuthority errors
-error MinterAllowanceExceeded();
-error MintTxnLimitExceeded();
-error StablecoinNotRegistered();
-error StablecoinAlreadyRegistered();
-error InvalidHandler();
+### Stablecoin (`StablecoinTemplateV3` / `ReserveLedger`)
 
-// Handler errors
-error OnlyTokenAuthority();
-error NotSupported();
-```
+Defined in `src/v3/StablecoinTemplateV3ErrorsAndEvents.sol`.
+
+| Selector | Error | Meaning |
+|----------|-------|---------|
+| `0xae170cc2` | `AddressBlocked()` | Sender or recipient is blocked by the auth registry |
+| `0xd92e233d` | `ZeroAddress()` | A required address argument is the zero address |
+| `0x8a164f63` | `MaxSupplyExceeded()` | Mint would push total supply above `_maxSupply` |
+| `0xd5959b7a` | `AccountNotValidRecipient()` | Recipient fails the mint-recipient policy check |
+| `0xbe692e78` | `AddressIsNotBlocked()` | `burnFromBlockedAddress` called on a non-blocked address |
+| `0x810b516e` | `NoBalanceToBurn()` | `burnFromBlockedAddress` called on an address with zero balance |
+| `0xfaa10c8f` | `MaxSupplyMustBeGreaterThanOrEqualToTotalSupply()` | `setMaxSupply` would drop max below current supply |
+| `0x9f651e5f` | `CannotRevokeLastAdminRole()` | Attempt to revoke the only `DEFAULT_ADMIN_ROLE` holder |
+| `0xde195716` | `OnlyOwnerOrAdmin()` | Caller is neither owner nor admin |
+| `0x271bb77f` | `ReserveLedgerBalanceMismatch()` | Reserve ledger balance does not equal total supply at migration |
+| `0x401d2707` | `MigrationToWrappedCompleted()` | Operation disabled after migration to wrapped is complete |
+| `0xd0c95e80` | `MigrationToWrappedNotCompleted()` | Operation requires migration to wrapped to be complete |
+| `0xd11b25af` | `AmountCannotBeZero()` | Zero amount passed to a mint/burn/wrap/unwrap operation |
+
+### TokenAuthority (`ITokenAuthority`)
+
+Defined in `src/tokenAuthority/ITokenAuthority.sol`.
+
+| Selector | Error | Meaning |
+|----------|-------|---------|
+| `0xe4d2551c` | `MintTxnLimitExceeded()` | Mint amount exceeds the configured per-transaction limit |
+| `0xec408451` | `MinterAllowanceExceeded()` | Mint amount exceeds caller's remaining minter allowance |
+| `0x7b55d08d` | `CannotUnwrapReserveLedgerToken()` | The reserve ledger token cannot itself be unwrapped |
+| `0xd11b25af` | `AmountCannotBeZero()` | Zero amount passed to an authority operation |
+| `0x643687f2` | `AmountExceedsAbsoluteMax()` | Amount exceeds the absolute maximum allowed |
+| `0x271bb77f` | `ReserveLedgerBalanceMismatch()` | Reserve ledger balance does not match expected value |
+| `0x49e9bedc` | `TokenHandlerNotSet()` | No token handler is configured for the stablecoin |
+| `0x49cb9bfc` | `StablecoinNotRegistered()` | Stablecoin is not registered with the authority |
+| `0xd92e233d` | `ZeroAddress()` | A required address argument is the zero address |
+| `0x343578d7` | `InvalidTokenHandler()` | Provided handler does not implement `ITokenHandler` |
+| `0x4dfaba25` | `StablecoinAlreadyRegistered()` | Stablecoin is already registered with the authority |
+
+### Token Handlers (`ITokenHandler` and implementations)
+
+Defined in `src/tokenAuthority/tokenHandler/`.
+
+| Selector | Error | Source | Meaning |
+|----------|-------|--------|---------|
+| `0xc3b27173` | `OnlyTokenAuthority()` | `ITokenHandler` | Caller is not the configured `TOKEN_AUTHORITY` |
+| `0xd92e233d` | `ZeroAddress()` | `ITokenHandler` | A required address argument is the zero address |
+| `0xa0387940` | `NotSupported()` | `SingleTokenHandler` | `wrap`/`unwrap` invoked on a non-collateralized handler |
+| `0x522954b5` | `ReserveStoreNotFound()` | `ReserveLedgerBackedHandler` | No `ReserveStore` exists for the given stablecoin |
+
+### ReserveStore
+
+Defined in `src/reserveStore/ReserveStore.sol`.
+
+| Selector | Error | Meaning |
+|----------|-------|---------|
+| `0xd92e233d` | `ZeroAddress()` | A required address argument is the zero address |
