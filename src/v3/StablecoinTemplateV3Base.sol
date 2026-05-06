@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { EIP3009Upgradeable } from "./EIP3009Upgradeable.sol";
 import { StablecoinTemplateV3ErrorsAndEvents } from "./StablecoinTemplateV3ErrorsAndEvents.sol";
 
 import {
@@ -40,6 +41,7 @@ abstract contract StablecoinTemplateV3Base is
     OwnableUpgradeable,
     AccessControlEnumerableUpgradeable,
     ERC20PermitUpgradeable,
+    EIP3009Upgradeable,
     UUPSUpgradeable,
     StablecoinTemplateV3ErrorsAndEvents
 {
