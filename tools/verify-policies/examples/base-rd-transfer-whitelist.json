@@ -1,0 +1,18 @@
+{
+  "name": "Base RD Transfer Whitelist",
+  "rpc_url": "https://base-mainnet.g.alchemy.com/v2/MVPL4twApnl8nDOAiK4BHH19Y9ef7Zx_",
+  "chain_id": 8453,
+  "auth_registry": "0x73531Fc88a2A537C668F17cd1B1117C45C15185D",
+  "token": "0xd155f0ddc9586233BD554588AeeAA544f13d7A76",
+  "policy_type": "transfer",
+  "expected_addresses": [
+    "0x0000000000000000000000000000000000000000",
+    "0x05dec3e8d1b2dc6670d981a3c58a9ee41f243894",
+    "0x2e35045e37f7fc9f02eba7018981e14a3211dbf1",
+    "0x73b5d86deae56497f852fd79dd6fe68c7270fb6b",
+    "0x9fbf6bb2a85f849b58d0f8fb76b3ba4a713c7d61",
+    "0xcd7d9963a935970b434b30d3c4f2b30152f876c3",
+    "0xdb8eba382b18eb395985192337fd62c34f495114",
+    "0xec75b48a4c5663441e29b19fe2cd13b93adefbe7"
+  ]
+}
