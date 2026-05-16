@@ -1,10 +1,5 @@
 {
-  "name": "Base OFAC Blacklist (from monorail RestrictedAddress)",
-  "rpc_url": "https://base-mainnet.g.alchemy.com/v2/MVPL4twApnl8nDOAiK4BHH19Y9ef7Zx_",
-  "chain_id": 8453,
-  "auth_registry": "0x73531Fc88a2A537C668F17cd1B1117C45C15185D",
-  "token": "0x73b5d86deae56497f852fd79dd6fe68c7270fb6b",
-  "policy_type": "transfer",
+  "name": "OFAC Blacklist — All EVM Chains",
   "expected_addresses": [
     "0x0330070fd38ec3bb94f58fa55d40368271e9e54a",
     "0x04dba1194ee10112fe6c3207c0687def0e78bacf",
@@ -89,5 +84,66 @@
     "0xfb3eff152ea55d1bfa04dbdd509a80fd7b72cdeb",
     "0xfda1ec4a6178d4916b001a065422d31ebe5f62ff",
     "0xfec8a60023265364d066a1212fde3930f6ae8da7"
+  ],
+  "chains": [
+    {
+      "name": "Base",
+      "rpc_url": "https://base-mainnet.g.alchemy.com/v2/MVPL4twApnl8nDOAiK4BHH19Y9ef7Zx_",
+      "chain_id": 8453,
+      "auth_registry": "0x73531Fc88a2A537C668F17cd1B1117C45C15185D",
+      "tokens": [
+        { "address": "0x73b5d86deae56497f852fd79dd6fe68c7270fb6b", "policy_type": "transfer" },
+        { "address": "0x2E35045E37F7Fc9F02EBA7018981e14a3211dbf1", "policy_type": "transfer" },
+        { "address": "0x05Dec3e8D1B2dC6670D981A3c58A9eE41F243894", "policy_type": "transfer" }
+      ]
+    },
+    {
+      "name": "Ethereum",
+      "rpc_url": "https://ethereum-rpc.publicnode.com",
+      "chain_id": 1,
+      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "tokens": [
+      ]
+    },
+    {
+      "name": "Optimism",
+      "rpc_url": "https://mainnet.optimism.io",
+      "chain_id": 10,
+      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "tokens": [
+      ]
+    },
+    {
+      "name": "Arbitrum",
+      "rpc_url": "https://arb1.arbitrum.io/rpc",
+      "chain_id": 42161,
+      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "tokens": [
+      ]
+    },
+    {
+      "name": "Linea",
+      "rpc_url": "https://rpc.linea.build",
+      "chain_id": 59144,
+      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "tokens": [
+      ]
+    },
+    {
+      "name": "Abstract",
+      "rpc_url": "https://api.mainnet.abs.xyz",
+      "chain_id": 2741,
+      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "tokens": [
+      ]
+    },
+    {
+      "name": "Monad",
+      "rpc_url": "https://rpc.monad.xyz",
+      "chain_id": 10143,
+      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "tokens": [
+      ]
+    }
   ]
 }
