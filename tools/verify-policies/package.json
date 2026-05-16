@@ -1,0 +1,17 @@
+{
+  "name": "verify-policies",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Verify that intended blacklist/whitelist addresses are correctly enforced on-chain for a given token.",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
