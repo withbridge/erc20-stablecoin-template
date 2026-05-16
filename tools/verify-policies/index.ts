@@ -3,6 +3,8 @@ import {
   http,
   parseAbi,
   getAddress,
+  encodeFunctionData,
+  decodeFunctionResult,
   type Address,
   type PublicClient,
 } from 'viem'
@@ -54,6 +56,48 @@ const registryAbi = parseAbi([
   'function policyData(uint64 policyId) view returns (uint8 policyType, address admin, uint64 parentPolicyId, bool parentPolicyIdIsSet)',
   'function isAuthorized(uint64 policyId, address user) view returns (bool)',
 ])
+
+const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11' as Address
+const multicall3Abi = parseAbi([
+  'function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])',
+])
+
+type Multicall3Call = { target: Address; allowFailure: boolean; callData: `0x${string}` }
+type Multicall3Result = readonly { success: boolean; returnData: `0x${string}` }[]
+
+async function rawMulticall3(client: PublicClient, calls: Multicall3Call[]): Promise<Multicall3Result> {
+  return client.readContract({
+    address: MULTICALL3,
+    abi: multicall3Abi,
+    functionName: 'aggregate3',
+    args: [calls],
+  }) as Promise<Multicall3Result>
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 5, baseDelay = 2000): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn()
+    } catch (err: any) {
+      if (attempt === retries) {
+        const msg = err?.shortMessage ?? err?.message ?? String(err)
+        console.error(`  ✗ RPC error (giving up after ${retries} retries): ${msg}`)
+        throw err
+      }
+      const delay = baseDelay * 2 ** attempt
+      const msg = err?.shortMessage ?? err?.message ?? String(err)
+      const details = err?.details ?? ''
+      console.log(`  ⟳ RPC error (attempt ${attempt + 1}/${retries}), retrying in ${delay}ms...`)
+      console.log(`    ${msg}${details ? ` — ${details}` : ''}`)
+      await sleep(delay)
+    }
+  }
+  throw new Error('unreachable')
+}
 
 function parseArgs(argv: string[]): { inputs: string[]; chainFilter: string[] } {
   const inputs: string[] = []
@@ -121,26 +165,27 @@ async function verifyTokenPolicy(
   expectOverride?: 'blocked' | 'authorized',
 ): Promise<VerifyResult> {
   const policyFn = policyType === 'transfer' ? 'getTransferPolicyId' : 'getMintRecipientPolicyId'
-  const metaResults = await client.multicall({
-    contracts: [
-      { address: token, abi: tokenAbi, functionName: 'symbol' as const },
-      { address: token, abi: tokenAbi, functionName: 'name' as const },
-      { address: token, abi: tokenAbi, functionName: policyFn as const },
-    ],
-  })
-  if (metaResults.some((r) => r.status === 'failure')) {
-    throw new Error(`Failed to read token metadata for ${token}`)
+  const metaResults = await withRetry(() => rawMulticall3(client, [
+    { target: token, allowFailure: true, callData: encodeFunctionData({ abi: tokenAbi, functionName: 'symbol' }) },
+    { target: token, allowFailure: true, callData: encodeFunctionData({ abi: tokenAbi, functionName: 'name' }) },
+    { target: token, allowFailure: true, callData: encodeFunctionData({ abi: tokenAbi, functionName: policyFn }) },
+  ]))
+  const metaLabels = ['symbol', 'name', policyFn]
+  for (let mi = 0; mi < metaResults.length; mi++) {
+    if (!metaResults[mi].success) {
+      throw new Error(`Failed to call ${metaLabels[mi]}() on ${token} — contract may not implement this function`)
+    }
   }
-  const symbol = metaResults[0].result as string
-  const name = metaResults[1].result as string
-  const policyId = metaResults[2].result as bigint
+  const symbol = decodeFunctionResult({ abi: tokenAbi, functionName: 'symbol', data: metaResults[0].returnData }) as string
+  const name = decodeFunctionResult({ abi: tokenAbi, functionName: 'name', data: metaResults[1].returnData }) as string
+  const policyId = decodeFunctionResult({ abi: tokenAbi, functionName: policyFn, data: metaResults[2].returnData }) as bigint
 
-  const policyDataResult = await client.readContract({
+  const policyDataResult = await withRetry(() => client.readContract({
     address: authRegistry,
     abi: registryAbi,
     functionName: 'policyData',
     args: [policyId],
-  })
+  }))
   const [policyTypeRaw, admin] = policyDataResult as readonly [number, Address, bigint, boolean]
 
   const policyTypeName = policyTypeRaw === 0 ? 'WHITELIST' : 'BLACKLIST'
@@ -164,42 +209,47 @@ async function verifyTokenPolicy(
   let failed = 0
   const mismatches: string[] = []
 
-  const batchSize = 100
+  const batchSize = 80
   for (let i = 0; i < addresses.length; i += batchSize) {
+    if (i > 0) await sleep(2000)
     const batch = addresses.slice(i, i + batchSize)
-    const results = await client.multicall({
-      contracts: batch.map((addr) => ({
-        address: authRegistry,
-        abi: registryAbi,
-        functionName: 'isAuthorized' as const,
-        args: [policyId, addr],
-      })),
-    })
+
+    const calls: Multicall3Call[] = batch.map((addr) => ({
+      target: authRegistry,
+      allowFailure: true,
+      callData: encodeFunctionData({ abi: registryAbi, functionName: 'isAuthorized', args: [policyId, addr] }),
+    }))
+
+    const results = await withRetry(() => rawMulticall3(client, calls))
 
     for (let j = 0; j < batch.length; j++) {
       const addr = batch[j]
       const entry = results[j]
-      if (entry.status === 'failure') {
-        console.log(`  ✗ ${addr} RPC error: ${entry.error.message}`)
+      if (!entry.success) {
+        console.log(`  ✗ ${addr} RPC error`)
         mismatches.push(addr)
         failed++
         continue
       }
-      const isAuthorized = entry.result as boolean
+      const isAuthorized = decodeFunctionResult({
+        abi: registryAbi,
+        functionName: 'isAuthorized',
+        data: entry.returnData,
+      }) as boolean
 
-      if (policyTypeName === 'WHITELIST') {
-        if (isAuthorized) {
-          passed++
-        } else {
-          console.log(`  ✗ ${addr} NOT authorized (expected authorized)`)
-          mismatches.push(addr)
-          failed++
-        }
-      } else {
+      if (expectBlocked) {
         if (!isAuthorized) {
           passed++
         } else {
           console.log(`  ✗ ${addr} NOT blocked (expected blocked)`)
+          mismatches.push(addr)
+          failed++
+        }
+      } else {
+        if (isAuthorized) {
+          passed++
+        } else {
+          console.log(`  ✗ ${addr} NOT authorized (expected authorized)`)
           mismatches.push(addr)
           failed++
         }
@@ -244,20 +294,27 @@ async function processMultiChain(input: MultiChainInput, chainFilter: string[]):
 
     const client = createClient(chainEntry.chain_id, chainEntry.rpc_url)
 
-    const reportedChainId = await client.getChainId()
+    const reportedChainId = await withRetry(() => client.getChainId())
     if (reportedChainId !== chainEntry.chain_id) {
       throw new Error(`${chainEntry.name}: chain mismatch — RPC reports ${reportedChainId}, expected ${chainEntry.chain_id}`)
     }
 
     const authRegistry = getAddress(chainEntry.auth_registry) as Address
 
-    for (const tokenEntry of chainEntry.tokens) {
+    for (let ti = 0; ti < chainEntry.tokens.length; ti++) {
+      if (ti > 0) await sleep(5000)
+      const tokenEntry = chainEntry.tokens[ti]
       const token = getAddress(tokenEntry.address) as Address
-      const result = await verifyTokenPolicy(
-        client, chainEntry.name, chainEntry.chain_id, authRegistry,
-        token, tokenEntry.policy_type, addresses,
-      )
-      results.push(result)
+      try {
+        const result = await verifyTokenPolicy(
+          client, chainEntry.name, chainEntry.chain_id, authRegistry,
+          token, tokenEntry.policy_type, addresses, input.expect,
+        )
+        results.push(result)
+      } catch (err: any) {
+        console.log(`\n  ✗ ${chainEntry.name} — ${tokenEntry.address}: ${err.message}`)
+        results.push({ label: `${chainEntry.name} — ${tokenEntry.address}`, passed: 0, failed: addresses.length, mismatches: ['ERROR'] })
+      }
     }
   }
 
@@ -267,7 +324,7 @@ async function processMultiChain(input: MultiChainInput, chainFilter: string[]):
 async function processSingleChain(input: SingleChainInput): Promise<VerifyResult> {
   const client = createClient(input.chain_id, input.rpc_url)
 
-  const reportedChainId = await client.getChainId()
+  const reportedChainId = await withRetry(() => client.getChainId())
   if (reportedChainId !== input.chain_id) {
     throw new Error(`Chain mismatch: RPC reports ${reportedChainId}, expected ${input.chain_id}`)
   }
@@ -323,6 +380,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Error:', err.message ?? err)
+  console.error('Error:', err.shortMessage ?? err.message ?? err)
+  if (err.cause) console.error('Cause:', err.cause.shortMessage ?? err.cause.message ?? err.cause)
   process.exit(1)
 })

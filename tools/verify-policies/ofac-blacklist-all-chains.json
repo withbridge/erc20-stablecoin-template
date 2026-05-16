@@ -1,5 +1,5 @@
 {
-  "name": "OFAC Blacklist — All EVM Chains",
+  "name": "OFAC Blacklist — All EVM Stablecoins",
   "expected_addresses": [
     "0x0330070fd38ec3bb94f58fa55d40368271e9e54a",
     "0x04dba1194ee10112fe6c3207c0687def0e78bacf",
@@ -88,13 +88,31 @@
   "chains": [
     {
       "name": "Base",
-      "rpc_url": "https://base-mainnet.g.alchemy.com/v2/MVPL4twApnl8nDOAiK4BHH19Y9ef7Zx_",
+      "rpc_url": "https://mainnet.base.org",
       "chain_id": 8453,
       "auth_registry": "0x73531Fc88a2A537C668F17cd1B1117C45C15185D",
       "tokens": [
-        { "address": "0x73b5d86deae56497f852fd79dd6fe68c7270fb6b", "policy_type": "transfer" },
-        { "address": "0x2E35045E37F7Fc9F02EBA7018981e14a3211dbf1", "policy_type": "transfer" },
-        { "address": "0x05Dec3e8D1B2dC6670D981A3c58A9eE41F243894", "policy_type": "transfer" }
+        { "name": "AniUSD", "address": "0x50c5725949a6f0c72e6c4a641f24049a917db0ca", "policy_type": "transfer" },
+        { "name": "Dakota USD", "address": "0xfa2acd0861bd3219d5764d349d3a970ae8321620", "policy_type": "transfer" },
+        { "name": "DeelUSD", "address": "0x73b5d86deae56497f852fd79dd6fe68c7270fb6b", "policy_type": "transfer" },
+        { "name": "Frontier Dollar", "address": "0x2E35045E37F7Fc9F02EBA7018981e14a3211dbf1", "policy_type": "transfer" },
+        { "name": "Galleon", "address": "0x342d26b096ed426c1c4c255a98e4059bddd492bd", "policy_type": "transfer" },
+        { "name": "OpenUSD", "address": "0x36a9f1c3f8fe4df8e94450501b2a4ec2b2dd9b2b", "policy_type": "transfer" },
+        { "name": "ORD", "address": "0x00b65e1153a839570f38b506fd46f8a14540485a", "policy_type": "transfer" },
+        { "name": "Pyre Dollar", "address": "0x05Dec3e8D1B2dC6670D981A3c58A9eE41F243894", "policy_type": "transfer" },
+        { "name": "RD", "address": "0xd155f0ddc9586233BD554588AeeAA544f13d7A76", "policy_type": "transfer" },
+        { "name": "USDB", "address": "0x100faa513ac917181eb29f73b64bf7a434a206fe", "policy_type": "transfer" },
+        { "name": "USDII", "address": "0xfe26e72431bd82c285655e897f25104e547c4c07", "policy_type": "transfer" },
+        { "name": "USDSL", "address": "0xCC7B940E22e1eEF83C0170608AED6D5Fd386Cdad", "policy_type": "transfer" }
+      ]
+    },
+    {
+      "name": "Ethereum (Revolut)",
+      "rpc_url": "https://ethereum-rpc.publicnode.com",
+      "chain_id": 1,
+      "auth_registry": "0x73531Fc88a2A537C668F17cd1B1117C45C15185D",
+      "tokens": [
+        { "name": "EURR", "address": "0x8e9c32a536ab623a2e0e9961bce6f5fe7504e084", "policy_type": "transfer" }
       ]
     },
     {
@@ -103,22 +121,20 @@
       "chain_id": 1,
       "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
       "tokens": [
+        { "name": "Galleon", "address": "0x2aa1f7354e9ea7158e75ca0c95b736cc5436c877", "policy_type": "transfer" },
+        { "name": "RE", "address": "0x80DEa886572D59b8A99a8CEc432454BD5c6159e6", "policy_type": "transfer" },
+        { "name": "USDB", "address": "0xeac4269c9a01190b1400c4dc728864e61895fdf3", "policy_type": "transfer" }
       ]
     },
     {
-      "name": "Optimism",
-      "rpc_url": "https://mainnet.optimism.io",
-      "chain_id": 10,
-      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "name": "HyperEVM",
+      "rpc_url": "https://rpc.hyperliquid.xyz/evm",
+      "chain_id": 999,
+      "auth_registry": "0x3d43a093eF240f47116f1e259b628b68deB0AD1e",
       "tokens": [
-      ]
-    },
-    {
-      "name": "Arbitrum",
-      "rpc_url": "https://arb1.arbitrum.io/rpc",
-      "chain_id": 42161,
-      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
-      "tokens": [
+        { "name": "CASH", "address": "0x061Af032cCf1CE35A39b556e0F442bF2DBe1Ed06", "policy_type": "transfer" },
+        { "name": "Galleon", "address": "0x2099ad2703498fb4938998f5c4b1b01fa60a4540", "policy_type": "transfer" },
+        { "name": "RD", "address": "0x73531Fc88a2A537C668F17cd1B1117C45C15185D", "policy_type": "transfer" }
       ]
     },
     {
@@ -127,22 +143,26 @@
       "chain_id": 59144,
       "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
       "tokens": [
+        { "name": "Galleon", "address": "0xd8393996300848322d2332fccb4059bd699ef24d", "policy_type": "transfer" }
       ]
     },
     {
-      "name": "Abstract",
-      "rpc_url": "https://api.mainnet.abs.xyz",
-      "chain_id": 2741,
-      "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
+      "name": "Polygon (Revolut)",
+      "rpc_url": "https://polygon-mainnet.g.alchemy.com/v2/MVPL4twApnl8nDOAiK4BHH19Y9ef7Zx_",
+      "chain_id": 137,
+      "auth_registry": "0x0E5258f8C5419c7237accF7B1B34BBE2A160Ac26",
       "tokens": [
+        { "name": "EURR", "address": "0x11b20f798b70df2201D8F550ADDcc3378b33dd4A", "policy_type": "transfer" }
       ]
     },
     {
-      "name": "Monad",
-      "rpc_url": "https://rpc.monad.xyz",
-      "chain_id": 10143,
+      "name": "Polygon",
+      "rpc_url": "https://polygon-mainnet.g.alchemy.com/v2/MVPL4twApnl8nDOAiK4BHH19Y9ef7Zx_",
+      "chain_id": 137,
       "auth_registry": "0x69026c540cda3d42a1530d0fa3feb092d0bc944d",
       "tokens": [
+        { "name": "Galleon", "address": "0x68947dcab8cb55180745e0a7b81909d3f5dded55", "policy_type": "transfer" },
+        { "name": "RE", "address": "0x98f68AEd130fFAD6aCdf4C0823Af2578b5957119", "policy_type": "transfer" }
       ]
     }
   ]

@@ -18,7 +18,7 @@ npx tsx index.ts --input <file.json>
 Filter to specific chains in a multi-chain config:
 
 ```bash
-npx tsx index.ts --input examples/ofac-blacklist-all-chains.json --chain Base --chain Ethereum
+npx tsx index.ts --input ofac-blacklist-all-chains.json --chain Base --chain Ethereum
 ```
 
 ## Input file formats
