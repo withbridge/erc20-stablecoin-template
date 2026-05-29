@@ -45,7 +45,7 @@ contract GalleonBaseSimulation is Test {
             return existing;
         }
 
-        return vm.computeCreateAddress(backedHandler, vm.getNonce(backedHandler) + 1);
+        return vm.computeCreateAddress(backedHandler, vm.getNonce(backedHandler));
     }
 
     function setUp() public {
@@ -80,6 +80,10 @@ contract GalleonBaseSimulation is Test {
         {
             console.log("registration starting");
             vm.startPrank(fireblocksAdmin);
+
+            // register (v2 handler)
+            TokenAuthority(tokenAuthority).registerStablecoin(xusd, backedHandler, 75_000_000e6);
+
             uint64 rdTransferRecipientPolicyId = ReserveLedger(rd).getTransferPolicyId();
 
             // set minter allowance
