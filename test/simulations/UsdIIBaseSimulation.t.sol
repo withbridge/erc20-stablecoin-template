@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
-
-
-// From Zach on 5/21
-// Run with clear; forge test --match-path test/simulations/UsdIIBaseSimulation.t.sol --rpc-url https://base-mainnet.g.alchemy.com/v2/LRK-SfyiJZ8JiuYPVgRXi -vvvv
+// Simulation for registering USD2 with Token Authority on Base
+// Run with forge test --match-path test/simulations/UsdIIBaseSimulation.t.sol --rpc-url $RPC -vvvv
 
 pragma solidity ^0.8.24;
 
@@ -93,6 +91,7 @@ contract UsdIIBaseSimulation is Test {
             // get reserves store
             reserveStore = getOrPredictReserveStore(xusd);
             console.log("reserve store", reserveStore);
+            // 0x68fFA618b7E7F9EB5DDA64117a35c058D6205277
 
             vm.startPrank(complianceAddress);
 
