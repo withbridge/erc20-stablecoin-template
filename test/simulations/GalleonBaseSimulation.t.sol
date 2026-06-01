@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
-
-
-// From Zach on 5/21
-// Run with clear; forge test --match-path test/simulations/GalleonBaseSimulation.t.sol --rpc-url https://base-mainnet.g.alchemy.com/v2/LRK-SfyiJZ8JiuYPVgRXi -vvvv
+// Simulation for registering Galleon with Token Authority on Base
+// Run with forge test --match-path test/simulations/GalleonBaseSimulation.t.sol --rpc-url $RPC -vvvv
 
 pragma solidity ^0.8.24;
 
@@ -45,14 +43,15 @@ contract GalleonBaseSimulation is Test {
             return existing;
         }
 
-        return vm.computeCreateAddress(backedHandler, vm.getNonce(backedHandler));
+        // TODO: Remove +1 after USD2 mint/burn test
+        return vm.computeCreateAddress(backedHandler, vm.getNonce(backedHandler) + 1);
     }
 
     function setUp() public {
         // Galleon
-        // TODO: xUSD address from token_addresses.rb
+        // xUSD address from token_addresses.rb
         xusd = 0x342D26B096ed426C1C4C255A98e4059bDDD492Bd;
-        // TODO: Inventory from address_book.rb
+        // Inventory from address_book.rb
         inventory = 0x6c86f85865476A2a14F043991f3d3178c9015447;
 
         // Constants
@@ -97,6 +96,7 @@ contract GalleonBaseSimulation is Test {
             // get reserves store
             reserveStore = getOrPredictReserveStore(xusd);
             console.log("reserve store", reserveStore);
+            // 0xA757b56c7b6478b9a3d4093D5F4f0c508D178178
 
             vm.startPrank(complianceAddress);
 
