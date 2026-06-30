@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Simulation for registering Galleon with Token Authority on Base
-// Run with forge test --match-path test/simulations/GalleonBaseSimulation.t.sol --rpc-url $RPC_BASE -vvvv
+// Simulation for registering USDSL with Token Authority on Base
+// Run with forge test --match-path test/simulations/UsdslBaseSimulation.t.sol --rpc-url $RPC_BASE -vvvv
 
 pragma solidity ^0.8.24;
 
@@ -14,10 +14,10 @@ import { AccessControlEnumerableUpgradeable } from "@openzeppelin/contracts-upgr
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { StablecoinTemplateV3 } from "../../src/v3/StablecoinTemplateV3.sol";
 
-contract GalleonBaseSimulation is Test {
+contract UsdslBaseSimulation is Test {
 
     address fireblocksAdmin;
-    
+
     address hotwalletStablesmith;
     address fireblocksStablesmith;
 
@@ -31,7 +31,6 @@ contract GalleonBaseSimulation is Test {
     address singleTokenHandler;
 
     address authRegistry;
-
 
     address reserveStore;
 
@@ -47,13 +46,13 @@ contract GalleonBaseSimulation is Test {
     }
 
     function setUp() public {
-        // Galleon
-        // xUSD address from token_addresses.rb
-        xusd = 0x342D26B096ed426C1C4C255A98e4059bDDD492Bd;
-        // Inventory from address_book.rb
-        inventory = 0x6c86f85865476A2a14F043991f3d3178c9015447;
+        // USDSL
+        // USDSL address from token_addresses.rb
+        xusd = 0xCC7B940E22e1eEF83C0170608AED6D5Fd386Cdad;
+        // Inventory from address_book.rb (EvmUsdslBridgeVenturesInventory)
+        inventory = 0x8E6aA4D8C576192ad5d5c275e3aAFff615c08036;
 
-        // Constants
+        // Constants (Base-wide, shared with DKUSD / USD2 / Galleon)
         fireblocksAdmin = 0x79C6631FA15CdA38777FB9DD7a6348bAEe794a4E;
 
         hotwalletStablesmith = 0x42363cb98490128e7932a92c192dCf03d1115e89;
@@ -72,44 +71,46 @@ contract GalleonBaseSimulation is Test {
 
     }
 
-    function test_galleon_base_simulation() public {
+    function test_usdsl_base_simulation() public {
 
         // Registration
-        // {
-        //     console.log("registration starting");
-        //     vm.startPrank(fireblocksAdmin);
+        // USDSL is not yet registered on Base, so this block is active (unlike the
+        // already-migrated Galleon sim). It registers the token, sets the minter
+        // allowance, grants the burner/minter roles, and whitelists the reserve store.
+        {
+            console.log("registration starting");
+            vm.startPrank(fireblocksAdmin);
 
-        //     // register (v2 handler)
-        //     TokenAuthority(tokenAuthority).registerStablecoin(xusd, backedHandler, 75_000_000e6);
+            // register (v2 handler)
+            TokenAuthority(tokenAuthority).registerStablecoin(xusd, backedHandler, 50_000_000e6);
 
-        //     uint64 rdTransferRecipientPolicyId = ReserveLedger(rd).getTransferPolicyId();
+            uint64 rdTransferRecipientPolicyId = ReserveLedger(rd).getTransferPolicyId();
 
-        //     // set minter allowance
-        //     TokenAuthority(tokenAuthority).setMinterAllowance(xusd, fireblocksStablesmith, 75_000_000e6);
+            // set minter allowance
+            TokenAuthority(tokenAuthority).setMinterAllowance(xusd, fireblocksStablesmith, 50_000_000e6);
 
-        //     // burner role
-        //     AccessControlEnumerableUpgradeable(tokenAuthority).grantRole(TokenAuthority(tokenAuthority).BURNER_ROLE(), fireblocksStablesmith);
-        //     vm.stopPrank();
+            // burner role
+            AccessControlEnumerableUpgradeable(tokenAuthority).grantRole(TokenAuthority(tokenAuthority).BURNER_ROLE(), fireblocksStablesmith);
+            vm.stopPrank();
 
+            // get reserves store
+            reserveStore = getOrPredictReserveStore(xusd);
+            console.log("reserve store", reserveStore);
+            // expected (handler CREATE nonce 4): 0x34C35fe6d18509e7b6d237C8369a0F24093d5f6C
 
-        //     // get reserves store
-        //     reserveStore = getOrPredictReserveStore(xusd);
-        //     console.log("reserve store", reserveStore);
-        //     // 0xA757b56c7b6478b9a3d4093D5F4f0c508D178178
+            vm.startPrank(complianceAddress);
 
-        //     vm.startPrank(complianceAddress);
+            // rd transfer whitelist
+            AuthRegistry(authRegistry).modifyPolicyWhitelist(rdTransferRecipientPolicyId, reserveStore, true);
+            vm.stopPrank();
 
-        //     // rd transfer whitelist
-        //     AuthRegistry(authRegistry).modifyPolicyWhitelist(rdTransferRecipientPolicyId, reserveStore, true);
-        //     vm.stopPrank();
+            vm.startPrank(fireblocksAdmin);
 
-        //     vm.startPrank(fireblocksAdmin);
-
-        //     // minter role
-        //     AccessControlEnumerableUpgradeable(xusd).grantRole(StablecoinTemplateV3Base(xusd).MINTER_ROLE(), backedHandler);
-        //     vm.stopPrank();
-        //     console.log("registration done");
-        // }
+            // minter role
+            AccessControlEnumerableUpgradeable(xusd).grantRole(StablecoinTemplateV3Base(xusd).MINTER_ROLE(), backedHandler);
+            vm.stopPrank();
+            console.log("registration done");
+        }
 
         console.log("mint/burn test starting");
 

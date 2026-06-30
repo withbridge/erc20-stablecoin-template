@@ -1,23 +1,26 @@
 // SPDX-License-Identifier: MIT
-// Simulation for registering USD2 with Token Authority on Base
-// Run with forge test --match-path test/simulations/UsdIIBaseSimulation.t.sol --rpc-url $RPC_BASE -vvvv
+// Simulation for registering Galleon with Token Authority on Linea
+// Run with forge test --match-path test/simulations/GalleonLineaSimulation.t.sol --rpc-url
+// $RPC_LINEA -vvvv
 
 pragma solidity ^0.8.24;
 
-import { Test, console2 as console } from "forge-std/Test.sol";
-import { ReserveLedger } from "../../src/v3/ReserveLedger.sol";
-import { ReserveLedgerBackedHandler } from "../../src/tokenAuthority/tokenHandler/ReserveLedgerBackedHandler.sol";
-import { StablecoinTemplateV3Base } from "../../src/v3/StablecoinTemplateV3Base.sol";
 import { TokenAuthority } from "../../src/tokenAuthority/TokenAuthority.sol";
+import {
+    ReserveLedgerBackedHandler
+} from "../../src/tokenAuthority/tokenHandler/ReserveLedgerBackedHandler.sol";
+import { ReserveLedger } from "../../src/v3/ReserveLedger.sol";
+import { StablecoinTemplateV3Base } from "../../src/v3/StablecoinTemplateV3Base.sol";
+import {
+    AccessControlEnumerableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import { AuthRegistry } from "auth-registry-1/src/AuthRegistry.sol";
-import { AccessControlEnumerableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
-import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
-import { StablecoinTemplateV3 } from "../../src/v3/StablecoinTemplateV3.sol";
+import { Test, console2 as console } from "forge-std/Test.sol";
 
-contract UsdIIBaseSimulation is Test {
+contract GalleonLineaSimulation is Test {
 
     address fireblocksAdmin;
-    
+
     address hotwalletStablesmith;
     address fireblocksStablesmith;
 
@@ -28,17 +31,14 @@ contract UsdIIBaseSimulation is Test {
 
     address tokenAuthority;
     address backedHandler;
-    address singleTokenHandler;
 
     address authRegistry;
-
 
     address reserveStore;
 
     address complianceAddress;
 
     function getOrPredictReserveStore(address stablecoin) internal view returns (address) {
-        // TODO: just read NewReserveStore from mint output
         address existing = ReserveLedgerBackedHandler(backedHandler).reserveStores(stablecoin);
         if (existing != address(0)) {
             return existing;
@@ -48,11 +48,11 @@ contract UsdIIBaseSimulation is Test {
     }
 
     function setUp() public {
-        // USD2
-        // TODO: xUSD address from token_addresses.rb
-        xusd = 0xfe26e72431Bd82c285655e897F25104E547c4c07;
-        // TODO: Inventory from address_book.rb
-        inventory = 0xf989ea335A0acda4307d437F3A746fDe88f29064;
+        // Galleon
+        // xUSD address from token_addresses.rb
+        xusd = 0xD8393996300848322d2332Fccb4059Bd699Ef24d;
+        // Inventory from address_book.rb
+        inventory = 0x6c86f85865476A2a14F043991f3d3178c9015447;
 
         // Constants
         fireblocksAdmin = 0x79C6631FA15CdA38777FB9DD7a6348bAEe794a4E;
@@ -61,49 +61,55 @@ contract UsdIIBaseSimulation is Test {
 
         fireblocksStablesmith = 0x19810813f2E46cF01e7c543f6d8C3ecC8eA2001E;
 
-        rd = 0xd155f0ddc9586233BD554588AeeAA544f13d7A76;
+        // RD Linea
+        rd = 0x8Bc634a28c499ccFf7c25070bC13c22860a8cFC4;
 
-        tokenAuthority = 0x8e9c32A536Ab623a2e0e9961BcE6F5fe7504e084;
+        // Linea token authority
+        tokenAuthority = 0xafa30876170f7BD7e3160A79433B8AB85a9d9479;
 
-        backedHandler = 0xDb8eBA382b18EB395985192337fD62C34F495114;
+        backedHandler = 0x98f68AEd130fFAD6aCdf4C0823Af2578b5957119;
 
-        authRegistry = 0x73531Fc88a2A537C668F17cd1B1117C45C15185D;
+        authRegistry = 0x69026c540CdA3d42a1530D0fA3feb092d0bc944d;
 
         complianceAddress = 0x251d2711ebeB0a09fdB8992F5506f3D949175246;
-
     }
 
-    function test_usdii_base_simulation() public {
-
+    function test_galleon_linea_simulation() public {
         // Registration
-        // Comment out after registration op to test mint/burn
         {
             console.log("registration starting");
             vm.startPrank(fireblocksAdmin);
+
+            // register (v2 handler)
+            TokenAuthority(tokenAuthority).registerStablecoin(xusd, backedHandler, 75_000_000e6);
+
             uint64 rdTransferRecipientPolicyId = ReserveLedger(rd).getTransferPolicyId();
 
             // set minter allowance
-            TokenAuthority(tokenAuthority).setMinterAllowance(xusd, fireblocksStablesmith, 75_000_000e6);
+            TokenAuthority(tokenAuthority)
+                .setMinterAllowance(xusd, fireblocksStablesmith, 75_000_000e6);
 
             // burner role
-            AccessControlEnumerableUpgradeable(tokenAuthority).grantRole(TokenAuthority(tokenAuthority).BURNER_ROLE(), fireblocksStablesmith);
+            AccessControlEnumerableUpgradeable(tokenAuthority)
+                .grantRole(TokenAuthority(tokenAuthority).BURNER_ROLE(), fireblocksStablesmith);
             vm.stopPrank();
 
             // get reserves store
             reserveStore = getOrPredictReserveStore(xusd);
             console.log("reserve store", reserveStore);
-            // 0x68fFA618b7E7F9EB5DDA64117a35c058D6205277
 
             vm.startPrank(complianceAddress);
 
             // rd transfer whitelist
-            AuthRegistry(authRegistry).modifyPolicyWhitelist(rdTransferRecipientPolicyId, reserveStore, true);
+            AuthRegistry(authRegistry)
+                .modifyPolicyWhitelist(rdTransferRecipientPolicyId, reserveStore, true);
             vm.stopPrank();
 
             vm.startPrank(fireblocksAdmin);
 
             // minter role
-            AccessControlEnumerableUpgradeable(xusd).grantRole(StablecoinTemplateV3Base(xusd).MINTER_ROLE(), backedHandler);
+            AccessControlEnumerableUpgradeable(xusd)
+                .grantRole(StablecoinTemplateV3Base(xusd).MINTER_ROLE(), backedHandler);
             vm.stopPrank();
             console.log("registration done");
         }
