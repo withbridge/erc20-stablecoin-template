@@ -67,7 +67,7 @@ contract GalleonLineaSimulation is Test {
         // Linea token authority
         tokenAuthority = 0xafa30876170f7BD7e3160A79433B8AB85a9d9479;
 
-        backedHandler = 0x98f68AEd130fFAD6aCdf4C0823Af2578b5957119;
+        backedHandler = 0x6F1E54995A9674bBF4e950ccd5BfE277654f8b4e;
 
         authRegistry = 0x69026c540CdA3d42a1530D0fA3feb092d0bc944d;
 

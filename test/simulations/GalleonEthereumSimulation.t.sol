@@ -70,7 +70,7 @@ contract GalleonEthereumSimulation is Test {
         // Ethereum token authority
         tokenAuthority = 0x50eA702A75F5C08DB7CdDC1c923b0C3588657639;
 
-        backedHandler = 0xa9Abc40eF2557d42fbA54A579279D26659C2fbE5;
+        backedHandler = 0x3Bc16Ad5B142B24c52fF249d3C11722EFAd5D573;
 
         authRegistry = 0x69026c540CdA3d42a1530D0fA3feb092d0bc944d;
 
