@@ -57,6 +57,10 @@ contract MintApproval is AccessControlEnumerableUpgradeable, IMintApproval {
     ) external onlyRole(PUBLISHER_ROLE) {
         MintApprovalStorage storage $ = MintApprovalStorageLib.getStorage();
 
+        // Ensure _holdId is not empty and expiry is valid
+        require(_holdId != bytes32(0), InvalidHoldId());
+        require(_expiry > block.timestamp, InvalidExpiry());
+
         // Check that the _holdId and _operationId are not already in use
         require(
             $._operationHoldId[_operationId] == bytes32(0),
@@ -96,7 +100,8 @@ contract MintApproval is AccessControlEnumerableUpgradeable, IMintApproval {
         Approval storage approval = $._holdIdApproval[_holdId];
 
         // Check that the approval exists and has not been
-        require(approval.mintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
+        bytes32 mintCommitment = approval.mintCommitment;
+        require(mintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
         require(!approval.consumed, ApprovalAlreadyConsumed(_holdId));
 
         // Check that the approval has not expired
@@ -105,7 +110,7 @@ contract MintApproval is AccessControlEnumerableUpgradeable, IMintApproval {
             ApprovalExpired(_operationId, _holdId, approval.expiry, block.timestamp)
         );
         require(
-            approval.mintCommitment == keccak256(abi.encode(_stablecoin, _recipient, _amount)),
+            mintCommitment == keccak256(abi.encode(_stablecoin, _recipient, _amount)),
             ApprovalInvalid(_operationId, _holdId)
         );
 
@@ -141,9 +146,8 @@ contract MintApproval is AccessControlEnumerableUpgradeable, IMintApproval {
         require(approval.mintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
         require(!approval.consumed, ApprovalAlreadyConsumed(_holdId));
 
-        require(
-            _expiry > approval.expiry, ApprovalExpiryNotExtended(_holdId, _expiry, approval.expiry)
-        );
+        uint64 expiry = approval.expiry;
+        require(_expiry > expiry, ApprovalExpiryNotExtended(_holdId, _expiry, expiry));
 
         // Extend the approval
         approval.expiry = _expiry;

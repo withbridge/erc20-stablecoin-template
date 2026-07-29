@@ -37,6 +37,10 @@ interface IMintApproval {
 
     error ApprovalExpiryNotExtended(bytes32 _hold_id, uint64 _new_expiry, uint64 _old_expiry);
 
+    error InvalidHoldId();
+
+    error InvalidExpiry();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
