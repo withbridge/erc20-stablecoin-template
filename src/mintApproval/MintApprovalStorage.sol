@@ -19,9 +19,8 @@ library MintApprovalStorageLib {
         0xa44b4a5b24691b7f103f9088d37093c6ce132ff15220e58e4235459e9b76d500;
 
     function getStorage() internal pure returns (MintApprovalStorage storage s) {
-        bytes32 slot = keccak256("mintApproval.storage");
         assembly {
-            s.slot := slot
+            s.slot := MINT_APPROVAL_STORAGE_LOCATION
         }
     }
 
