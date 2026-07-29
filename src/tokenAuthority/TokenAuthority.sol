@@ -24,7 +24,12 @@ import { MintApproval } from "../mintApproval/MintApproval.sol";
 /// @author Bridge
 /// @notice Central authority contract for managing stablecoin minting, burning, and wrapping
 /// @dev Coordinates token operations through pluggable token handlers and enforces rate limits
-contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable, MintApproval {
+contract TokenAuthority is
+    ITokenAuthority,
+    AccessControlEnumerableUpgradeable,
+    UUPSUpgradeable,
+    MintApproval
+{
 
     using SafeERC20 for IERC20;
     using SafeERC20 for IERC20Mintable;
@@ -71,6 +76,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /// @notice Maps each stablecoin contract address to its respective token handler
     mapping(address stablecoinContract => address tokenHandler) tokenHandlers;
 
+    MintApprovalVersion public mintApprovalVersion;
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
@@ -116,6 +123,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
+        require(mintApprovalVersion == MintApprovalVersion.Optional, MintApprovalRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
@@ -140,6 +148,28 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         public
         onlyRole(BRIDGE_ECOSYSTEM_CONTRACT_ROLE)
     {
+        _mint(stablecoinContract, to, amount);
+    }
+
+    function mintWithApproval(
+        address stablecoinContract,
+        address to,
+        uint256 amount,
+        uint256 operationId,
+        bytes32 holdId
+    ) public {
+        require(mintApprovalVersion == MintApprovalVersion.Required, MintApprovalRequired());
+        require(amount > 0, AmountCannotBeZero());
+
+        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
+        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
+        require(minterAllowance >= amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
+
+        minterAllowances[stablecoinContract][msg.sender] -= amount;
+
+        consumeApproval(operationId, holdId, stablecoinContract, to, amount);
+
         _mint(stablecoinContract, to, amount);
     }
 
@@ -306,6 +336,15 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         delete mintTxnLimits[stablecoinContract];
 
         emit StablecoinUnregistered(msg.sender, stablecoinContract);
+    }
+
+    function setMintApprovalVersion(MintApprovalVersion _mintApprovalVersion)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        mintApprovalVersion = _mintApprovalVersion;
+
+        emit MintApprovalVersionSet(msg.sender, mintApprovalVersion);
     }
 
     /*//////////////////////////////////////////////////////////////////////////

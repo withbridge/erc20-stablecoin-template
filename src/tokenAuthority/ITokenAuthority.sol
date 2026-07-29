@@ -10,6 +10,15 @@ pragma solidity ^0.8.24;
 interface ITokenAuthority {
 
     /*//////////////////////////////////////////////////////////////////////////
+                                    Enums
+    //////////////////////////////////////////////////////////////////////////*/
+
+    enum MintApprovalVersion {
+        Optional,
+        Required
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                                     Errors
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -52,6 +61,9 @@ interface ITokenAuthority {
 
     /// @notice Thrown when a stablecoin is already registered
     error StablecoinAlreadyRegistered();
+
+    /// @notice Thrown when the mint approval version is required
+    error MintApprovalRequired();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -149,6 +161,11 @@ interface ITokenAuthority {
     /// @notice Emitted when a stablecoin is unregistered
     /// @param stablecoinContract The address of the stablecoin contract
     event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
+
+    /// @notice Emitted when the mint approval version is set
+    /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
+    /// @param mintApprovalVersion The new mint approval version
+    event MintApprovalVersionSet(address indexed sender, MintApprovalVersion mintApprovalVersion);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions

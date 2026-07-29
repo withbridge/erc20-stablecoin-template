@@ -79,13 +79,14 @@ contract MintApproval is AccessControlEnumerableUpgradeable, IMintApproval {
         );
     }
 
+    // If used as a subcontract, we should probably make this internal
     function consumeApproval(
         uint256 _operationId,
         bytes32 _holdId,
         address _stablecoin,
         address _recipient,
         uint256 _amount
-    ) external onlyRole(CONSUMER_ROLE) {
+    ) public onlyRole(CONSUMER_ROLE) {
         MintApprovalStorage storage $ = MintApprovalStorageLib.getStorage();
         bytes32 holdId = $._operationHoldId[_operationId];
 
