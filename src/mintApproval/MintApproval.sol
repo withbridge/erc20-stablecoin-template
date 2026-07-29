@@ -140,6 +140,10 @@ contract MintApproval is AccessControlEnumerableUpgradeable, IMintApproval {
         require(approval.mintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
         require(!approval.consumed, ApprovalAlreadyConsumed(_holdId));
 
+        require(
+            _expiry > approval.expiry, ApprovalExpiryNotExtended(_holdId, _expiry, approval.expiry)
+        );
+
         // Extend the approval
         approval.expiry = _expiry;
 
