@@ -104,7 +104,7 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
         // Check that the intent exists and has not been consumed or revoked
         bytes32 storedMintCommitment = intent.mintCommitment;
         require(storedMintCommitment != bytes32(0), IntentNotExistsForHoldId(_holdId));
-        require(intent.isValid(), IntentInvalid(_holdId, intent.flags));
+        require(intent.isValid(), InvalidIntent(_holdId, intent.flags));
 
         // Check that the intent has not expired
         require(
@@ -130,7 +130,7 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
 
         // Check that the intent exists and has not been consumed or revoked
         require(intent.mintCommitment != bytes32(0), IntentNotExistsForHoldId(_holdId));
-        require(intent.isValid(), IntentInvalid(_holdId, intent.flags));
+        require(intent.isValid(), InvalidIntent(_holdId, intent.flags));
 
         // Revoke the intent
         intent.setRevoked();
@@ -146,7 +146,7 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
 
         // Check that the intent exists and has not been consumed or revoked
         require(intent.mintCommitment != bytes32(0), IntentNotExistsForHoldId(_holdId));
-        require(intent.isValid(), IntentInvalid(_holdId, intent.flags));
+        require(intent.isValid(), InvalidIntent(_holdId, intent.flags));
 
         uint64 expiry = intent.expiry;
         require(_expiry > expiry, IntentExpiryNotExtended(_holdId, _expiry, expiry));

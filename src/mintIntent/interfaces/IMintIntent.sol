@@ -33,7 +33,7 @@ interface IMintIntent {
 
     error IntentAlreadyConsumed(bytes32 _holdId);
 
-    error IntentInvalid(bytes32 _holdId, uint256 _flags);
+    error InvalidIntent(bytes32 _holdId, uint256 _flags);
 
     error InvalidMintCommitment(bytes32 _expectedMintCommitment, bytes32 _providedMintCommitment);
 
