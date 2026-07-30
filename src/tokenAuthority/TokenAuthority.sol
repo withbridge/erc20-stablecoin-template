@@ -151,14 +151,13 @@ contract TokenAuthority is
         _mint(stablecoinContract, to, amount);
     }
 
-    function mintWithApproval(
+    function mintWithIntent(
         address stablecoinContract,
         address to,
         uint256 amount,
         uint256 operationId,
         bytes32 holdId
     ) public {
-        require(mintIntentVersion == MintIntentVersion.Required, MintIntentRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
