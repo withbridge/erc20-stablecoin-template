@@ -18,7 +18,7 @@ import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC16
 
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
-import { MintApproval } from "../mintApproval/MintApproval.sol";
+import { MintIntent } from "../mintIntent/MintIntent.sol";
 
 /// @title TokenAuthority
 /// @author Bridge
@@ -28,7 +28,7 @@ contract TokenAuthority is
     ITokenAuthority,
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
-    MintApproval
+    MintIntent
 {
 
     using SafeERC20 for IERC20;
@@ -76,7 +76,7 @@ contract TokenAuthority is
     /// @notice Maps each stablecoin contract address to its respective token handler
     mapping(address stablecoinContract => address tokenHandler) tokenHandlers;
 
-    MintApprovalVersion public mintApprovalVersion;
+    MintIntentVersion public mintIntentVersion;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -123,7 +123,7 @@ contract TokenAuthority is
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
-        require(mintApprovalVersion == MintApprovalVersion.Optional, MintApprovalRequired());
+        require(mintIntentVersion == MintIntentVersion.Optional, MintIntentRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
@@ -158,7 +158,7 @@ contract TokenAuthority is
         uint256 operationId,
         bytes32 holdId
     ) public {
-        require(mintApprovalVersion == MintApprovalVersion.Required, MintApprovalRequired());
+        require(mintIntentVersion == MintIntentVersion.Required, MintIntentRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
@@ -168,7 +168,7 @@ contract TokenAuthority is
 
         minterAllowances[stablecoinContract][msg.sender] -= amount;
 
-        consumeApproval(operationId, holdId, stablecoinContract, to, amount);
+        consumeIntent(operationId, holdId, stablecoinContract, to, amount);
 
         _mint(stablecoinContract, to, amount);
     }
@@ -338,13 +338,13 @@ contract TokenAuthority is
         emit StablecoinUnregistered(msg.sender, stablecoinContract);
     }
 
-    function setMintApprovalVersion(MintApprovalVersion _mintApprovalVersion)
+    function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
-        mintApprovalVersion = _mintApprovalVersion;
+        mintIntentVersion = _mintIntentVersion;
 
-        emit MintApprovalVersionSet(msg.sender, mintApprovalVersion);
+        emit MintIntentVersionSet(msg.sender, mintIntentVersion);
     }
 
     /*//////////////////////////////////////////////////////////////////////////

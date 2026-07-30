@@ -13,7 +13,7 @@ interface ITokenAuthority {
                                     Enums
     //////////////////////////////////////////////////////////////////////////*/
 
-    enum MintApprovalVersion {
+    enum MintIntentVersion {
         Optional,
         Required
     }
@@ -63,7 +63,7 @@ interface ITokenAuthority {
     error StablecoinAlreadyRegistered();
 
     /// @notice Thrown when the mint approval version is required
-    error MintApprovalRequired();
+    error MintIntentRequired();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -164,8 +164,8 @@ interface ITokenAuthority {
 
     /// @notice Emitted when the mint approval version is set
     /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
-    /// @param mintApprovalVersion The new mint approval version
-    event MintApprovalVersionSet(address indexed sender, MintApprovalVersion mintApprovalVersion);
+    /// @param mintIntentVersion The new mint approval version
+    event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
