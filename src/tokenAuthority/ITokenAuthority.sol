@@ -192,6 +192,24 @@ interface ITokenAuthority {
     function mintBridgeEcosystem(address stablecoinContract, address to, uint256 amount) external;
 
     /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks and decrements transaction limit, and minter allowance before
+     * minting
+     * @param stablecoinContract The address of the stablecoin contract to mint from
+     * @param to The address to receive the minted tokens
+     * @param amount The amount of tokens to mint
+     * @param operationId The operation ID
+     * @param holdId The hold ID
+     */
+    function mintWithApproval(
+        address stablecoinContract,
+        address to,
+        uint256 amount,
+        uint256 operationId,
+        bytes32 holdId
+    ) external;
+
+    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
      * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin

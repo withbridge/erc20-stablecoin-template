@@ -151,7 +151,7 @@ contract TokenAuthority is
         _mint(stablecoinContract, to, amount);
     }
 
-    function mintWithIntent(
+    function mintWithApproval(
         address stablecoinContract,
         address to,
         uint256 amount,
@@ -167,7 +167,7 @@ contract TokenAuthority is
 
         minterAllowances[stablecoinContract][msg.sender] -= amount;
 
-        consumeIntent(operationId, holdId, stablecoinContract, to, amount);
+        consumeApproval(operationId, holdId, stablecoinContract, to, amount);
 
         _mint(stablecoinContract, to, amount);
     }

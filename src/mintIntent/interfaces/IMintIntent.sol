@@ -9,47 +9,47 @@ interface IMintIntent {
                                     Errors
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Thrown when an intent already exists for an operation ID.
-    /// @param _operationId The operation ID that already has an intent.
-    error IntentExistsForOperationId(uint256 _operationId);
+    /// @notice Thrown when an approval already exists for an operation ID.
+    /// @param _operationId The operation ID that already has an approval.
+    error ApprovalExistsForOperationId(uint256 _operationId);
 
-    /// @notice Thrown when an intent already exists for a hold ID.
-    /// @param _holdId The hold ID that already has an intent.
-    error IntentExistsForHoldId(bytes32 _holdId);
+    /// @notice Thrown when an approval already exists for a hold ID.
+    /// @param _holdId The hold ID that already has an approval.
+    error ApprovalExistsForHoldId(bytes32 _holdId);
 
-    /// @notice Thrown when an intent does not exist for an operation ID.
-    /// @param _operationId The operation ID without an intent.
-    error IntentNotExistsForOperationId(uint256 _operationId);
+    /// @notice Thrown when an approval does not exist for an operation ID.
+    /// @param _operationId The operation ID without an approval.
+    error ApprovalNotExistsForOperationId(uint256 _operationId);
 
-    /// @notice Thrown when an intent does not exist for a hold ID.
-    /// @param _holdId The hold ID without an intent.
-    error IntentNotExistsForHoldId(bytes32 _holdId);
+    /// @notice Thrown when an approval does not exist for a hold ID.
+    /// @param _holdId The hold ID without an approval.
+    error ApprovalNotExistsForHoldId(bytes32 _holdId);
 
-    error IntentExpired(
+    error ApprovalExpired(
         uint256 _operationId, bytes32 _holdId, uint64 _expiry, uint256 _blockTimestamp
     );
 
     error OperationIdHoldIdMismatch(uint256 _operationId, bytes32 _holdId);
 
-    error IntentAlreadyConsumed(bytes32 _holdId);
+    error ApprovalAlreadyConsumed(bytes32 _holdId);
 
-    error InvalidIntent(bytes32 _holdId, uint256 _flags);
+    error InvalidApproval(bytes32 _holdId, uint256 _flags);
 
     error InvalidMintCommitment(bytes32 _expectedMintCommitment, bytes32 _providedMintCommitment);
 
-    error IntentExpiryNotExtended(bytes32 _holdId, uint64 _newExpiry, uint64 _oldExpiry);
+    error ApprovalExpiryNotExtended(bytes32 _holdId, uint64 _newExpiry, uint64 _oldExpiry);
 
     error InvalidHoldId();
 
     error InvalidExpiry();
 
-    error IntentAlreadyRevoked(bytes32 _holdId);
+    error ApprovalAlreadyRevoked(bytes32 _holdId);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Emitted when a mint intent is published.
+    /// @notice Emitted when a mint approval is published.
     /// @param _publisher The address that published the intent.
     /// @param _operationId The operation ID associated with the intent.
     /// @param _holdId The hold ID associated with the intent.
@@ -57,7 +57,7 @@ interface IMintIntent {
     /// @param _recipient The address approved to receive the minted tokens.
     /// @param _amount The amount of tokens approved for minting.
     /// @param _expiry The timestamp when the intent expires.
-    event IntentPublished(
+    event ApprovalPublished(
         address indexed _publisher,
         uint256 indexed _operationId,
         bytes32 indexed _holdId,
@@ -67,31 +67,31 @@ interface IMintIntent {
         uint256 _expiry
     );
 
-    /// @notice Emitted when a mint intent is revoked.
-    /// @param _publisher The address that revoked the intent.
-    /// @param _holdId The hold ID associated with the intent.
-    event IntentRevoked(address indexed _publisher, bytes32 indexed _holdId);
+    /// @notice Emitted when a mint approval is revoked.
+    /// @param _publisher The address that revoked the approval.
+    /// @param _holdId The hold ID associated with the approval.
+    event ApprovalRevoked(address indexed _publisher, bytes32 indexed _holdId);
 
-    /// @notice Emitted when a mint intent is consumed.
-    /// @param _publisher The address that consumed the intent.
-    /// @param _operationId The operation ID associated with the intent.
-    /// @param _holdId The hold ID associated with the intent.
-    event IntentConsumed(
+    /// @notice Emitted when a mint approval is consumed.
+    /// @param _publisher The address that consumed the approval.
+    /// @param _operationId The operation ID associated with the approval.
+    /// @param _holdId The hold ID associated with the approval.
+    event ApprovalConsumed(
         address indexed _publisher, uint256 indexed _operationId, bytes32 indexed _holdId
     );
 
-    /// @notice Emitted when a mint intent's expiry is extended.
-    /// @param _publisher The address that extended the intent.
-    /// @param _holdId The hold ID associated with the intent.
-    /// @param _newExpiry The updated intent expiry timestamp.
-    event IntentExtended(address indexed _publisher, bytes32 indexed _holdId, uint256 _newExpiry);
+    /// @notice Emitted when a mint approval's expiry is extended.
+    /// @param _publisher The address that extended the approval.
+    /// @param _holdId The hold ID associated with the approval.
+    /// @param _newExpiry The updated approval expiry timestamp.
+    event ApprovalExtended(address indexed _publisher, bytes32 indexed _holdId, uint256 _newExpiry);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Publishes a mint intent.
+     * @notice Publishes a mint approval.
      * @param _operationId The operation ID to associate with the intent.
      * @param _holdId The hold ID to associate with the intent.
      * @param _stablecoin The stablecoin contract approved for minting.
@@ -99,7 +99,7 @@ interface IMintIntent {
      * @param _amount The amount of tokens approved for minting.
      * @param _expiry The timestamp when the intent expires.
      */
-    function publishIntent(
+    function publishApproval(
         uint256 _operationId,
         bytes32 _holdId,
         address _stablecoin,
@@ -109,20 +109,20 @@ interface IMintIntent {
     ) external;
 
     /**
-     * @notice Revokes an existing mint intent.
-     * @param _holdId The hold ID associated with the intent.
+     * @notice Revokes an existing mint approval.
+     * @param _holdId The hold ID associated with the approval.
      */
-    function revokeIntent(bytes32 _holdId) external;
+    function revokeApproval(bytes32 _holdId) external;
 
     /**
-     * @notice Consumes an existing mint intent.
-     * @param _operationId The operation ID associated with the intent.
-     * @param _holdId The hold ID associated with the intent.
+     * @notice Consumes an existing mint approval.
+     * @param _operationId The operation ID associated with the approval.
+     * @param _holdId The hold ID associated with the approval.
      * @param _stablecoin The stablecoin contract used for the mint.
      * @param _recipient The address receiving the minted tokens.
      * @param _amount The amount of tokens minted.
      */
-    function consumeIntent(
+    function consumeApproval(
         uint256 _operationId,
         bytes32 _holdId,
         address _stablecoin,
@@ -131,10 +131,10 @@ interface IMintIntent {
     ) external;
 
     /**
-     * @notice Extends the expiry of an existing mint intent.
-     * @param _holdId The hold ID associated with the intent.
-     * @param _newExpiry The updated intent expiry timestamp.
+     * @notice Extends the expiry of an existing mint approval.
+     * @param _holdId The hold ID associated with the approval.
+     * @param _newExpiry The updated approval expiry timestamp.
      */
-    function extendIntent(bytes32 _holdId, uint64 _newExpiry) external;
+    function extendApproval(bytes32 _holdId, uint64 _newExpiry) external;
 
 }

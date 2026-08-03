@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-enum IntentFlag {
+enum ApprovalFlag {
     CONSUMED,
     REVOKED
 }
 
-struct Intent {
+struct Approval {
     bytes32 mintCommitment;
     uint64 expiry;
     uint256 flags;
@@ -14,7 +14,7 @@ struct Intent {
 
 struct MintIntentStorage {
     mapping(uint256 operationId => bytes32 holdId) _operationHoldId;
-    mapping(bytes32 holdId => Intent intent) _holdIdIntent;
+    mapping(bytes32 holdId => Approval approval) _holdIdApproval;
 }
 
 library MintIntentStorageLib {
@@ -31,24 +31,24 @@ library MintIntentStorageLib {
         }
     }
 
-    function isConsumed(Intent storage intent) internal view returns (bool) {
-        return intent.flags & (1 << uint8(IntentFlag.CONSUMED)) != 0;
+    function isConsumed(Approval storage approval) internal view returns (bool) {
+        return approval.flags & (1 << uint8(ApprovalFlag.CONSUMED)) != 0;
     }
 
-    function isRevoked(Intent storage intent) internal view returns (bool) {
-        return intent.flags & (1 << uint8(IntentFlag.REVOKED)) != 0;
+    function isRevoked(Approval storage approval) internal view returns (bool) {
+        return approval.flags & (1 << uint8(ApprovalFlag.REVOKED)) != 0;
     }
 
-    function setConsumed(Intent storage intent) internal {
-        intent.flags |= 1 << uint8(IntentFlag.CONSUMED);
+    function setConsumed(Approval storage approval) internal {
+        approval.flags |= 1 << uint8(ApprovalFlag.CONSUMED);
     }
 
-    function setRevoked(Intent storage intent) internal {
-        intent.flags |= 1 << uint8(IntentFlag.REVOKED);
+    function setRevoked(Approval storage approval) internal {
+        approval.flags |= 1 << uint8(ApprovalFlag.REVOKED);
     }
 
-    function isValid(Intent storage intent) internal view returns (bool) {
-        return intent.flags == DEFAULT_FLAGS;
+    function isValid(Approval storage approval) internal view returns (bool) {
+        return approval.flags == DEFAULT_FLAGS;
     }
 
 }

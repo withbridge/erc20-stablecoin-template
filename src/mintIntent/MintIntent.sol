@@ -1,7 +1,7 @@
 // SPDX- License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Intent, MintIntentStorage, MintIntentStorageLib } from "./MintIntentStorage.sol";
+import { Approval, MintIntentStorage, MintIntentStorageLib } from "./MintIntentStorage.sol";
 import { IMintIntent } from "./interfaces/IMintIntent.sol";
 import {
     AccessControlEnumerableUpgradeable
@@ -10,7 +10,7 @@ import {
 contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
 
     using MintIntentStorageLib for MintIntentStorage;
-    using MintIntentStorageLib for Intent;
+    using MintIntentStorageLib for Approval;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Role Constants
@@ -48,7 +48,7 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
 
-    function publishIntent(
+    function publishApproval(
         uint256 _operationId,
         bytes32 _holdId,
         address _stablecoin,
@@ -64,29 +64,31 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
 
         // Check that the _holdId and _operationId are not already in use
         require(
-            $._operationHoldId[_operationId] == bytes32(0), IntentExistsForOperationId(_operationId)
+            $._operationHoldId[_operationId] == bytes32(0),
+            ApprovalExistsForOperationId(_operationId)
         );
         require(
-            $._holdIdIntent[_holdId].mintCommitment == bytes32(0), IntentExistsForHoldId(_holdId)
+            $._holdIdApproval[_holdId].mintCommitment == bytes32(0),
+            ApprovalExistsForHoldId(_holdId)
         );
 
         bytes32 mintCommitment = keccak256(abi.encode(_stablecoin, _recipient, _amount));
 
         // Store operationId for the holdId and the intent for the holdId
         $._operationHoldId[_operationId] = _holdId;
-        $._holdIdIntent[_holdId] = Intent({
+        $._holdIdApproval[_holdId] = Approval({
             mintCommitment: mintCommitment,
             expiry: _expiry,
             flags: MintIntentStorageLib.DEFAULT_FLAGS
         });
 
-        emit IntentPublished(
+        emit ApprovalPublished(
             msg.sender, _operationId, _holdId, _stablecoin, _recipient, _amount, _expiry
         );
     }
 
     // If used as a subcontract, we should probably make this internal
-    function consumeIntent(
+    function consumeApproval(
         uint256 _operationId,
         bytes32 _holdId,
         address _stablecoin,
@@ -99,17 +101,17 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
         // Check that the holdId stored is the same as the one provided
         require(holdId == _holdId, OperationIdHoldIdMismatch(_operationId, _holdId));
 
-        Intent storage intent = $._holdIdIntent[_holdId];
+        Approval storage approval = $._holdIdApproval[_holdId];
 
-        // Check that the intent exists and has not been consumed or revoked
-        bytes32 storedMintCommitment = intent.mintCommitment;
-        require(storedMintCommitment != bytes32(0), IntentNotExistsForHoldId(_holdId));
-        require(intent.isValid(), InvalidIntent(_holdId, intent.flags));
+        // Check that the approval exists and has not been consumed or revoked
+        bytes32 storedMintCommitment = approval.mintCommitment;
+        require(storedMintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
+        require(approval.isValid(), InvalidApproval(_holdId, approval.flags));
 
-        // Check that the intent has not expired
+        // Check that the approval has not expired
         require(
-            intent.expiry > block.timestamp,
-            IntentExpired(_operationId, _holdId, intent.expiry, block.timestamp)
+            approval.expiry > block.timestamp,
+            ApprovalExpired(_operationId, _holdId, approval.expiry, block.timestamp)
         );
         bytes32 providedMintCommitment = keccak256(abi.encode(_stablecoin, _recipient, _amount));
         require(
@@ -117,44 +119,44 @@ contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
             InvalidMintCommitment(storedMintCommitment, providedMintCommitment)
         );
 
-        // Consume the intent
-        intent.setConsumed();
+        // Consume the approval
+        approval.setConsumed();
 
-        emit IntentConsumed(msg.sender, _operationId, _holdId);
+        emit ApprovalConsumed(msg.sender, _operationId, _holdId);
     }
 
-    function revokeIntent(bytes32 _holdId) external onlyRole(PUBLISHER_ROLE) {
+    function revokeApproval(bytes32 _holdId) external onlyRole(PUBLISHER_ROLE) {
         MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
 
-        Intent storage intent = $._holdIdIntent[_holdId];
+        Approval storage approval = $._holdIdApproval[_holdId];
 
-        // Check that the intent exists and has not been consumed or revoked
-        require(intent.mintCommitment != bytes32(0), IntentNotExistsForHoldId(_holdId));
-        require(intent.isValid(), InvalidIntent(_holdId, intent.flags));
+        // Check that the approval exists and has not been consumed or revoked
+        require(approval.mintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
+        require(approval.isValid(), InvalidApproval(_holdId, approval.flags));
 
-        // Revoke the intent
-        intent.setRevoked();
+        // Revoke the approval
+        approval.setRevoked();
 
-        emit IntentRevoked(msg.sender, _holdId);
+        emit ApprovalRevoked(msg.sender, _holdId);
     }
 
     // Do we need a version that takes in the operationId instead of the holdId?
-    function extendIntent(bytes32 _holdId, uint64 _expiry) external onlyRole(PUBLISHER_ROLE) {
+    function extendApproval(bytes32 _holdId, uint64 _expiry) external onlyRole(PUBLISHER_ROLE) {
         MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
 
-        Intent storage intent = $._holdIdIntent[_holdId];
+        Approval storage approval = $._holdIdApproval[_holdId];
 
-        // Check that the intent exists and has not been consumed or revoked
-        require(intent.mintCommitment != bytes32(0), IntentNotExistsForHoldId(_holdId));
-        require(intent.isValid(), InvalidIntent(_holdId, intent.flags));
+        // Check that the approval exists and has not been consumed or revoked
+        require(approval.mintCommitment != bytes32(0), ApprovalNotExistsForHoldId(_holdId));
+        require(approval.isValid(), InvalidApproval(_holdId, approval.flags));
 
-        uint64 expiry = intent.expiry;
-        require(_expiry > expiry, IntentExpiryNotExtended(_holdId, _expiry, expiry));
+        uint64 expiry = approval.expiry;
+        require(_expiry > expiry, ApprovalExpiryNotExtended(_holdId, _expiry, expiry));
 
-        // Extend the intent
-        intent.expiry = _expiry;
+        // Extend the approval
+        approval.expiry = _expiry;
 
-        emit IntentExtended(msg.sender, _holdId, _expiry);
+        emit ApprovalExtended(msg.sender, _holdId, _expiry);
     }
 
 }
