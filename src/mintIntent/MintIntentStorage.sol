@@ -7,9 +7,11 @@ enum ApprovalFlag {
 }
 
 struct Approval {
-    bytes32 mintCommitment;
+    uint256 amount;
+    address recipient;
+    address stablecoin;
     uint64 expiry;
-    uint256 flags;
+    uint8 flags;
 }
 
 struct MintIntentStorage {
@@ -19,7 +21,7 @@ struct MintIntentStorage {
 
 library MintIntentStorageLib {
 
-    uint256 constant DEFAULT_FLAGS = 0;
+    uint8 constant DEFAULT_FLAGS = 0;
 
     /// @custom:storage-location eip7201:bridge.MintIntent
     bytes32 constant MINT_APPROVAL_STORAGE_LOCATION =
@@ -32,19 +34,19 @@ library MintIntentStorageLib {
     }
 
     function isConsumed(Approval storage approval) internal view returns (bool) {
-        return approval.flags & (1 << uint8(ApprovalFlag.CONSUMED)) != 0;
+        return approval.flags & (uint8(1) << uint8(ApprovalFlag.CONSUMED)) != 0;
     }
 
     function isRevoked(Approval storage approval) internal view returns (bool) {
-        return approval.flags & (1 << uint8(ApprovalFlag.REVOKED)) != 0;
+        return approval.flags & (uint8(1) << uint8(ApprovalFlag.REVOKED)) != 0;
     }
 
     function setConsumed(Approval storage approval) internal {
-        approval.flags |= 1 << uint8(ApprovalFlag.CONSUMED);
+        approval.flags |= uint8(1) << uint8(ApprovalFlag.CONSUMED);
     }
 
     function setRevoked(Approval storage approval) internal {
-        approval.flags |= 1 << uint8(ApprovalFlag.REVOKED);
+        approval.flags |= uint8(1) << uint8(ApprovalFlag.REVOKED);
     }
 
     function isValid(Approval storage approval) internal view returns (bool) {

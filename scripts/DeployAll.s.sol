@@ -149,7 +149,9 @@ contract DeployAll is Common {
         TokenAuthority taImpl = new TokenAuthority(rlProxy, true);
 
         taProxy = address(
-            new ERC1967Proxy(address(taImpl), abi.encodeCall(TokenAuthority.initialize, (deployer)))
+            new ERC1967Proxy(
+                address(taImpl), abi.encodeCall(TokenAuthority.initialize, (deployer, deployer))
+            )
         );
         console.log("TokenAuthority proxy:", taProxy);
     }

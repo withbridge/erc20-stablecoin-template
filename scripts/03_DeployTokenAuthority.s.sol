@@ -27,7 +27,7 @@ contract DeployTokenAuthority is Common {
             address(
                 new ERC1967Proxy(
                     address(taImplementation),
-                    abi.encodeCall(TokenAuthority.initialize, (msg.sender))
+                    abi.encodeCall(TokenAuthority.initialize, (msg.sender, msg.sender))
                 )
             )
         );

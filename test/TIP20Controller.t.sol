@@ -51,7 +51,7 @@ contract TIP20ControllerTest is Test {
         TIP20Controller implementation = new TIP20Controller(address(reserveLedgerToken), false);
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(TIP20Controller.initialize, (admin));
+        bytes memory initData = abi.encodeCall(TIP20Controller.initialize, (admin, admin));
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         controller = TIP20Controller(address(proxy));
 
@@ -82,7 +82,7 @@ contract TIP20ControllerTest is Test {
         TIP20Controller newController = new TIP20Controller(address(reserveLedgerToken), true);
 
         vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
-        newController.initialize(admin);
+        newController.initialize(admin, admin);
     }
 
     function test_initialize_sets_admin() public view {

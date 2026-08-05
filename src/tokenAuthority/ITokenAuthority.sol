@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
+
 /// @title ITokenAuthority
 /// @author Bridge
 /// @notice Interface for the TokenAuthority contract which manages minting rate limits and
@@ -195,19 +197,14 @@ interface ITokenAuthority {
      * @notice Mints stablecoins to a recipient address with an approval
      * @dev Checks and decrements transaction limit, and minter allowance before
      * minting
-     * @param stablecoinContract The address of the stablecoin contract to mint from
-     * @param to The address to receive the minted tokens
-     * @param amount The amount of tokens to mint
-     * @param operationId The operation ID
-     * @param holdId The hold ID
+     * @param _params The parameters for the mint operation
+     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
+     * @custom:param _params.to The address to receive the minted tokens
+     * @custom:param _params.amount The amount of tokens to mint
+     * @custom:param _params.operationId The operation ID
+     * @custom:param _params.holdId The hold ID
      */
-    function mintWithApproval(
-        address stablecoinContract,
-        address to,
-        uint256 amount,
-        uint256 operationId,
-        bytes32 holdId
-    ) external;
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) external;
 
     /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract

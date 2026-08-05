@@ -47,6 +47,7 @@ contract TokenAuthorityTest is Test {
 
     address bridgeAdmin;
     address tokenAuthorityAdmin;
+    address tokenAuthorityPublisher;
     address reserveLedgerAdmin;
     address wrappedStablecoinAdmin;
     address backedStablecoinAdmin;
@@ -63,6 +64,7 @@ contract TokenAuthorityTest is Test {
     function setUp() public {
         bridgeAdmin = makeAddr("bridgeAdmin");
         tokenAuthorityAdmin = makeAddr("tokenAuthorityAdmin");
+        tokenAuthorityPublisher = makeAddr("tokenAuthorityPublisher");
         reserveLedgerAdmin = makeAddr("reserveLedgerAdmin");
         wrappedStablecoinAdmin = makeAddr("wrappedStablecoinAdmin");
         backedStablecoinAdmin = makeAddr("backedStablecoinAdmin");
@@ -172,7 +174,7 @@ contract TokenAuthorityTest is Test {
         // Deploy TokenAuthority
         ////////////////////////////////////////////////////////////////////////////////////////////
         tokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
-        tokenAuthority.initialize(tokenAuthorityAdmin);
+        tokenAuthority.initialize(tokenAuthorityAdmin, tokenAuthorityPublisher);
 
         ////////////////////////////////////////////////////////////////////////////////////////////
         // Deploy Token Handlers
@@ -584,7 +586,7 @@ contract TokenAuthorityTest is Test {
 
     function test_tokenAuthorityInitialize() public {
         TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
-        newTokenAuthority.initialize(bridgeAdmin);
+        newTokenAuthority.initialize(bridgeAdmin, tokenAuthorityPublisher);
         bool adminHasRole = newTokenAuthority.hasRole(DEFAULT_ADMIN_ROLE, bridgeAdmin);
 
         assert(adminHasRole);
@@ -593,7 +595,7 @@ contract TokenAuthorityTest is Test {
     function test_tokenAuthorityInitialize_revertWhenDisabled() public {
         TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
         vm.expectRevert(InvalidInitialization.selector);
-        newTokenAuthority.initialize(bridgeAdmin);
+        newTokenAuthority.initialize(bridgeAdmin, tokenAuthorityPublisher);
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

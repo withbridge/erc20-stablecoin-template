@@ -18,7 +18,7 @@ import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC16
 
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
-import { MintIntent } from "../mintIntent/MintIntent.sol";
+import { IMintIntent, MintIntent } from "../mintIntent/MintIntent.sol";
 
 /// @title TokenAuthority
 /// @author Bridge
@@ -103,9 +103,10 @@ contract TokenAuthority is
      * @notice Initializes the TokenAuthority contract
      * @param _admin The address to be granted the admin role
      */
-    function initialize(address _admin) public initializer {
+    function initialize(address _admin, address _publisher) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __MintIntent_init(_publisher);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     }
@@ -151,25 +152,30 @@ contract TokenAuthority is
         _mint(stablecoinContract, to, amount);
     }
 
-    function mintWithApproval(
-        address stablecoinContract,
-        address to,
-        uint256 amount,
-        uint256 operationId,
-        bytes32 holdId
-    ) public {
-        require(amount > 0, AmountCannotBeZero());
+    /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks and decrements transaction limit, and minter allowance before
+     * minting
+     * @param _params The parameters for the mint operation
+     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
+     * @custom:param _params.to The address to receive the minted tokens
+     * @custom:param _params.amount The amount of tokens to mint
+     * @custom:param _params.operationId The operation ID
+     * @custom:param _params.holdId The hold ID
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) public {
+        require(_params.amount > 0, AmountCannotBeZero());
 
-        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
-        require(minterAllowance >= amount, MinterAllowanceExceeded());
-        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
+        uint256 mintTxnLimit = mintTxnLimits[_params.stablecoin];
+        uint256 minterAllowance = minterAllowances[_params.stablecoin][msg.sender];
+        require(minterAllowance >= _params.amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= _params.amount, MintTxnLimitExceeded());
 
-        minterAllowances[stablecoinContract][msg.sender] -= amount;
+        minterAllowances[_params.stablecoin][msg.sender] -= _params.amount;
 
-        consumeApproval(operationId, holdId, stablecoinContract, to, amount);
+        _consumeApproval(_params);
 
-        _mint(stablecoinContract, to, amount);
+        _mint(_params.stablecoin, _params.recipient, _params.amount);
     }
 
     /**

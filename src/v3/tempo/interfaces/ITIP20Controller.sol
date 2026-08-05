@@ -1,12 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IMintIntent } from "../../../mintIntent/interfaces/IMintIntent.sol";
+
 /// @title ITIP20Controller
 /// @notice Interface for the TIP20Controller contract which manages minting rate limits and
 /// allowances for stablecoins backed by a reserve ledger token
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
 interface ITIP20Controller {
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Enums
+    //////////////////////////////////////////////////////////////////////////*/
+
+    enum MintIntentVersion {
+        Optional,
+        Required
+    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Errors
@@ -33,6 +44,9 @@ interface ITIP20Controller {
     /// @notice Thrown when attempting to perform an operation with an invalid stablecoin contract
     /// @dev This prevents operations that would result in an invalid stablecoin contract
     error InvalidStablecoinContract();
+
+    /// @notice Thrown when the mint approval version is required
+    error MintIntentRequired();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -102,6 +116,11 @@ interface ITIP20Controller {
         address indexed sender, address indexed stablecoinContract, address indexed reserveStore
     );
 
+    /// @notice Emitted when the mint approval version is set
+    /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
+    /// @param mintIntentVersion The new mint approval version
+    event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -115,6 +134,13 @@ interface ITIP20Controller {
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) external;
+
+    /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks transaction limit and decrements minter allowance before minting.
+     * @param _params The parameters for the mint operation
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) external;
 
     /**
      * @notice Mints stablecoins to a specified address for bridge ecosystem contracts.
@@ -179,6 +205,12 @@ interface ITIP20Controller {
      * @param reserveStore The address of the reserve store
      */
     function setReserveStore(address stablecoinContract, address reserveStore) external;
+
+    /**
+     * @notice Sets whether mint intents are optional or required
+     * @param mintIntentVersion The new mint approval version
+     */
+    function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
 
     /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract
