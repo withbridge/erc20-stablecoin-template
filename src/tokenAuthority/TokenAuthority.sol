@@ -187,6 +187,25 @@ contract TokenAuthority is
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
+        _burn(stablecoinContract, amount);
+    }
+
+    /**
+     * @notice Burns tokens with a globally unique operation ID.
+     * @dev The operation ID can only be consumed once across mint approvals and burn operations.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of tokens to burn
+     * @param operationId The operation ID to consume for this burn
+     */
+    function burn(address stablecoinContract, uint256 amount, uint256 operationId)
+        public
+        onlyRole(BURNER_ROLE)
+    {
+        _consumeUnusedOperationId(operationId);
+        _burn(stablecoinContract, amount);
+    }
+
+    function _burn(address stablecoinContract, uint256 amount) internal {
         address tokenHandler = tokenHandlers[stablecoinContract];
         require(tokenHandler != address(0), TokenHandlerNotSet());
         IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);

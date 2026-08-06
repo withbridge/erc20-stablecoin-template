@@ -1,7 +1,12 @@
 // SPDX- License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Approval, MintIntentStorage, MintIntentStorageLib } from "./MintIntentStorage.sol";
+import {
+    Approval,
+    MintIntentStorage,
+    MintIntentStorageLib,
+    OperationState
+} from "./MintIntentStorage.sol";
 import { IMintIntent } from "./interfaces/IMintIntent.sol";
 import {
     AccessControlEnumerableUpgradeable
@@ -57,7 +62,8 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
 
         // Check that the _holdId and _operationId are not already in use
         require(
-            $._operationHoldId[_params.operationId] == bytes32(0),
+            $._operationStates[_params.operationId] == OperationState.UNUSED
+                && $._operationHoldId[_params.operationId] == bytes32(0),
             ApprovalExistsForOperationId(_params.operationId)
         );
         require(
@@ -66,13 +72,15 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         );
 
         // Store operationId for the holdId and the intent for the holdId
+        $._operationStates[_params.operationId] = OperationState.RESERVED;
         $._operationHoldId[_params.operationId] = _params.holdId;
         $._holdIdApproval[_params.holdId] = Approval({
             amount: _params.amount,
             recipient: _params.recipient,
             stablecoin: _params.stablecoin,
             expiry: _expiry,
-            flags: MintIntentStorageLib.DEFAULT_FLAGS
+            flags: MintIntentStorageLib.DEFAULT_FLAGS,
+            operationId: _params.operationId
         });
 
         emit ApprovalPublished(
@@ -96,9 +104,37 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         require(approval.isValid(), InvalidApproval(_holdId, approval.flags));
 
         // Revoke the approval
+        uint256 operationId = approval.operationId;
+        if (operationId != 0) {
+            $._operationStates[operationId] = OperationState.REVOKED;
+        }
         approval.setRevoked();
 
         emit ApprovalRevoked(msg.sender, _holdId);
+    }
+
+    function revokeOperationId(uint256 _operationId) external onlyRole(PUBLISHER_ROLE) {
+        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
+
+        require(_operationId != 0, InvalidOperationId());
+
+        OperationState state = $._operationStates[_operationId];
+        require(
+            state == OperationState.UNUSED || state == OperationState.RESERVED, InvalidOperationId()
+        );
+
+        bytes32 holdId = $._operationHoldId[_operationId];
+        if (holdId != bytes32(0)) {
+            Approval storage approval = $._holdIdApproval[holdId];
+            require(approval.stablecoin != address(0), ApprovalNotExistsForHoldId(holdId));
+            require(approval.isValid(), InvalidApproval(holdId, approval.flags));
+            approval.setRevoked();
+            emit ApprovalRevoked(msg.sender, holdId);
+        }
+
+        $._operationStates[_operationId] = OperationState.REVOKED;
+
+        emit OperationIdRevoked(msg.sender, _operationId);
     }
 
     // Do we need a version that takes in the operationId instead of the holdId?
@@ -137,6 +173,7 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
         bytes32 holdId = $._operationHoldId[_params.operationId];
         Approval storage approval = $._holdIdApproval[_params.holdId];
+        OperationState operationState = $._operationStates[_params.operationId];
 
         uint256 errors = 0;
 
@@ -144,7 +181,11 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
             errors |= INVALID_HOLD_ID_FLAG;
         }
 
-        if (_params.operationId == 0 || _params.holdId != holdId) {
+        if (
+            _params.operationId == 0 || _params.holdId != holdId
+                || _params.operationId != approval.operationId
+                || operationState != OperationState.RESERVED
+        ) {
             errors |= INVALID_OPERATION_ID_FLAG;
         }
 
@@ -168,9 +209,23 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         require(errors == 0, InvalidApprovalParams(_convertToInvalidApprovalError(errors)));
 
         // Consume the approval
+        $._operationStates[_params.operationId] = OperationState.CONSUMED;
         approval.setConsumed();
 
         emit ApprovalConsumed(msg.sender, _params.operationId, _params.holdId);
+    }
+
+    function _consumeUnusedOperationId(uint256 _operationId) internal {
+        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
+
+        require(_operationId != 0, InvalidOperationId());
+        require(
+            $._operationStates[_operationId] == OperationState.UNUSED
+                && $._operationHoldId[_operationId] == bytes32(0),
+            InvalidOperationId()
+        );
+
+        $._operationStates[_operationId] = OperationState.CONSUMED;
     }
 
     function _convertToInvalidApprovalError(uint256 _errors)

@@ -103,6 +103,11 @@ interface IMintIntent {
     /// @param _newExpiry The updated approval expiry timestamp.
     event ApprovalExtended(address indexed _publisher, bytes32 indexed _holdId, uint256 _newExpiry);
 
+    /// @notice Emitted when an operation ID is revoked.
+    /// @param _publisher The address that revoked the operation ID.
+    /// @param _operationId The revoked operation ID.
+    event OperationIdRevoked(address indexed _publisher, uint256 indexed _operationId);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -124,6 +129,13 @@ interface IMintIntent {
      * @param _holdId The hold ID associated with the approval.
      */
     function revokeApproval(bytes32 _holdId) external;
+
+    /**
+     * @notice Revokes an operation ID.
+     * @dev Can revoke either an unused operation ID or an active approval's operation ID.
+     * @param _operationId The operation ID to revoke.
+     */
+    function revokeOperationId(uint256 _operationId) external;
 
     /**
      * @notice Extends the expiry of an existing mint approval.

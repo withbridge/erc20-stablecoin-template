@@ -7,6 +7,8 @@ import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.so
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { Test } from "forge-std/Test.sol";
 
+import { Approval } from "src/mintIntent/MintIntentStorage.sol";
+import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
 import { ITokenAuthority } from "src/tokenAuthority/ITokenAuthority.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
@@ -399,6 +401,187 @@ contract TokenAuthorityTest is Test {
             900e6,
             "backedStablecoin minter allowance"
         );
+    }
+
+    function test_burnWithOperationId_consumesUnusedOperationId() public {
+        uint256 operationId = 1;
+
+        vm.prank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
+
+        vm.prank(alice);
+        reserveLedgerToken.transfer(tokenAuthorityAdmin, 100e6);
+
+        vm.startPrank(tokenAuthorityAdmin);
+        reserveLedgerToken.approve(address(tokenAuthority), 100e6);
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6, operationId);
+
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        tokenAuthority.burn(address(reserveLedgerToken), 1, operationId);
+        vm.stopPrank();
+
+        assertEq(reserveLedgerToken.balanceOf(tokenAuthorityAdmin), 0, "rl admin bal");
+        assertEq(reserveLedgerToken.totalSupply(), 0, "rl total supply");
+    }
+
+    function test_burnWithOperationId_revertWhenOperationIdReservedByMintApproval() public {
+        uint256 operationId = 2;
+        bytes32 holdId = keccak256("reserved-mint-approval");
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.publishApproval(
+            IMintIntent.ApprovalParams({
+                operationId: operationId,
+                holdId: holdId,
+                amount: 100e6,
+                recipient: bob,
+                stablecoin: address(wrappedStablecoin)
+            }),
+            uint64(block.timestamp + 1 days)
+        );
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+    }
+
+    function test_burnWithOperationId_revertWhenOperationIdConsumedByMintApproval() public {
+        uint256 operationId = 6;
+        bytes32 holdId = keccak256("consumed-mint-approval");
+        IMintIntent.ApprovalParams memory params = IMintIntent.ApprovalParams({
+            operationId: operationId,
+            holdId: holdId,
+            amount: 100e6,
+            recipient: bob,
+            stablecoin: address(wrappedStablecoin)
+        });
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        Approval memory publishedApproval = tokenAuthority.getApproval(holdId);
+        assertEq(publishedApproval.operationId, operationId, "approval operation id");
+
+        vm.prank(minter);
+        tokenAuthority.mintWithApproval(params);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+    }
+
+    function test_publishApproval_revertWhenOperationIdConsumedByBurn() public {
+        uint256 operationId = 3;
+
+        vm.prank(minter);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
+
+        vm.prank(alice);
+        reserveLedgerToken.transfer(tokenAuthorityAdmin, 100e6);
+
+        vm.startPrank(tokenAuthorityAdmin);
+        reserveLedgerToken.approve(address(tokenAuthority), 100e6);
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6, operationId);
+        vm.stopPrank();
+
+        vm.prank(tokenAuthorityPublisher);
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, operationId)
+        );
+        tokenAuthority.publishApproval(
+            IMintIntent.ApprovalParams({
+                operationId: operationId,
+                holdId: keccak256("burn-consumed-operation"),
+                amount: 100e6,
+                recipient: bob,
+                stablecoin: address(wrappedStablecoin)
+            }),
+            uint64(block.timestamp + 1 days)
+        );
+    }
+
+    function test_revokeOperationId_blocksBurnAndApproval() public {
+        uint256 operationId = 4;
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.revokeOperationId(operationId);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6, operationId);
+
+        vm.prank(tokenAuthorityPublisher);
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, operationId)
+        );
+        tokenAuthority.publishApproval(
+            IMintIntent.ApprovalParams({
+                operationId: operationId,
+                holdId: keccak256("revoked-operation"),
+                amount: 100e6,
+                recipient: bob,
+                stablecoin: address(wrappedStablecoin)
+            }),
+            uint64(block.timestamp + 1 days)
+        );
+    }
+
+    function test_revokeOperationId_revokesReservedMintApproval() public {
+        uint256 operationId = 5;
+        bytes32 holdId = keccak256("revoke-reserved-operation");
+        IMintIntent.ApprovalParams memory params = IMintIntent.ApprovalParams({
+            operationId: operationId,
+            holdId: holdId,
+            amount: 100e6,
+            recipient: bob,
+            stablecoin: address(wrappedStablecoin)
+        });
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        Approval memory publishedApproval = tokenAuthority.getApproval(holdId);
+        assertEq(publishedApproval.operationId, operationId, "approval operation id");
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.revokeOperationId(operationId);
+
+        Approval memory approval = tokenAuthority.getApproval(holdId);
+        assertEq(approval.flags, 2, "approval revoked");
+
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.InvalidApproval.selector, holdId, uint256(2))
+        );
+        tokenAuthority.mintWithApproval(params);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+    }
+
+    function test_revokeApproval_revokesOperationId() public {
+        uint256 operationId = 7;
+        bytes32 holdId = keccak256("revoke-approval-operation");
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.publishApproval(
+            IMintIntent.ApprovalParams({
+                operationId: operationId,
+                holdId: holdId,
+                amount: 100e6,
+                recipient: bob,
+                stablecoin: address(wrappedStablecoin)
+            }),
+            uint64(block.timestamp + 1 days)
+        );
+
+        vm.prank(tokenAuthorityPublisher);
+        tokenAuthority.revokeApproval(holdId);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

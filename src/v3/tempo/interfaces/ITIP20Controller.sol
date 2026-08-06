@@ -162,6 +162,14 @@ interface ITIP20Controller {
     function burn(address stablecoinContract, uint256 amount) external;
 
     /**
+     * @notice Burns tokens from the sender's balance with a globally unique operation ID.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of tokens to burn
+     * @param operationId The operation ID to consume for this burn
+     */
+    function burn(address stablecoinContract, uint256 amount, uint256 operationId) external;
+
+    /**
      * @notice Unwraps a given amount of a stablecoin for the caller
      * @dev Burns the stablecoin and transfers the underlying reserve tokens from the
      * ReserveStore to the caller.

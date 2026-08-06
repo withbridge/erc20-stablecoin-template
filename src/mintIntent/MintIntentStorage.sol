@@ -6,17 +6,26 @@ enum ApprovalFlag {
     REVOKED
 }
 
+enum OperationState {
+    UNUSED,
+    RESERVED,
+    CONSUMED,
+    REVOKED
+}
+
 struct Approval {
     uint256 amount;
     address recipient;
     address stablecoin;
     uint64 expiry;
     uint8 flags;
+    uint256 operationId;
 }
 
 struct MintIntentStorage {
     mapping(uint256 operationId => bytes32 holdId) _operationHoldId;
     mapping(bytes32 holdId => Approval approval) _holdIdApproval;
+    mapping(uint256 operationId => OperationState state) _operationStates;
 }
 
 library MintIntentStorageLib {
