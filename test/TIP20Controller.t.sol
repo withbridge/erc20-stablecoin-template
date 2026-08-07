@@ -6,6 +6,7 @@ import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.so
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { Test } from "forge-std/Test.sol";
 
+import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
 import { TIP20Controller } from "src/v3/tempo/TIP20Controller.sol";
 import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
 import { StdPrecompiles } from "tempo-std/StdPrecompiles.sol";
@@ -51,7 +52,7 @@ contract TIP20ControllerTest is Test {
         TIP20Controller implementation = new TIP20Controller(address(reserveLedgerToken), false);
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(TIP20Controller.initialize, (admin));
+        bytes memory initData = abi.encodeCall(TIP20Controller.initialize, (admin, admin));
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         controller = TIP20Controller(address(proxy));
 
@@ -82,7 +83,7 @@ contract TIP20ControllerTest is Test {
         TIP20Controller newController = new TIP20Controller(address(reserveLedgerToken), true);
 
         vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
-        newController.initialize(admin);
+        newController.initialize(admin, admin);
     }
 
     function test_initialize_sets_admin() public view {
@@ -433,6 +434,97 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
+    function test_burnWithOperationId_consumesUnusedOperationId() public {
+        uint256 operationId = 1;
+        uint256 mintAmount = 100e6;
+        uint256 burnAmount = 30e6;
+
+        _mintStablecoinToMinter(mintAmount);
+
+        vm.startPrank(minter);
+        stablecoin.approve(address(controller), burnAmount);
+        controller.burn(address(stablecoin), burnAmount, operationId);
+
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        controller.burn(address(stablecoin), 1, operationId);
+        vm.stopPrank();
+    }
+
+    function test_burnWithOperationId_revertWhenOperationIdReservedByMintApproval() public {
+        uint256 operationId = 2;
+        bytes32 holdId = keccak256("tip20-reserved-mint-approval");
+
+        vm.prank(admin);
+        controller.grantRole(controller.BURNER_ROLE(), minter);
+
+        vm.prank(admin);
+        controller.publishApproval(
+            IMintIntent.ApprovalParams({
+                operationId: operationId,
+                holdId: holdId,
+                amount: 100e6,
+                recipient: user1,
+                stablecoin: address(stablecoin)
+            }),
+            uint64(block.timestamp + 1 days)
+        );
+
+        vm.prank(minter);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        controller.burn(address(stablecoin), 100e6, operationId);
+    }
+
+    function test_burnWithOperationId_revertWhenOperationIdConsumedByMintApproval() public {
+        uint256 operationId = 3;
+        IMintIntent.ApprovalParams memory params = IMintIntent.ApprovalParams({
+            operationId: operationId,
+            holdId: keccak256("tip20-consumed-mint-approval"),
+            amount: 100e6,
+            recipient: minter,
+            stablecoin: address(stablecoin)
+        });
+
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(address(stablecoin), 100e6);
+        controller.setMinterAllowance(address(stablecoin), minter, 100e6);
+        controller.grantRole(controller.BURNER_ROLE(), minter);
+        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+        vm.stopPrank();
+
+        vm.prank(minter);
+        controller.mintWithApproval(params);
+
+        vm.prank(minter);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        controller.burn(address(stablecoin), 100e6, operationId);
+    }
+
+    function test_publishApproval_revertWhenOperationIdConsumedByBurn() public {
+        uint256 operationId = 4;
+
+        _mintStablecoinToMinter(100e6);
+
+        vm.startPrank(minter);
+        stablecoin.approve(address(controller), 30e6);
+        controller.burn(address(stablecoin), 30e6, operationId);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, operationId)
+        );
+        controller.publishApproval(
+            IMintIntent.ApprovalParams({
+                operationId: operationId,
+                holdId: keccak256("tip20-burn-consumed-operation"),
+                amount: 100e6,
+                recipient: user1,
+                stablecoin: address(stablecoin)
+            }),
+            uint64(block.timestamp + 1 days)
+        );
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Unwrap Tests
     //////////////////////////////////////////////////////////////////////////*/
@@ -667,6 +759,17 @@ contract TIP20ControllerTest is Test {
             name, symbol, "USD", StdTokens.PATH_USD, admin, keccak256(abi.encodePacked(name))
         );
         return ITIP20(tokenAddr);
+    }
+
+    function _mintStablecoinToMinter(uint256 amount) internal {
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(address(stablecoin), amount);
+        controller.setMinterAllowance(address(stablecoin), minter, amount);
+        controller.grantRole(controller.BURNER_ROLE(), minter);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        controller.mint(address(stablecoin), minter, amount);
     }
 
 }

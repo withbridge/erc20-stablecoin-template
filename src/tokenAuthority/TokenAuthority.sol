@@ -18,11 +18,18 @@ import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC16
 
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
+import { IMintIntent, MintIntent } from "../mintIntent/MintIntent.sol";
+
 /// @title TokenAuthority
 /// @author Bridge
 /// @notice Central authority contract for managing stablecoin minting, burning, and wrapping
 /// @dev Coordinates token operations through pluggable token handlers and enforces rate limits
-contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
+contract TokenAuthority is
+    ITokenAuthority,
+    AccessControlEnumerableUpgradeable,
+    UUPSUpgradeable,
+    MintIntent
+{
 
     using SafeERC20 for IERC20;
     using SafeERC20 for IERC20Mintable;
@@ -39,7 +46,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Immutable Variables
+                                Constants
     //////////////////////////////////////////////////////////////////////////*/
 
     bytes32 public constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
@@ -69,6 +76,8 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     /// @notice Maps each stablecoin contract address to its respective token handler
     mapping(address stablecoinContract => address tokenHandler) tokenHandlers;
 
+    MintIntentVersion public mintIntentVersion;
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
@@ -94,9 +103,10 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @notice Initializes the TokenAuthority contract
      * @param _admin The address to be granted the admin role
      */
-    function initialize(address _admin) public initializer {
+    function initialize(address _admin, address _publisher) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __MintIntent_init(_publisher);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     }
@@ -114,6 +124,7 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
+        require(mintIntentVersion == MintIntentVersion.Optional, MintIntentRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
@@ -142,6 +153,32 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
     }
 
     /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks and decrements transaction limit, and minter allowance before
+     * minting
+     * @param _params The parameters for the mint operation
+     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
+     * @custom:param _params.to The address to receive the minted tokens
+     * @custom:param _params.amount The amount of tokens to mint
+     * @custom:param _params.operationId The operation ID
+     * @custom:param _params.holdId The hold ID
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) public {
+        require(_params.amount > 0, AmountCannotBeZero());
+
+        uint256 mintTxnLimit = mintTxnLimits[_params.stablecoin];
+        uint256 minterAllowance = minterAllowances[_params.stablecoin][msg.sender];
+        require(minterAllowance >= _params.amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= _params.amount, MintTxnLimitExceeded());
+
+        minterAllowances[_params.stablecoin][msg.sender] -= _params.amount;
+
+        _consumeApproval(_params);
+
+        _mint(_params.stablecoin, _params.recipient, _params.amount);
+    }
+
+    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
      * ledger token, it calls burn directly; otherwise, it calls unwrap on the ERC20WrapUnwrap
@@ -150,6 +187,25 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
+        _burn(stablecoinContract, amount);
+    }
+
+    /**
+     * @notice Burns tokens with a globally unique operation ID.
+     * @dev The operation ID can only be consumed once across mint approvals and burn operations.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of tokens to burn
+     * @param operationId The operation ID to consume for this burn
+     */
+    function burn(address stablecoinContract, uint256 amount, uint256 operationId)
+        public
+        onlyRole(BURNER_ROLE)
+    {
+        _consumeUnusedOperationId(operationId);
+        _burn(stablecoinContract, amount);
+    }
+
+    function _burn(address stablecoinContract, uint256 amount) internal {
         address tokenHandler = tokenHandlers[stablecoinContract];
         require(tokenHandler != address(0), TokenHandlerNotSet());
         IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
@@ -304,6 +360,15 @@ contract TokenAuthority is ITokenAuthority, AccessControlEnumerableUpgradeable, 
         delete mintTxnLimits[stablecoinContract];
 
         emit StablecoinUnregistered(msg.sender, stablecoinContract);
+    }
+
+    function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        mintIntentVersion = _mintIntentVersion;
+
+        emit MintIntentVersionSet(msg.sender, mintIntentVersion);
     }
 
     /*//////////////////////////////////////////////////////////////////////////

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IMintIntent, MintIntent } from "../../mintIntent/MintIntent.sol";
 import { ReserveStore } from "./ReserveStore.sol";
 import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import {
@@ -18,7 +19,12 @@ import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 /// multiple stablecoins backed by a single reserve ledger token
 /// @dev Uses ReserveStore contracts to hold reserve ledger tokens for each stablecoin.
 ///      Each stablecoin has its own ReserveStore to keep ledger tokens separate for reconciliation.
-contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
+contract TIP20Controller is
+    ITIP20Controller,
+    AccessControlEnumerableUpgradeable,
+    UUPSUpgradeable,
+    MintIntent
+{
 
     using SafeERC20 for IERC20;
     using SafeERC20 for ITIP20;
@@ -60,6 +66,8 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
     /// @notice Maps stablecoin contract address to its ReserveStore address
     mapping(address stablecoinContract => address reserveStore) public reserveStores;
 
+    MintIntentVersion public mintIntentVersion;
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
@@ -85,9 +93,10 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @notice Initializes the TIP20Controller contract
      * @param _admin The address to be granted the admin role
      */
-    function initialize(address _admin) public initializer {
+    function initialize(address _admin, address _publisher) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __MintIntent_init(_publisher);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     }
@@ -105,6 +114,7 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
+        require(mintIntentVersion == MintIntentVersion.Optional, MintIntentRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
@@ -115,6 +125,32 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         minterAllowances[stablecoinContract][msg.sender] -= amount;
 
         _mint(stablecoinContract, to, amount);
+    }
+
+    /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks and decrements transaction limit, and minter allowance before
+     * minting
+     * @param _params The parameters for the mint operation
+     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
+     * @custom:param _params.to The address to receive the minted tokens
+     * @custom:param _params.amount The amount of tokens to mint
+     * @custom:param _params.operationId The operation ID
+     * @custom:param _params.holdId The hold ID
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) public {
+        require(_params.amount > 0, AmountCannotBeZero());
+
+        uint256 mintTxnLimit = mintTxnLimits[_params.stablecoin];
+        uint256 minterAllowance = minterAllowances[_params.stablecoin][msg.sender];
+        require(minterAllowance >= _params.amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= _params.amount, MintTxnLimitExceeded());
+
+        minterAllowances[_params.stablecoin][msg.sender] -= _params.amount;
+
+        _consumeApproval(_params);
+
+        _mint(_params.stablecoin, _params.recipient, _params.amount);
     }
 
     /**
@@ -139,6 +175,25 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) public onlyRole(BURNER_ROLE) {
+        _burn(stablecoinContract, amount);
+    }
+
+    /**
+     * @notice Burns tokens with a globally unique operation ID.
+     * @dev The operation ID can only be consumed once across mint approvals and burn operations.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of tokens to burn
+     * @param operationId The operation ID to consume for this burn
+     */
+    function burn(address stablecoinContract, uint256 amount, uint256 operationId)
+        public
+        onlyRole(BURNER_ROLE)
+    {
+        _consumeUnusedOperationId(operationId);
+        _burn(stablecoinContract, amount);
+    }
+
+    function _burn(address stablecoinContract, uint256 amount) internal {
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
@@ -260,6 +315,15 @@ contract TIP20Controller is ITIP20Controller, AccessControlEnumerableUpgradeable
         reserveStores[stablecoinContract] = reserveStore;
 
         emit ReserveStoreSet(msg.sender, stablecoinContract, reserveStore);
+    }
+
+    function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        mintIntentVersion = _mintIntentVersion;
+
+        emit MintIntentVersionSet(msg.sender, mintIntentVersion);
     }
 
     /*//////////////////////////////////////////////////////////////////////////

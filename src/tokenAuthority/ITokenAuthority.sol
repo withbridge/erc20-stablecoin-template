@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
+
 /// @title ITokenAuthority
 /// @author Bridge
 /// @notice Interface for the TokenAuthority contract which manages minting rate limits and
@@ -8,6 +10,15 @@ pragma solidity ^0.8.24;
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
 interface ITokenAuthority {
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Enums
+    //////////////////////////////////////////////////////////////////////////*/
+
+    enum MintIntentVersion {
+        Optional,
+        Required
+    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Errors
@@ -52,6 +63,9 @@ interface ITokenAuthority {
 
     /// @notice Thrown when a stablecoin is already registered
     error StablecoinAlreadyRegistered();
+
+    /// @notice Thrown when the mint approval version is required
+    error MintIntentRequired();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -150,6 +164,11 @@ interface ITokenAuthority {
     /// @param stablecoinContract The address of the stablecoin contract
     event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
 
+    /// @notice Emitted when the mint approval version is set
+    /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
+    /// @param mintIntentVersion The new mint approval version
+    event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -175,6 +194,19 @@ interface ITokenAuthority {
     function mintBridgeEcosystem(address stablecoinContract, address to, uint256 amount) external;
 
     /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks and decrements transaction limit, and minter allowance before
+     * minting
+     * @param _params The parameters for the mint operation
+     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
+     * @custom:param _params.to The address to receive the minted tokens
+     * @custom:param _params.amount The amount of tokens to mint
+     * @custom:param _params.operationId The operation ID
+     * @custom:param _params.holdId The hold ID
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) external;
+
+    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
      * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin
@@ -182,6 +214,14 @@ interface ITokenAuthority {
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) external;
+
+    /**
+     * @notice Burns tokens from the sender's balance with a globally unique operation ID.
+     * @param stablecoinContract The address of the stablecoin contract.
+     * @param amount The amount of tokens to burn.
+     * @param operationId The operation ID to consume for this burn.
+     */
+    function burn(address stablecoinContract, uint256 amount, uint256 operationId) external;
 
     /**
      * @notice Unwraps a given amount of a wrapped stablecoin for the caller
