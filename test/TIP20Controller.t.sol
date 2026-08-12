@@ -6,6 +6,7 @@ import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.so
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { Test } from "forge-std/Test.sol";
 
+import { Approval } from "src/mintIntent/MintIntentStorage.sol";
 import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
 import { TIP20Controller } from "src/v3/tempo/TIP20Controller.sol";
 import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
@@ -526,6 +527,415 @@ contract TIP20ControllerTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                                Mint Intent Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_initialize_grantsPublisherRole() public view {
+        assertTrue(controller.hasRole(controller.PUBLISHER_ROLE(), admin));
+    }
+
+    function test_publishRevokeExtend_revertWhenNotPublisher() public {
+        IMintIntent.ApprovalParams memory params = _approvalParams(10, keccak256("not-publisher"));
+
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                controller.PUBLISHER_ROLE()
+            )
+        );
+        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                controller.PUBLISHER_ROLE()
+            )
+        );
+        controller.revokeApproval(params.holdId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                controller.PUBLISHER_ROLE()
+            )
+        );
+        controller.revokeOperationId(params.operationId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                controller.PUBLISHER_ROLE()
+            )
+        );
+        controller.extendApproval(params.holdId, uint64(block.timestamp + 2 days));
+        vm.stopPrank();
+    }
+
+    function test_publishApproval_storesFieldsAndEmits() public {
+        uint256 operationId = 11;
+        bytes32 holdId = keccak256("publish-stores-fields");
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit IMintIntent.ApprovalPublished(
+            admin, operationId, holdId, address(stablecoin), user1, 100e6, expiry
+        );
+        controller.publishApproval(params, expiry);
+
+        Approval memory approval = controller.getApproval(holdId);
+        assertEq(approval.amount, params.amount);
+        assertEq(approval.recipient, params.recipient);
+        assertEq(approval.stablecoin, params.stablecoin);
+        assertEq(approval.expiry, expiry);
+        assertEq(approval.flags, 0);
+        assertEq(approval.operationId, operationId);
+    }
+
+    function test_publishApproval_rejectsInvalidInputsAndDuplicates() public {
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        controller.publishApproval(
+            _approvalParams(0, keccak256("zero-operation")), uint64(block.timestamp + 1 days)
+        );
+
+        vm.expectRevert(IMintIntent.InvalidHoldId.selector);
+        controller.publishApproval(
+            _approvalParams(12, bytes32(0)), uint64(block.timestamp + 1 days)
+        );
+
+        IMintIntent.ApprovalParams memory params = _approvalParams(13, keccak256("invalid-publish"));
+
+        params.amount = 0;
+        vm.expectRevert(IMintIntent.InvalidAmount.selector);
+        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        params = _approvalParams(14, keccak256("zero-stablecoin"));
+        params.stablecoin = address(0);
+        vm.expectRevert(IMintIntent.InvalidStablecoin.selector);
+        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        params = _approvalParams(15, keccak256("zero-recipient"));
+        params.recipient = address(0);
+        vm.expectRevert(IMintIntent.InvalidRecipient.selector);
+        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        vm.expectRevert(IMintIntent.InvalidExpiry.selector);
+        controller.publishApproval(
+            _approvalParams(16, keccak256("expired-expiry")), uint64(block.timestamp)
+        );
+
+        params = _approvalParams(17, keccak256("duplicate-original"));
+        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, 17)
+        );
+        controller.publishApproval(
+            _approvalParams(17, keccak256("duplicate-operation")), uint64(block.timestamp + 1 days)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalExistsForHoldId.selector, params.holdId)
+        );
+        controller.publishApproval(
+            _approvalParams(18, params.holdId), uint64(block.timestamp + 1 days)
+        );
+    }
+
+    function test_extendApproval_updatesExpiryAndEmits() public {
+        uint256 operationId = 19;
+        bytes32 holdId = keccak256("extend-success");
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        uint64 newExpiry = uint64(block.timestamp + 2 days);
+        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
+        _publishApproval(params, expiry);
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit IMintIntent.ApprovalExtended(admin, holdId, operationId, newExpiry);
+        controller.extendApproval(holdId, newExpiry);
+
+        Approval memory approval = controller.getApproval(holdId);
+        assertEq(approval.expiry, newExpiry);
+        assertEq(approval.operationId, operationId);
+    }
+
+    function test_extendApproval_rejectsSameOlderRevokedConsumedAndNonexistent() public {
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        IMintIntent.ApprovalParams memory params = _approvalParams(20, keccak256("extend-invalid"));
+        _publishApproval(params, expiry);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntent.ApprovalExpiryNotExtended.selector, params.holdId, expiry, expiry
+            )
+        );
+        controller.extendApproval(params.holdId, expiry);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntent.ApprovalExpiryNotExtended.selector, params.holdId, expiry - 1, expiry
+            )
+        );
+        controller.extendApproval(params.holdId, expiry - 1);
+
+        IMintIntent.ApprovalParams memory revoked = _approvalParams(21, keccak256("extend-revoked"));
+        _publishApproval(revoked, expiry);
+        controller.revokeApproval(revoked.holdId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.InvalidApproval.selector, revoked.holdId, uint256(2))
+        );
+        controller.extendApproval(revoked.holdId, expiry + 1);
+
+        IMintIntent.ApprovalParams memory consumed =
+            _approvalParams(22, keccak256("extend-consumed"));
+        _publishApproval(consumed, expiry);
+        _allowMinter(address(stablecoin), 100e6);
+        vm.prank(minter);
+        controller.mintWithApproval(consumed);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntent.InvalidApproval.selector, consumed.holdId, uint256(1)
+            )
+        );
+        controller.extendApproval(consumed.holdId, expiry + 1);
+
+        bytes32 missingHoldId = keccak256("extend-missing");
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalNotExistsForHoldId.selector, missingHoldId)
+        );
+        controller.extendApproval(missingHoldId, expiry + 1);
+    }
+
+    function test_mintWithApproval_consumesApprovalAndRejectsReuse() public {
+        uint256 operationId = 23;
+        bytes32 holdId = keccak256("mint-with-approval");
+        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
+        _publishApproval(params, uint64(block.timestamp + 1 days));
+        _allowMinter(address(stablecoin), 100e6);
+
+        vm.prank(minter);
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit IMintIntent.ApprovalConsumed(minter, operationId, holdId);
+        controller.mintWithApproval(params);
+
+        Approval memory approval = controller.getApproval(holdId);
+        assertEq(approval.flags, 1);
+        assertEq(stablecoin.balanceOf(user1), 100e6);
+        assertEq(controller.getMinterAllowance(address(stablecoin), minter), 0);
+        address reserveStore = controller.getReserveStore(address(stablecoin));
+        assertTrue(reserveStore != address(0));
+        assertEq(reserveLedgerToken.balanceOf(reserveStore), 100e6);
+
+        _allowMinter(address(stablecoin), 100e6);
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.InvalidApproval.selector, holdId, uint256(1))
+        );
+        controller.mintWithApproval(params);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, operationId)
+        );
+        controller.publishApproval(
+            _approvalParams(operationId, keccak256("consumed-operation-republish")),
+            uint64(block.timestamp + 1 days)
+        );
+    }
+
+    function test_mintWithApproval_limitFailuresDoNotConsumeApproval() public {
+        IMintIntent.ApprovalParams memory allowanceParams =
+            _approvalParams(30, keccak256("approval-allowance-limit"));
+        _publishApproval(allowanceParams, uint64(block.timestamp + 1 days));
+
+        vm.prank(user2);
+        vm.expectRevert(ITIP20Controller.MinterAllowanceExceeded.selector);
+        controller.mintWithApproval(allowanceParams);
+
+        Approval memory approval = controller.getApproval(allowanceParams.holdId);
+        assertEq(approval.flags, 0);
+
+        _allowMinter(address(stablecoin), 99e6);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.MinterAllowanceExceeded.selector);
+        controller.mintWithApproval(allowanceParams);
+
+        approval = controller.getApproval(allowanceParams.holdId);
+        assertEq(approval.flags, 0);
+
+        _allowMinter(address(stablecoin), 100e6);
+
+        vm.prank(minter);
+        controller.mintWithApproval(allowanceParams);
+
+        IMintIntent.ApprovalParams memory txnLimitParams =
+            _approvalParams(31, keccak256("approval-txn-limit"));
+        _publishApproval(txnLimitParams, uint64(block.timestamp + 1 days));
+
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(address(stablecoin), 99e6);
+        controller.setMinterAllowance(address(stablecoin), minter, 100e6);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.MintTxnLimitExceeded.selector);
+        controller.mintWithApproval(txnLimitParams);
+
+        approval = controller.getApproval(txnLimitParams.holdId);
+        assertEq(approval.flags, 0);
+
+        _allowMinter(address(stablecoin), 100e6);
+
+        vm.prank(minter);
+        controller.mintWithApproval(txnLimitParams);
+    }
+
+    function test_mintWithApproval_invalidParamsReportExpectedBooleans() public {
+        IMintIntent.ApprovalParams memory params = _approvalParams(24, keccak256("invalid-params"));
+        _publishApproval(params, uint64(block.timestamp + 1 days));
+        _allowMinter(address(stablecoin), 1000e6);
+
+        IMintIntent.ApprovalParams memory invalid = params;
+        invalid.holdId = keccak256("wrong-hold");
+        vm.prank(minter);
+        _expectInvalidApprovalParams(false, true, true, true, true, true);
+        controller.mintWithApproval(invalid);
+
+        invalid = _approvalParams(24, keccak256("invalid-params"));
+        invalid.holdId = bytes32(0);
+        vm.prank(minter);
+        _expectInvalidApprovalParams(true, true, true, true, true, true);
+        controller.mintWithApproval(invalid);
+
+        invalid = _approvalParams(24, keccak256("invalid-params"));
+        invalid.operationId = 25;
+        vm.prank(minter);
+        _expectInvalidApprovalParams(false, true, false, false, false, false);
+        controller.mintWithApproval(invalid);
+
+        invalid = _approvalParams(24, keccak256("invalid-params"));
+        invalid.amount = 99e6;
+        vm.prank(minter);
+        _expectInvalidApprovalParams(false, false, true, false, false, false);
+        controller.mintWithApproval(invalid);
+
+        invalid = _approvalParams(24, keccak256("invalid-params"));
+        invalid.recipient = user2;
+        vm.prank(minter);
+        _expectInvalidApprovalParams(false, false, false, true, false, false);
+        controller.mintWithApproval(invalid);
+
+        _allowMinter(address(reserveLedgerToken), 100e6);
+        invalid = _approvalParams(24, keccak256("invalid-params"));
+        invalid.stablecoin = address(reserveLedgerToken);
+        vm.prank(minter);
+        _expectInvalidApprovalParams(false, false, false, false, true, false);
+        controller.mintWithApproval(invalid);
+
+        IMintIntent.ApprovalParams memory expired =
+            _approvalParams(26, keccak256("expired-approval"));
+        _publishApproval(expired, uint64(block.timestamp + 1 days));
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(minter);
+        _expectInvalidApprovalParams(false, false, false, false, false, true);
+        controller.mintWithApproval(expired);
+    }
+
+    function test_revokeApprovalAndOperationId_emitFieldsAndBlockReuse() public {
+        IMintIntent.ApprovalParams memory revokedApproval =
+            _approvalParams(27, keccak256("revoke-approval-fields"));
+        _publishApproval(revokedApproval, uint64(block.timestamp + 1 days));
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit IMintIntent.ApprovalRevoked(admin, revokedApproval.holdId, revokedApproval.operationId);
+        controller.revokeApproval(revokedApproval.holdId);
+
+        _allowMinter(address(stablecoin), 100e6);
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntent.InvalidApproval.selector, revokedApproval.holdId, uint256(2)
+            )
+        );
+        controller.mintWithApproval(revokedApproval);
+
+        vm.prank(admin);
+        controller.grantRole(controller.BURNER_ROLE(), minter);
+        vm.prank(minter);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        controller.burn(address(stablecoin), 100e6, revokedApproval.operationId);
+
+        IMintIntent.ApprovalParams memory revokedOperation =
+            _approvalParams(28, keccak256("revoke-operation-fields"));
+        _publishApproval(revokedOperation, uint64(block.timestamp + 1 days));
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit IMintIntent.ApprovalRevoked(
+            admin, revokedOperation.holdId, revokedOperation.operationId
+        );
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit IMintIntent.OperationIdRevoked(
+            admin, revokedOperation.operationId, revokedOperation.holdId
+        );
+        controller.revokeOperationId(revokedOperation.operationId);
+
+        _allowMinter(address(stablecoin), 100e6);
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntent.InvalidApproval.selector, revokedOperation.holdId, uint256(2)
+            )
+        );
+        controller.mintWithApproval(revokedOperation);
+
+        vm.prank(minter);
+        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        controller.burn(address(stablecoin), 100e6, revokedOperation.operationId);
+    }
+
+    function test_setMintIntentVersion_requiredGatesPlainMintButAllowsApprovalMint() public {
+        IMintIntent.ApprovalParams memory params =
+            _approvalParams(29, keccak256("required-version"));
+        _publishApproval(params, uint64(block.timestamp + 1 days));
+        _allowMinter(address(stablecoin), 200e6);
+
+        bytes32 defaultAdminRole = controller.DEFAULT_ADMIN_ROLE();
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, defaultAdminRole
+            )
+        );
+        controller.setMintIntentVersion(ITIP20Controller.MintIntentVersion.Required);
+
+        vm.expectEmit(true, false, false, true, address(controller));
+        emit ITIP20Controller.MintIntentVersionSet(
+            admin, ITIP20Controller.MintIntentVersion.Required
+        );
+        controller.setMintIntentVersion(ITIP20Controller.MintIntentVersion.Required);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.MintIntentRequired.selector);
+        controller.mint(address(stablecoin), user1, 100e6);
+
+        controller.grantRole(controller.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), admin);
+        controller.mintBridgeEcosystem(address(stablecoin), user2, 1);
+
+        vm.prank(minter);
+        controller.mintWithApproval(params);
+
+        assertEq(stablecoin.balanceOf(user1), 100e6);
+        assertEq(stablecoin.balanceOf(user2), 1);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                                     Unwrap Tests
     //////////////////////////////////////////////////////////////////////////*/
 
@@ -770,6 +1180,54 @@ contract TIP20ControllerTest is Test {
 
         vm.prank(minter);
         controller.mint(address(stablecoin), minter, amount);
+    }
+
+    function _approvalParams(uint256 operationId, bytes32 holdId)
+        internal
+        view
+        returns (IMintIntent.ApprovalParams memory)
+    {
+        return IMintIntent.ApprovalParams({
+            operationId: operationId,
+            holdId: holdId,
+            amount: 100e6,
+            recipient: user1,
+            stablecoin: address(stablecoin)
+        });
+    }
+
+    function _publishApproval(IMintIntent.ApprovalParams memory params, uint64 expiry) internal {
+        controller.publishApproval(params, expiry);
+    }
+
+    function _allowMinter(address token, uint256 amount) internal {
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(token, amount);
+        controller.setMinterAllowance(token, minter, amount);
+        vm.stopPrank();
+    }
+
+    function _expectInvalidApprovalParams(
+        bool invalidHoldId,
+        bool invalidOperationId,
+        bool invalidAmount,
+        bool invalidRecipient,
+        bool stablecoinIsWrong,
+        bool invalidExpiry
+    ) internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntent.InvalidApprovalParams.selector,
+                IMintIntent.InvalidApprovalError({
+                    invalidHoldId: invalidHoldId,
+                    invalidOperationId: invalidOperationId,
+                    invalidAmount: invalidAmount,
+                    invalidRecipient: invalidRecipient,
+                    stablecoinIsWrong: stablecoinIsWrong,
+                    invalidExpiry: invalidExpiry
+                })
+            )
+        );
     }
 
 }
