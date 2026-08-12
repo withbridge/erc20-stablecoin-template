@@ -87,7 +87,10 @@ interface IMintIntent {
     /// @notice Emitted when a mint approval is revoked.
     /// @param _publisher The address that revoked the approval.
     /// @param _holdId The hold ID associated with the approval.
-    event ApprovalRevoked(address indexed _publisher, bytes32 indexed _holdId);
+    /// @param _operationId The operation ID associated with the approval.
+    event ApprovalRevoked(
+        address indexed _publisher, bytes32 indexed _holdId, uint256 indexed _operationId
+    );
 
     /// @notice Emitted when a mint approval is consumed.
     /// @param _publisher The address that consumed the approval.
@@ -100,13 +103,22 @@ interface IMintIntent {
     /// @notice Emitted when a mint approval's expiry is extended.
     /// @param _publisher The address that extended the approval.
     /// @param _holdId The hold ID associated with the approval.
+    /// @param _operationId The operation ID associated with the approval.
     /// @param _newExpiry The updated approval expiry timestamp.
-    event ApprovalExtended(address indexed _publisher, bytes32 indexed _holdId, uint256 _newExpiry);
+    event ApprovalExtended(
+        address indexed _publisher,
+        bytes32 indexed _holdId,
+        uint256 indexed _operationId,
+        uint256 _newExpiry
+    );
 
     /// @notice Emitted when an operation ID is revoked.
     /// @param _publisher The address that revoked the operation ID.
     /// @param _operationId The revoked operation ID.
-    event OperationIdRevoked(address indexed _publisher, uint256 indexed _operationId);
+    /// @param _holdId Optional hold ID associated with the approval, bytes32(0) if not applicable.
+    event OperationIdRevoked(
+        address indexed _publisher, uint256 indexed _operationId, bytes32 indexed _holdId
+    );
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions

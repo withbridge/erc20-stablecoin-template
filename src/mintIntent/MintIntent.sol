@@ -105,12 +105,10 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
 
         // Revoke the approval
         uint256 operationId = approval.operationId;
-        if (operationId != 0) {
-            $._operationStates[operationId] = OperationState.REVOKED;
-        }
+        $._operationStates[operationId] = OperationState.REVOKED;
         approval.setRevoked();
 
-        emit ApprovalRevoked(msg.sender, _holdId);
+        emit ApprovalRevoked(msg.sender, _holdId, operationId);
     }
 
     function revokeOperationId(uint256 _operationId) external onlyRole(PUBLISHER_ROLE) {
@@ -129,12 +127,12 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
             require(approval.stablecoin != address(0), ApprovalNotExistsForHoldId(holdId));
             require(approval.isValid(), InvalidApproval(holdId, approval.flags));
             approval.setRevoked();
-            emit ApprovalRevoked(msg.sender, holdId);
+            emit ApprovalRevoked(msg.sender, holdId, _operationId);
         }
 
         $._operationStates[_operationId] = OperationState.REVOKED;
 
-        emit OperationIdRevoked(msg.sender, _operationId);
+        emit OperationIdRevoked(msg.sender, _operationId, holdId);
     }
 
     // Do we need a version that takes in the operationId instead of the holdId?
@@ -153,7 +151,7 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         // Extend the approval
         approval.expiry = _expiry;
 
-        emit ApprovalExtended(msg.sender, _holdId, _expiry);
+        emit ApprovalExtended(msg.sender, _holdId, approval.operationId, _expiry);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
