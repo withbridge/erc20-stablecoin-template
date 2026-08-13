@@ -204,7 +204,16 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         }
         require(approval.isValid(), InvalidApproval(_params.holdId, approval.flags));
 
-        require(errors == 0, InvalidApprovalParams(_convertToInvalidApprovalError(errors)));
+        if (errors != 0) {
+            revert InvalidApprovalParams(
+                errors & INVALID_HOLD_ID_FLAG != 0,
+                errors & INVALID_OPERATION_ID_FLAG != 0,
+                errors & INVALID_AMOUNT_FLAG != 0,
+                errors & INVALID_RECIPIENT_FLAG != 0,
+                errors & INVALID_STABLECOIN_FLAG != 0,
+                errors & INVALID_EXPIRY_FLAG != 0
+            );
+        }
 
         // Consume the approval
         $._operationStates[_params.operationId] = OperationState.CONSUMED;
@@ -224,19 +233,6 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         );
 
         $._operationStates[_operationId] = OperationState.CONSUMED;
-    }
-
-    function _convertToInvalidApprovalError(uint256 _errors)
-        internal
-        pure
-        returns (InvalidApprovalError memory err)
-    {
-        err.invalidHoldId = _errors & INVALID_HOLD_ID_FLAG != 0;
-        err.invalidOperationId = _errors & INVALID_OPERATION_ID_FLAG != 0;
-        err.invalidAmount = _errors & INVALID_AMOUNT_FLAG != 0;
-        err.invalidRecipient = _errors & INVALID_RECIPIENT_FLAG != 0;
-        err.stablecoinIsWrong = _errors & INVALID_STABLECOIN_FLAG != 0;
-        err.invalidExpiry = _errors & INVALID_EXPIRY_FLAG != 0;
     }
 
 }
