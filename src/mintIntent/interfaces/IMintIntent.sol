@@ -15,15 +15,6 @@ interface IMintIntent {
         address stablecoin;
     }
 
-    struct InvalidApprovalError {
-        bool invalidHoldId;
-        bool invalidOperationId;
-        bool invalidAmount;
-        bool invalidRecipient;
-        bool stablecoinIsWrong;
-        bool invalidExpiry;
-    }
-
     /*//////////////////////////////////////////////////////////////////////////
                                     Errors
     //////////////////////////////////////////////////////////////////////////*/
@@ -60,7 +51,23 @@ interface IMintIntent {
 
     error InvalidStablecoin();
 
-    error InvalidApprovalParams(InvalidApprovalError _error);
+    /// @notice Thrown when the params supplied to consume an approval do not match the approval.
+    /// @dev The params are flattened rather than grouped in a struct so that block explorers and
+    /// clients decode each failure individually instead of an opaque tuple.
+    /// @param _invalidHoldId Whether the hold ID is invalid.
+    /// @param _invalidOperationId Whether the operation ID is invalid.
+    /// @param _invalidAmount Whether the amount does not match the approval.
+    /// @param _invalidRecipient Whether the recipient does not match the approval.
+    /// @param _stablecoinIsWrong Whether the stablecoin does not match the approval.
+    /// @param _invalidExpiry Whether the approval has expired.
+    error InvalidApprovalParams(
+        bool _invalidHoldId,
+        bool _invalidOperationId,
+        bool _invalidAmount,
+        bool _invalidRecipient,
+        bool _stablecoinIsWrong,
+        bool _invalidExpiry
+    );
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events

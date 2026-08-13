@@ -1218,14 +1218,12 @@ contract TIP20ControllerTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IMintIntent.InvalidApprovalParams.selector,
-                IMintIntent.InvalidApprovalError({
-                    invalidHoldId: invalidHoldId,
-                    invalidOperationId: invalidOperationId,
-                    invalidAmount: invalidAmount,
-                    invalidRecipient: invalidRecipient,
-                    stablecoinIsWrong: stablecoinIsWrong,
-                    invalidExpiry: invalidExpiry
-                })
+                invalidHoldId,
+                invalidOperationId,
+                invalidAmount,
+                invalidRecipient,
+                stablecoinIsWrong,
+                invalidExpiry
             )
         );
     }

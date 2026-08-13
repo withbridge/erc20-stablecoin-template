@@ -926,6 +926,58 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.mintWithApproval(expired);
     }
 
+    /// @dev The error params are deliberately flat rather than wrapped in a struct: off-chain
+    /// clients that stringify a decoded tuple render it as an opaque object instead of the
+    /// individual failures. A struct of six bools is a static tuple, so re-nesting them would
+    /// encode to the same bytes and only change the selector -- hence the selector assertion
+    /// below is what catches a regression, and the decode confirms the bools stay in order.
+    function test_mintWithApproval_invalidParamsRevertDataIsFlat() public {
+        IMintIntent.ApprovalParams memory params =
+            _approvalParams(28, keccak256("flat-revert-data"));
+        _publishApproval(params, uint64(block.timestamp + 1 days));
+
+        IMintIntent.ApprovalParams memory invalid = params;
+        invalid.amount = 99e6;
+
+        bytes memory callData = abi.encodeCall(TokenAuthority.mintWithApproval, (invalid));
+
+        vm.prank(minter);
+        (bool success, bytes memory revertData) = address(tokenAuthority).call(callData);
+
+        assertFalse(success, "call should revert");
+        assertEq(revertData.length, 4 + 6 * 32, "selector plus six words");
+        assertEq(
+            bytes4(revertData),
+            IMintIntent.InvalidApprovalParams.selector,
+            "InvalidApprovalParams selector"
+        );
+        // Pinned so a struct-wrapped signature -- which encodes identically -- is caught here.
+        assertEq(
+            bytes4(revertData), bytes4(0xf474cfad), "flat InvalidApprovalParams(bool x6) selector"
+        );
+
+        bytes memory args = new bytes(revertData.length - 4);
+        for (uint256 i = 0; i < args.length; i++) {
+            args[i] = revertData[i + 4];
+        }
+
+        (
+            bool invalidHoldId,
+            bool invalidOperationId,
+            bool invalidAmount,
+            bool invalidRecipient,
+            bool stablecoinIsWrong,
+            bool invalidExpiry
+        ) = abi.decode(args, (bool, bool, bool, bool, bool, bool));
+
+        assertFalse(invalidHoldId, "hold ID valid");
+        assertFalse(invalidOperationId, "operation ID valid");
+        assertTrue(invalidAmount, "amount mismatch reported");
+        assertFalse(invalidRecipient, "recipient valid");
+        assertFalse(stablecoinIsWrong, "stablecoin valid");
+        assertFalse(invalidExpiry, "expiry valid");
+    }
+
     function test_revokeApprovalAndOperationId_emitFieldsAndBlockReuse() public {
         IMintIntent.ApprovalParams memory revokedApproval =
             _approvalParams(27, keccak256("revoke-approval-fields"));
@@ -1720,14 +1772,12 @@ contract TokenAuthorityTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IMintIntent.InvalidApprovalParams.selector,
-                IMintIntent.InvalidApprovalError({
-                    invalidHoldId: invalidHoldId,
-                    invalidOperationId: invalidOperationId,
-                    invalidAmount: invalidAmount,
-                    invalidRecipient: invalidRecipient,
-                    stablecoinIsWrong: stablecoinIsWrong,
-                    invalidExpiry: invalidExpiry
-                })
+                invalidHoldId,
+                invalidOperationId,
+                invalidAmount,
+                invalidRecipient,
+                stablecoinIsWrong,
+                invalidExpiry
             )
         );
     }
