@@ -268,7 +268,7 @@ contract TIP20Controller is
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(mintTxnLimit < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        require(mintTxnLimit <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         mintTxnLimits[stablecoinContract] = mintTxnLimit;
 
         emit TxnMintLimitSet(msg.sender, stablecoinContract, mintTxnLimit);
@@ -284,7 +284,7 @@ contract TIP20Controller is
         public
         onlyRole(MINT_RATE_LIMIT_SETTER_ROLE)
     {
-        require(minterAllowance < ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        require(minterAllowance <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         minterAllowances[stablecoinContract][minter] = minterAllowance;
 
         emit MinterAllowanceSet(msg.sender, stablecoinContract, minter, minterAllowance);

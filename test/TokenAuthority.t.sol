@@ -1456,7 +1456,7 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_setTxnMintLimit_revertWhenAmountExceedsAbsoluteMax() public {
-        uint256 exceedsMax = 1_000_000_000 * 1e6; // exactly at absolute max, should fail
+        uint256 exceedsMax = 1_000_000_000 * 1e6 + 1; // exactly at absolute max, should fail
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
@@ -1487,7 +1487,7 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_setMinterAllowance_revertWhenAmountExceedsAbsoluteMax() public {
-        uint256 exceedsMax = 1_000_000_000 * 1e6; // exactly at absolute max, should fail
+        uint256 exceedsMax = 1_000_000_000 * 1e6 + 1; // exactly at absolute max, should fail
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
