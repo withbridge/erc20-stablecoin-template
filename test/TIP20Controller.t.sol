@@ -5,6 +5,7 @@ import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/I
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 
 import { Approval } from "src/mintIntent/MintIntentStorage.sol";
 import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
@@ -168,6 +169,9 @@ contract TIP20ControllerTest is Test {
     function test_setReserveStore_success() public {
         address customReserveStore = makeAddr("customReserveStore");
 
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
         vm.prank(admin);
         controller.setReserveStore(address(stablecoin), customReserveStore);
 
@@ -190,6 +194,9 @@ contract TIP20ControllerTest is Test {
     function test_setReserveStore_revert_when_old_reserve_store_is_not_zero() public {
         address oldReserveStore = makeAddr("oldReserveStore");
         address newReserveStore = makeAddr("newReserveStore");
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
 
         vm.prank(oldReserveStore);
         reserveLedgerToken.approve(address(controller), type(uint256).max);
@@ -1170,6 +1177,185 @@ contract TIP20ControllerTest is Test {
         vm.prank(admin);
         controller.upgradeToAndCall(newImplementation, "");
         // No revert - upgrade successful
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Stablecoin Pause Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_stablecoinPauser_role_constant() public view {
+        assertEq(controller.STABLECOIN_PAUSER_ROLE(), keccak256("STABLECOIN_PAUSER_ROLE"));
+    }
+
+    function test_stablecoinIsPaused_defaults_false() public view {
+        assertFalse(controller.stablecoinIsPaused(address(stablecoin)));
+    }
+
+    function test_setStablecoinPaused_revert_not_pauser() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                controller.STABLECOIN_PAUSER_ROLE()
+            )
+        );
+        controller.setStablecoinPaused(address(stablecoin), true);
+        vm.stopPrank();
+    }
+
+    function test_setStablecoinPaused_pauses_and_emits() public {
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+
+        vm.expectEmit(true, true, false, true, address(controller));
+        emit ITIP20Controller.StablecoinPauseSet(admin, address(stablecoin), true);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        assertTrue(controller.stablecoinIsPaused(address(stablecoin)));
+    }
+
+    function test_setStablecoinPaused_unpauses_and_emits() public {
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.expectEmit(true, true, false, true, address(controller));
+        emit ITIP20Controller.StablecoinPauseSet(admin, address(stablecoin), false);
+        controller.setStablecoinPaused(address(stablecoin), false);
+
+        assertFalse(controller.stablecoinIsPaused(address(stablecoin)));
+    }
+
+    function test_setStablecoinPaused_noop_when_already_paused() public {
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.recordLogs();
+        controller.setStablecoinPaused(address(stablecoin), true);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(logs.length, 0);
+        assertTrue(controller.stablecoinIsPaused(address(stablecoin)));
+    }
+
+    function test_setStablecoinPaused_noop_when_already_unpaused() public {
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+
+        vm.recordLogs();
+        controller.setStablecoinPaused(address(stablecoin), false);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(logs.length, 0);
+        assertFalse(controller.stablecoinIsPaused(address(stablecoin)));
+    }
+
+    function test_mint_revert_when_paused() public {
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(address(stablecoin), 100e6);
+        controller.setMinterAllowance(address(stablecoin), minter, 500e6);
+        vm.stopPrank();
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.StablecoinPaused.selector);
+        controller.mint(address(stablecoin), user1, 50e6);
+    }
+
+    function test_burn_revert_when_paused() public {
+        uint256 mintAmount = 100e6;
+        uint256 burnAmount = 30e6;
+
+        _mintStablecoinToMinter(mintAmount);
+
+        vm.prank(minter);
+        stablecoin.approve(address(controller), burnAmount);
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.StablecoinPaused.selector);
+        controller.burn(address(stablecoin), burnAmount);
+    }
+
+    function test_wrap_revert_when_paused() public {
+        uint256 wrapAmount = 100e6;
+
+        _mintReserveTokens(user1, wrapAmount);
+        vm.prank(user1);
+        reserveLedgerToken.approve(address(controller), wrapAmount);
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.prank(user1);
+        vm.expectRevert(ITIP20Controller.StablecoinPaused.selector);
+        controller.wrap(address(stablecoin), user2, wrapAmount);
+    }
+
+    function test_unwrap_revert_when_paused() public {
+        uint256 mintAmount = 100e6;
+        uint256 unwrapAmount = 30e6;
+
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(address(stablecoin), 200e6);
+        controller.setMinterAllowance(address(stablecoin), minter, 500e6);
+        controller.grantRole(controller.UNWRAPPER_ROLE(), minter);
+        vm.stopPrank();
+
+        vm.startPrank(minter);
+        reserveLedgerToken.approve(address(controller), mintAmount);
+        controller.mint(address(stablecoin), minter, mintAmount);
+        stablecoin.approve(address(controller), unwrapAmount);
+        vm.stopPrank();
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.StablecoinPaused.selector);
+        controller.unwrap(address(stablecoin), unwrapAmount);
+    }
+
+    function test_mint_succeeds_after_unpause() public {
+        uint256 mintAmount = 50e6;
+
+        vm.startPrank(admin);
+        controller.setTxnMintLimit(address(stablecoin), 100e6);
+        controller.setMinterAllowance(address(stablecoin), minter, 500e6);
+        vm.stopPrank();
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+        controller.setStablecoinPaused(address(stablecoin), false);
+
+        _mintReserveTokens(minter, mintAmount);
+        vm.prank(minter);
+        reserveLedgerToken.approve(address(controller), mintAmount);
+
+        vm.prank(minter);
+        controller.mint(address(stablecoin), user1, mintAmount);
+
+        assertEq(stablecoin.balanceOf(user1), mintAmount);
+    }
+
+    function test_setReserveStore_revert_when_not_paused() public {
+        vm.prank(admin);
+        vm.expectRevert(ITIP20Controller.StablecoinNotPaused.selector);
+        controller.setReserveStore(address(stablecoin), makeAddr("someStore"));
+    }
+
+    function test_setReserveStore_succeeds_when_paused() public {
+        address customReserveStore = makeAddr("customReserveStore");
+
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(stablecoin), true);
+
+        vm.prank(admin);
+        controller.setReserveStore(address(stablecoin), customReserveStore);
+
+        assertEq(controller.getReserveStore(address(stablecoin)), customReserveStore);
     }
 
     /*//////////////////////////////////////////////////////////////////////////

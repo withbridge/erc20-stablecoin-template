@@ -51,6 +51,12 @@ interface ITIP20Controller is IMintIntent {
     /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
     error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
 
+    /// @notice Thrown when the stablecoin is paused
+    error StablecoinPaused();
+
+    /// @notice Thrown when the stablecoin is not paused
+    error StablecoinNotPaused();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
@@ -123,6 +129,14 @@ interface ITIP20Controller is IMintIntent {
     /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
     /// @param mintIntentVersion The new mint approval version
     event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+
+    /// @notice Emitted when a stablecoin's pause status is set
+    /// @param sender The address that set the pause status
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param isPaused Whether the stablecoin is paused
+    event StablecoinPauseSet(
+        address indexed sender, address indexed stablecoinContract, bool isPaused
+    );
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
@@ -208,6 +222,13 @@ interface ITIP20Controller is IMintIntent {
      */
     function setMinterAllowance(address stablecoinContract, address minter, uint256 minterAllowance)
         external;
+
+    /**
+     * @notice Sets the paused state for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param pause True to pause the stablecoin, false to unpause
+     */
+    function setStablecoinPaused(address stablecoinContract, bool pause) external;
 
     /**
      * @notice Sets or overrides the reserve store for a stablecoin contract

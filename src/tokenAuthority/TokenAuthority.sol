@@ -58,6 +58,7 @@ contract TokenAuthority is
         keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
     bytes32 public constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
+    bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -78,7 +79,11 @@ contract TokenAuthority is
     /// @notice Maps each stablecoin contract address to its respective token handler
     mapping(address stablecoinContract => address tokenHandler) tokenHandlers;
 
+    /// @notice The current mint intent version
     MintIntentVersion public mintIntentVersion;
+
+    /// @notice Maps a stablecoin to whether or not minting/burning/wrapping/unwrapping is paused
+    mapping(address stablecoinContract => bool isPaused) public stablecoinIsPaused;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -207,16 +212,6 @@ contract TokenAuthority is
         _burn(stablecoinContract, amount);
     }
 
-    function _burn(address stablecoinContract, uint256 amount) internal {
-        address tokenHandler = tokenHandlers[stablecoinContract];
-        require(tokenHandler != address(0), TokenHandlerNotSet());
-        IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
-        IERC20Mintable(stablecoinContract).approve(tokenHandler, amount);
-        ITokenHandler(tokenHandler).burn(stablecoinContract, amount);
-
-        emit Burn(msg.sender, stablecoinContract, amount);
-    }
-
     /**
      * @notice Unwraps a given amount of a wrapped stablecoin for the caller
      * @dev Reverts if the stablecoin contract provided is the reserve ledger token,
@@ -229,6 +224,7 @@ contract TokenAuthority is
      * Emits a {Unwrap} event for tracking unwrapping operations.
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
+        _requireStablecoinNotPaused(stablecoinContract);
         address tokenHandler = tokenHandlers[stablecoinContract];
         require(tokenHandler != address(0), TokenHandlerNotSet());
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
@@ -250,6 +246,7 @@ contract TokenAuthority is
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        _requireStablecoinNotPaused(stablecoinContract);
         require(to != address(0), ZeroAddress());
         require(amount > 0, AmountCannotBeZero());
 
@@ -299,6 +296,28 @@ contract TokenAuthority is
     }
 
     /**
+     * @notice Sets the paused state for a stablecoin contract
+     * @dev When paused, minting/burning/wrapping/unwrapping is disabled for the stablecoin.
+     *      No-ops if the stablecoin is already in the requested state.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param pause True to pause the stablecoin, false to unpause
+     */
+    function setStablecoinPaused(address stablecoinContract, bool pause)
+        external
+        onlyRole(STABLECOIN_PAUSER_ROLE)
+    {
+        bool isStablecoinPaused = stablecoinIsPaused[stablecoinContract];
+
+        if (isStablecoinPaused == pause) {
+            return;
+        }
+
+        stablecoinIsPaused[stablecoinContract] = pause;
+
+        emit StablecoinPauseSet(msg.sender, stablecoinContract, pause);
+    }
+
+    /**
      * @notice Sets the token authority handler for a specific stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
      * @param tokenHandler The address of the token handler
@@ -307,6 +326,7 @@ contract TokenAuthority is
         public
         onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
     {
+        _requireStablecoinPaused(stablecoinContract);
         require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
@@ -446,6 +466,7 @@ contract TokenAuthority is
 
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        _requireStablecoinNotPaused(stablecoinContract);
         address tokenHandler = tokenHandlers[stablecoinContract];
 
         require(tokenHandler != address(0), TokenHandlerNotSet());
@@ -453,6 +474,25 @@ contract TokenAuthority is
         ITokenHandler(tokenHandler).mint(stablecoinContract, to, amount);
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
+    }
+
+    function _burn(address stablecoinContract, uint256 amount) internal {
+        _requireStablecoinNotPaused(stablecoinContract);
+        address tokenHandler = tokenHandlers[stablecoinContract];
+        require(tokenHandler != address(0), TokenHandlerNotSet());
+        IERC20Mintable(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20Mintable(stablecoinContract).approve(tokenHandler, amount);
+        ITokenHandler(tokenHandler).burn(stablecoinContract, amount);
+
+        emit Burn(msg.sender, stablecoinContract, amount);
+    }
+
+    function _requireStablecoinNotPaused(address stablecoinContract) internal view {
+        require(!stablecoinIsPaused[stablecoinContract], StablecoinPaused());
+    }
+
+    function _requireStablecoinPaused(address stablecoinContract) internal view {
+        require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
     }
 
 }

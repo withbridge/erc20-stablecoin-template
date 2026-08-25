@@ -46,6 +46,7 @@ contract TIP20Controller is
     bytes32 public constant UNWRAPPER_ROLE = keccak256("UNWRAPPER_ROLE");
     bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE =
         keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
+    bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -66,7 +67,11 @@ contract TIP20Controller is
     /// @notice Maps stablecoin contract address to its ReserveStore address
     mapping(address stablecoinContract => address reserveStore) public reserveStores;
 
+    /// @notice The current mint intent version
     MintIntentVersion public mintIntentVersion;
+
+    /// @notice Maps a stablecoin to whether or not minting/burning/wrapping/unwrapping is paused
+    mapping(address stablecoinContract => bool isPaused) public stablecoinIsPaused;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -193,24 +198,6 @@ contract TIP20Controller is
         _burn(stablecoinContract, amount);
     }
 
-    function _burn(address stablecoinContract, uint256 amount) internal {
-        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
-        _checkPrecision(stablecoinContract);
-
-        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
-            ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
-        } else {
-            address reserveStore = _getOrCreateReserveStore(stablecoinContract);
-
-            ITIP20(stablecoinContract).burn(amount);
-            // Transfer reserve tokens from ReserveStore to this contract and burn them
-            IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(reserveStore, address(this), amount);
-            ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
-        }
-
-        emit Burn(msg.sender, stablecoinContract, amount);
-    }
-
     /**
      * @notice Unwraps a given amount of a stablecoin for the caller
      * @dev Burns the stablecoin and transfers the underlying reserve tokens from
@@ -220,6 +207,7 @@ contract TIP20Controller is
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
         _checkPrecision(stablecoinContract);
+        _requireStablecoinNotPaused(stablecoinContract);
         require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
@@ -244,6 +232,7 @@ contract TIP20Controller is
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
         _checkPrecision(stablecoinContract);
+        _requireStablecoinNotPaused(stablecoinContract);
         require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         require(amount > 0, AmountCannotBeZero());
 
@@ -259,7 +248,7 @@ contract TIP20Controller is
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                                Mint Rate Setters
+                            Permissioned Setters
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
@@ -294,6 +283,28 @@ contract TIP20Controller is
     }
 
     /**
+     * @notice Sets the paused state for a stablecoin contract
+     * @dev When paused, minting/burning/wrapping/unwrapping is disabled for the stablecoin.
+     *      No-ops if the stablecoin is already in the requested state.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param pause True to pause the stablecoin, false to unpause
+     */
+    function setStablecoinPaused(address stablecoinContract, bool pause)
+        external
+        onlyRole(STABLECOIN_PAUSER_ROLE)
+    {
+        bool isStablecoinPaused = stablecoinIsPaused[stablecoinContract];
+
+        if (isStablecoinPaused == pause) {
+            return;
+        }
+
+        stablecoinIsPaused[stablecoinContract] = pause;
+
+        emit StablecoinPauseSet(msg.sender, stablecoinContract, pause);
+    }
+
+    /**
      * @notice Sets or overrides the reserve store for a stablecoin contract
      * @dev Reserve stores are auto-deployed lazily if not set. This function allows
      *      pre-configuration or migration to a different reserve store.
@@ -304,6 +315,7 @@ contract TIP20Controller is
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
+        _requireStablecoinPaused(stablecoinContract);
         address oldReserveStore = reserveStores[stablecoinContract];
 
         if (oldReserveStore != address(0)) {
@@ -418,6 +430,7 @@ contract TIP20Controller is
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         _checkPrecision(stablecoinContract);
+        _requireStablecoinNotPaused(stablecoinContract);
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
             ITIP20(RESERVE_LEDGER_TOKEN).mint(to, amount);
@@ -434,6 +447,25 @@ contract TIP20Controller is
         emit Mint(msg.sender, stablecoinContract, to, amount);
     }
 
+    function _burn(address stablecoinContract, uint256 amount) internal {
+        IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+        _checkPrecision(stablecoinContract);
+        _requireStablecoinNotPaused(stablecoinContract);
+
+        if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
+            ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
+        } else {
+            address reserveStore = _getOrCreateReserveStore(stablecoinContract);
+
+            ITIP20(stablecoinContract).burn(amount);
+            // Transfer reserve tokens from ReserveStore to this contract and burn them
+            IERC20(RESERVE_LEDGER_TOKEN).safeTransferFrom(reserveStore, address(this), amount);
+            ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
+        }
+
+        emit Burn(msg.sender, stablecoinContract, amount);
+    }
+
     function _checkPrecision(address stablecoinContract) internal {
         uint256 reserveLedgerPrecision = ITIP20(RESERVE_LEDGER_TOKEN).decimals();
         uint256 stablecoinPrecision = ITIP20(stablecoinContract).decimals();
@@ -441,6 +473,14 @@ contract TIP20Controller is
             reserveLedgerPrecision == stablecoinPrecision,
             PrecisionMismatch(reserveLedgerPrecision, stablecoinPrecision)
         );
+    }
+
+    function _requireStablecoinNotPaused(address stablecoinContract) internal view {
+        require(!stablecoinIsPaused[stablecoinContract], StablecoinPaused());
+    }
+
+    function _requireStablecoinPaused(address stablecoinContract) internal view {
+        require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
     }
 
 }

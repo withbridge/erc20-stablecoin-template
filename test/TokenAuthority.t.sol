@@ -6,6 +6,7 @@ import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/I
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 
 import { Approval } from "src/mintIntent/MintIntentStorage.sol";
 import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
@@ -42,6 +43,7 @@ contract TokenAuthorityTest is Test {
         keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
     bytes32 public constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
+    bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
 
     TokenAuthority tokenAuthority;
     ReserveLedger reserveLedgerToken;
@@ -235,6 +237,7 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.grantRole(UNWRAPPER_ROLE, tokenAuthorityAdmin);
         tokenAuthority.grantRole(BRIDGE_ECOSYSTEM_CONTRACT_ROLE, tokenAuthorityAdmin);
         tokenAuthority.grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, tokenAuthorityAdmin);
+        tokenAuthority.grantRole(STABLECOIN_PAUSER_ROLE, tokenAuthorityAdmin);
         tokenAuthority.setMinterAllowance(address(wrappedStablecoin), minter, 1000e6);
         tokenAuthority.setTxnMintLimit(address(wrappedStablecoin), 1_000_000e6);
         tokenAuthority.setMinterAllowance(address(backedStablecoin), minter, 1000e6);
@@ -1504,6 +1507,9 @@ contract TokenAuthorityTest is Test {
         address newHandler = address(new SingleTokenHandler(address(tokenAuthority)));
 
         vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(tokenAuthorityAdmin);
         tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
 
         assertEq(tokenAuthority.getTokenHandler(address(wrappedStablecoin)), newHandler);
@@ -1513,7 +1519,18 @@ contract TokenAuthorityTest is Test {
         address newHandler = makeAddr("newHandler");
 
         vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.InvalidTokenHandler.selector);
+        tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
+    }
+
+    function test_setTokenHandler_revertWhenNotPaused() public {
+        address newHandler = address(new SingleTokenHandler(address(tokenAuthority)));
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinNotPaused.selector);
         tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
     }
 
@@ -1536,8 +1553,121 @@ contract TokenAuthorityTest is Test {
         address newHandler = address(new SingleTokenHandler(address(tokenAuthority)));
 
         vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(unregisteredStablecoin, true);
+
+        vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.StablecoinNotRegistered.selector);
         tokenAuthority.setTokenHandler(unregisteredStablecoin, newHandler);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test setStablecoinPaused
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_stablecoinPauser_role_constant() public view {
+        assertEq(tokenAuthority.STABLECOIN_PAUSER_ROLE(), keccak256("STABLECOIN_PAUSER_ROLE"));
+    }
+
+    function test_stablecoinIsPaused_defaults_false() public view {
+        assertFalse(tokenAuthority.stablecoinIsPaused(address(wrappedStablecoin)));
+    }
+
+    function test_setStablecoinPaused_revertWhenNotPauser() public {
+        vm.prank(maliciousUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                maliciousUser,
+                STABLECOIN_PAUSER_ROLE
+            )
+        );
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+    }
+
+    function test_setStablecoinPaused_pauses_and_emits() public {
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectEmit(true, true, false, true, address(tokenAuthority));
+        emit ITokenAuthority.StablecoinPauseSet(
+            tokenAuthorityAdmin, address(wrappedStablecoin), true
+        );
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        assertTrue(tokenAuthority.stablecoinIsPaused(address(wrappedStablecoin)));
+    }
+
+    function test_setStablecoinPaused_unpauses_and_emits() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectEmit(true, true, false, true, address(tokenAuthority));
+        emit ITokenAuthority.StablecoinPauseSet(
+            tokenAuthorityAdmin, address(wrappedStablecoin), false
+        );
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), false);
+
+        assertFalse(tokenAuthority.stablecoinIsPaused(address(wrappedStablecoin)));
+    }
+
+    function test_setStablecoinPaused_noop_whenAlreadyPaused() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.recordLogs();
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(logs.length, 0);
+        assertTrue(tokenAuthority.stablecoinIsPaused(address(wrappedStablecoin)));
+    }
+
+    function test_mint_revertWhenPaused() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.StablecoinPaused.selector);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    function test_burn_revertWhenPaused() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinPaused.selector);
+        tokenAuthority.burn(address(wrappedStablecoin), 100e6);
+    }
+
+    function test_wrap_revertWhenPaused() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(alice);
+        vm.expectRevert(ITokenAuthority.StablecoinPaused.selector);
+        tokenAuthority.wrap(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    function test_unwrap_revertWhenPaused() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinPaused.selector);
+        tokenAuthority.unwrap(address(wrappedStablecoin), 100e6);
+    }
+
+    function test_mint_succeedsAfterUnpause() public {
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), false);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6);
+
+        assertEq(wrappedStablecoin.balanceOf(bob), 100e6);
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
