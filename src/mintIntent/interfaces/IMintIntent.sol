@@ -31,10 +31,6 @@ interface IMintIntent {
     /// @param _holdId The hold ID without an approval.
     error ApprovalNotExistsForHoldId(bytes32 _holdId);
 
-    error ApprovalExpired(
-        uint256 _operationId, bytes32 _holdId, uint64 _expiry, uint256 _blockTimestamp
-    );
-
     error InvalidApproval(bytes32 _holdId, uint256 _flags);
 
     error ApprovalExpiryNotExtended(bytes32 _holdId, uint64 _newExpiry, uint64 _oldExpiry);

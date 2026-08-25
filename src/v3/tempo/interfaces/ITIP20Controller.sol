@@ -8,7 +8,7 @@ import { IMintIntent } from "../../../mintIntent/interfaces/IMintIntent.sol";
 /// allowances for stablecoins backed by a reserve ledger token
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITIP20Controller {
+interface ITIP20Controller is IMintIntent {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums

@@ -20,10 +20,10 @@ import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 /// @dev Uses ReserveStore contracts to hold reserve ledger tokens for each stablecoin.
 ///      Each stablecoin has its own ReserveStore to keep ledger tokens separate for reconciliation.
 contract TIP20Controller is
-    ITIP20Controller,
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
-    MintIntent
+    MintIntent,
+    ITIP20Controller
 {
 
     using SafeERC20 for IERC20;

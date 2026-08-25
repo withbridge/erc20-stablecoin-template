@@ -27,10 +27,10 @@ import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/I
 /// @notice Central authority contract for managing stablecoin minting, burning, and wrapping
 /// @dev Coordinates token operations through pluggable token handlers and enforces rate limits
 contract TokenAuthority is
-    ITokenAuthority,
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
-    MintIntent
+    MintIntent,
+    ITokenAuthority
 {
 
     using SafeERC20 for IERC20;

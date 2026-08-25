@@ -9,7 +9,7 @@ import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
 /// allowances for stablecoins
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITokenAuthority {
+interface ITokenAuthority is IMintIntent {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums
@@ -244,6 +244,15 @@ interface ITokenAuthority {
     function unwrap(address stablecoinContract, uint256 amount) external;
 
     /**
+     * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
+     * recipient.
+     * @param stablecoinContract The address of the target stablecoin contract.
+     * @param to The address to receive the wrapped tokens.
+     * @param amount The amount of reserve tokens to wrap.
+     */
+    function wrap(address stablecoinContract, address to, uint256 amount) external;
+
+    /**
      * @notice Sets the per-transaction mint limit for a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
      * @param mintTxnLimit The per-transaction mint limit to set
@@ -286,6 +295,30 @@ interface ITokenAuthority {
      * @param tokenHandler The address of the token handler
      */
     function setTokenHandler(address stablecoinContract, address tokenHandler) external;
+
+    /**
+     * @notice Registers a stablecoin contract with the TokenAuthority
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     * @param mintTxnLimit The mint transaction limit
+     */
+    function registerStablecoin(
+        address stablecoinContract,
+        address tokenHandler,
+        uint256 mintTxnLimit
+    ) external;
+
+    /**
+     * @notice Unregisters a stablecoin contract from the TokenAuthority
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function unregisterStablecoin(address stablecoinContract) external;
+
+    /**
+     * @notice Sets whether mint intents are optional or required
+     * @param mintIntentVersion The new mint approval version
+     */
+    function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
 
     /**
      * @notice Gets the token handler for a specific stablecoin contract
