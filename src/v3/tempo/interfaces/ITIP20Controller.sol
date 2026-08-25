@@ -48,6 +48,9 @@ interface ITIP20Controller {
     /// @notice Thrown when the mint approval version is required
     error MintIntentRequired();
 
+    /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
+    error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

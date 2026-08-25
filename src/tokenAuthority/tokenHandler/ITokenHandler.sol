@@ -20,6 +20,9 @@ interface ITokenHandler is IERC165 {
     /// @notice Thrown when the address is the zero address
     error ZeroAddress();
 
+    /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
+    error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/

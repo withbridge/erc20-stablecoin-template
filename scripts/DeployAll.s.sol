@@ -160,7 +160,7 @@ contract DeployAll is Common {
         internal
         returns (address handler)
     {
-        handler = address(new ReserveLedgerWrappedHandler(rlProxy, taProxy));
+        handler = address(new ReserveLedgerWrappedHandler(taProxy));
         console.log("ReserveLedgerWrappedHandler:", handler);
     }
 

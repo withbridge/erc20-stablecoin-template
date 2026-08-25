@@ -67,6 +67,9 @@ interface ITokenAuthority {
     /// @notice Thrown when the mint approval version is required
     error MintIntentRequired();
 
+    /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
+    error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
@@ -172,6 +175,11 @@ interface ITokenAuthority {
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Query the address of the reserve ledger token
+     */
+    function RESERVE_LEDGER_TOKEN() external view returns (address);
 
     /**
      * @notice Mints stablecoins to a recipient address

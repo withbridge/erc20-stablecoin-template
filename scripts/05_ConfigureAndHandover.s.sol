@@ -69,7 +69,7 @@ contract ConfigureAndHandover is Common {
         address stablecoin,
         HandoverConfig calldata config
     ) internal {
-        address handler = address(new ReserveLedgerWrappedHandler(reserveLedger, tokenAuthority));
+        address handler = address(new ReserveLedgerWrappedHandler(tokenAuthority));
         console.log("ReserveLedgerWrappedHandler:", handler);
 
         IAccessControl(reserveLedger).grantRole(MINTER_ROLE, handler);

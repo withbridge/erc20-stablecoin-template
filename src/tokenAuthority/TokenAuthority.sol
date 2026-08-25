@@ -20,6 +20,8 @@ import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
 import { IMintIntent, MintIntent } from "../mintIntent/MintIntent.sol";
 
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+
 /// @title TokenAuthority
 /// @author Bridge
 /// @notice Central authority contract for managing stablecoin minting, burning, and wrapping
@@ -305,6 +307,7 @@ contract TokenAuthority is
         public
         onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
     {
+        require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
         require(
@@ -328,7 +331,14 @@ contract TokenAuthority is
         address stablecoinContract,
         address tokenHandler,
         uint256 mintTxnLimit
-    ) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 reserveLedgerPrecision = IERC20Metadata(RESERVE_LEDGER_TOKEN).decimals();
+        uint256 stablecoinPrecision = IERC20Metadata(stablecoinContract).decimals();
+        require(
+            reserveLedgerPrecision == stablecoinPrecision,
+            PrecisionMismatch(reserveLedgerPrecision, stablecoinPrecision)
+        );
+
         require(tokenHandlers[stablecoinContract] == address(0), StablecoinAlreadyRegistered());
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());

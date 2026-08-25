@@ -27,6 +27,8 @@ import {
 } from "src/tokenAuthority/tokenHandler/ReserveLedgerWrappedHandler.sol";
 import { SingleTokenHandler } from "src/tokenAuthority/tokenHandler/SingleTokenHandler.sol";
 
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+
 contract TokenAuthorityTest is Test {
 
     error InvalidInitialization();
@@ -182,10 +184,8 @@ contract TokenAuthorityTest is Test {
         // Deploy Token Handlers
         ////////////////////////////////////////////////////////////////////////////////////////////
         singleTokenHandler = new SingleTokenHandler(address(tokenAuthority));
-        reserveLedgerBackedHandler =
-            new ReserveLedgerBackedHandler(address(reserveLedgerToken), address(tokenAuthority));
-        reserveLedgerWrappedHandler =
-            new ReserveLedgerWrappedHandler(address(reserveLedgerToken), address(tokenAuthority));
+        reserveLedgerBackedHandler = new ReserveLedgerBackedHandler(address(tokenAuthority));
+        reserveLedgerWrappedHandler = new ReserveLedgerWrappedHandler(address(tokenAuthority));
 
         ////////////////////////////////////////////////////////////////////////////////////////////
         // Setup Permissions - GrantRoles, add to mint recipients, add to blocklist, mint
@@ -247,12 +247,14 @@ contract TokenAuthorityTest is Test {
         // Configure Token Handlers
         ////////////////////////////////////////////////////////////////////////////////////////////
         vm.startPrank(tokenAuthorityAdmin);
-        tokenAuthority.setTokenHandler(address(reserveLedgerToken), address(singleTokenHandler));
-        tokenAuthority.setTokenHandler(
-            address(wrappedStablecoin), address(reserveLedgerWrappedHandler)
+        tokenAuthority.registerStablecoin(
+            address(reserveLedgerToken), address(singleTokenHandler), 1_000_000e6
         );
-        tokenAuthority.setTokenHandler(
-            address(backedStablecoin), address(reserveLedgerBackedHandler)
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), 1_000_000e6
+        );
+        tokenAuthority.registerStablecoin(
+            address(backedStablecoin), address(reserveLedgerBackedHandler), 1_000_000e6
         );
         vm.stopPrank();
     }
@@ -1529,12 +1531,33 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
     }
 
+    function test_setTokenHandler_revertWhenStablecoinNotRegistered() public {
+        address unregisteredStablecoin = makeAddr("unregisteredStablecoin");
+        address newHandler = address(new SingleTokenHandler(address(tokenAuthority)));
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinNotRegistered.selector);
+        tokenAuthority.setTokenHandler(unregisteredStablecoin, newHandler);
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Test registerStablecoin
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     function test_registerStablecoin() public {
         address newStablecoin = makeAddr("newStablecoin");
+
+        vm.mockCall(
+            address(reserveLedgerToken),
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
+
+        vm.mockCall(
+            newStablecoin,
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectEmit(true, true, false, true, address(tokenAuthority));
@@ -1546,6 +1569,49 @@ contract TokenAuthorityTest is Test {
         );
 
         assertEq(tokenAuthority.getStablecoinTxnMintLimit(newStablecoin), 1_000_000e6);
+    }
+
+    function test_registerStablecoin_revertWhenNotDefaultAdmin() public {
+        address handlerSetter = makeAddr("handlerSetter");
+
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, handlerSetter);
+
+        vm.prank(handlerSetter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                handlerSetter,
+                DEFAULT_ADMIN_ROLE
+            )
+        );
+        tokenAuthority.registerStablecoin(
+            makeAddr("newStablecoin"), address(reserveLedgerWrappedHandler), 1_000_000e6
+        );
+    }
+
+    function test_registerStablecoin_revertWhenPrecisionMismatch() public {
+        address newStablecoin = makeAddr("precisionMismatchStablecoin");
+
+        vm.mockCall(
+            address(reserveLedgerToken),
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
+
+        vm.mockCall(
+            newStablecoin,
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(18))
+        );
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(
+            abi.encodeWithSelector(ITokenAuthority.PrecisionMismatch.selector, uint256(6), 18)
+        );
+        tokenAuthority.registerStablecoin(
+            newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
+        );
     }
 
     function test_registerStablecoin_revertWhenStablecoinAlreadyRegistered() public {
@@ -1634,6 +1700,22 @@ contract TokenAuthorityTest is Test {
         reserveLedgerWrappedHandler.unwrap(address(wrappedStablecoin), bob, 100e6);
     }
 
+    function test_reserveLedgerWrappedHandler_mint_revertWhenPrecisionMismatch() public {
+        address precisionMismatchStablecoin = makeAddr("precisionMismatchWrappedStablecoin");
+
+        vm.mockCall(
+            precisionMismatchStablecoin,
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(18))
+        );
+
+        vm.prank(address(tokenAuthority));
+        vm.expectRevert(
+            abi.encodeWithSelector(ITokenHandler.PrecisionMismatch.selector, uint256(6), 18)
+        );
+        reserveLedgerWrappedHandler.mint(precisionMismatchStablecoin, bob, 100e6);
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Test ReserveLedgerBackedHandler onlyTokenAuthority modifier
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -1662,6 +1744,22 @@ contract TokenAuthorityTest is Test {
         reserveLedgerBackedHandler.unwrap(address(backedStablecoin), charles, 100e6);
     }
 
+    function test_reserveLedgerBackedHandler_mint_revertWhenPrecisionMismatch() public {
+        address precisionMismatchStablecoin = makeAddr("precisionMismatchBackedStablecoin");
+
+        vm.mockCall(
+            precisionMismatchStablecoin,
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(18))
+        );
+
+        vm.prank(address(tokenAuthority));
+        vm.expectRevert(
+            abi.encodeWithSelector(ITokenHandler.PrecisionMismatch.selector, uint256(6), 18)
+        );
+        reserveLedgerBackedHandler.mint(precisionMismatchStablecoin, charles, 100e6);
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Test ReserveLedgerBackedHandler ReserveStoreNotFound error
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -1670,6 +1768,18 @@ contract TokenAuthorityTest is Test {
         // Call the handler directly from tokenAuthority address to test ReserveStoreNotFound
         // Use a random stablecoin address that has no reserve store
         address randomStablecoin = makeAddr("randomStablecoin");
+
+        vm.mockCall(
+            address(reserveLedgerToken),
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
+
+        vm.mockCall(
+            randomStablecoin,
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
 
         vm.prank(address(tokenAuthority));
         vm.expectRevert(ReserveLedgerBackedHandler.ReserveStoreNotFound.selector);
@@ -1680,6 +1790,18 @@ contract TokenAuthorityTest is Test {
         // Call the handler directly from tokenAuthority address to test ReserveStoreNotFound
         // Use a random stablecoin address that has no reserve store
         address randomStablecoin = makeAddr("randomStablecoin");
+
+        vm.mockCall(
+            address(reserveLedgerToken),
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
+
+        vm.mockCall(
+            randomStablecoin,
+            abi.encodeWithSelector(IERC20Metadata.decimals.selector),
+            abi.encode(uint256(6))
+        );
 
         vm.prank(address(tokenAuthority));
         vm.expectRevert(ReserveLedgerBackedHandler.ReserveStoreNotFound.selector);

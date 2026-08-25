@@ -195,6 +195,7 @@ contract TIP20Controller is
 
     function _burn(address stablecoinContract, uint256 amount) internal {
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
+        _checkPrecision(stablecoinContract);
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
             ITIP20(RESERVE_LEDGER_TOKEN).burn(amount);
@@ -218,6 +219,7 @@ contract TIP20Controller is
      * @param amount The amount of tokens to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) public onlyRole(UNWRAPPER_ROLE) {
+        _checkPrecision(stablecoinContract);
         require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         address reserveStore = _getOrCreateReserveStore(stablecoinContract);
 
@@ -241,6 +243,7 @@ contract TIP20Controller is
      * @param amount The amount of reserve tokens to wrap.
      */
     function wrap(address stablecoinContract, address to, uint256 amount) public {
+        _checkPrecision(stablecoinContract);
         require(stablecoinContract != RESERVE_LEDGER_TOKEN, InvalidStablecoinContract());
         require(amount > 0, AmountCannotBeZero());
 
@@ -414,6 +417,7 @@ contract TIP20Controller is
 
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
+        _checkPrecision(stablecoinContract);
 
         if (stablecoinContract == RESERVE_LEDGER_TOKEN) {
             ITIP20(RESERVE_LEDGER_TOKEN).mint(to, amount);
@@ -428,6 +432,15 @@ contract TIP20Controller is
         }
 
         emit Mint(msg.sender, stablecoinContract, to, amount);
+    }
+
+    function _checkPrecision(address stablecoinContract) internal {
+        uint256 reserveLedgerPrecision = ITIP20(RESERVE_LEDGER_TOKEN).decimals();
+        uint256 stablecoinPrecision = ITIP20(stablecoinContract).decimals();
+        require(
+            reserveLedgerPrecision == stablecoinPrecision,
+            PrecisionMismatch(reserveLedgerPrecision, stablecoinPrecision)
+        );
     }
 
 }

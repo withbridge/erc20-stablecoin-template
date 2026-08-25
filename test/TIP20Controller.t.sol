@@ -379,6 +379,18 @@ contract TIP20ControllerTest is Test {
         controller.mintBridgeEcosystem(address(stablecoin), user2, 100e6);
     }
 
+    function test_mintBridgeEcosystem_revert_amount_exceeds_absolute_max() public {
+        address bridgeContract = makeAddr("bridge");
+        uint256 exceedsMax = 1_000_000_000 * 1e6 + 1;
+
+        vm.prank(admin);
+        controller.grantRole(controller.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), bridgeContract);
+
+        vm.prank(bridgeContract);
+        vm.expectRevert(ITIP20Controller.AmountExceedsAbsoluteMax.selector);
+        controller.mintBridgeEcosystem(address(stablecoin), user1, exceedsMax);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Burn Tests
     //////////////////////////////////////////////////////////////////////////*/
@@ -795,6 +807,16 @@ contract TIP20ControllerTest is Test {
 
         vm.prank(minter);
         controller.mintWithApproval(txnLimitParams);
+    }
+
+    function test_mintWithApproval_revert_amount_zero() public {
+        IMintIntent.ApprovalParams memory params =
+            _approvalParams(32, keccak256("zero-approval-amount"));
+        params.amount = 0;
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.AmountCannotBeZero.selector);
+        controller.mintWithApproval(params);
     }
 
     function test_mintWithApproval_invalidParamsReportExpectedBooleans() public {
