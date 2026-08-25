@@ -414,10 +414,10 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         reserveLedgerToken.approve(address(tokenAuthority), 100e6);
-        tokenAuthority.burn(address(reserveLedgerToken), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
 
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(reserveLedgerToken), 1, operationId);
+        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 1, operationId);
         vm.stopPrank();
 
         assertEq(reserveLedgerToken.balanceOf(tokenAuthorityAdmin), 0, "rl admin bal");
@@ -442,7 +442,7 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
     }
 
     function test_burnWithOperationId_revertWhenOperationIdConsumedByMintApproval() public {
@@ -467,7 +467,7 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
     }
 
     function test_publishApproval_revertWhenOperationIdConsumedByBurn() public {
@@ -481,7 +481,7 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         reserveLedgerToken.approve(address(tokenAuthority), 100e6);
-        tokenAuthority.burn(address(reserveLedgerToken), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
         vm.stopPrank();
 
         vm.prank(tokenAuthorityPublisher);
@@ -508,7 +508,7 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(reserveLedgerToken), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
 
         vm.prank(tokenAuthorityPublisher);
         vm.expectRevert(
@@ -557,7 +557,7 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
     }
 
     function test_revokeApproval_revokesOperationId() public {
@@ -581,7 +581,7 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(wrappedStablecoin), 100e6, operationId);
+        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -1000,7 +1000,9 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(wrappedStablecoin), 100e6, revokedApproval.operationId);
+        tokenAuthority.burnWithOperationId(
+            address(wrappedStablecoin), 100e6, revokedApproval.operationId
+        );
 
         IMintIntent.ApprovalParams memory revokedOperation =
             _approvalParams(28, keccak256("revoke-operation-fields"));
@@ -1028,7 +1030,9 @@ contract TokenAuthorityTest is Test {
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        tokenAuthority.burn(address(wrappedStablecoin), 100e6, revokedOperation.operationId);
+        tokenAuthority.burnWithOperationId(
+            address(wrappedStablecoin), 100e6, revokedOperation.operationId
+        );
     }
 
     function test_setMintIntentVersion_requiredGatesPlainMintButAllowsApprovalMint() public {

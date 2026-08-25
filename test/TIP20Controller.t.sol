@@ -444,10 +444,10 @@ contract TIP20ControllerTest is Test {
 
         vm.startPrank(minter);
         stablecoin.approve(address(controller), burnAmount);
-        controller.burn(address(stablecoin), burnAmount, operationId);
+        controller.burnWithOperationId(address(stablecoin), burnAmount, operationId);
 
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        controller.burn(address(stablecoin), 1, operationId);
+        controller.burnWithOperationId(address(stablecoin), 1, operationId);
         vm.stopPrank();
     }
 
@@ -472,7 +472,7 @@ contract TIP20ControllerTest is Test {
 
         vm.prank(minter);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        controller.burn(address(stablecoin), 100e6, operationId);
+        controller.burnWithOperationId(address(stablecoin), 100e6, operationId);
     }
 
     function test_burnWithOperationId_revertWhenOperationIdConsumedByMintApproval() public {
@@ -497,7 +497,7 @@ contract TIP20ControllerTest is Test {
 
         vm.prank(minter);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        controller.burn(address(stablecoin), 100e6, operationId);
+        controller.burnWithOperationId(address(stablecoin), 100e6, operationId);
     }
 
     function test_publishApproval_revertWhenOperationIdConsumedByBurn() public {
@@ -507,7 +507,7 @@ contract TIP20ControllerTest is Test {
 
         vm.startPrank(minter);
         stablecoin.approve(address(controller), 30e6);
-        controller.burn(address(stablecoin), 30e6, operationId);
+        controller.burnWithOperationId(address(stablecoin), 30e6, operationId);
         vm.stopPrank();
 
         vm.prank(admin);
@@ -870,7 +870,7 @@ contract TIP20ControllerTest is Test {
         controller.grantRole(controller.BURNER_ROLE(), minter);
         vm.prank(minter);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        controller.burn(address(stablecoin), 100e6, revokedApproval.operationId);
+        controller.burnWithOperationId(address(stablecoin), 100e6, revokedApproval.operationId);
 
         IMintIntent.ApprovalParams memory revokedOperation =
             _approvalParams(28, keccak256("revoke-operation-fields"));
@@ -897,7 +897,7 @@ contract TIP20ControllerTest is Test {
 
         vm.prank(minter);
         vm.expectRevert(IMintIntent.InvalidOperationId.selector);
-        controller.burn(address(stablecoin), 100e6, revokedOperation.operationId);
+        controller.burnWithOperationId(address(stablecoin), 100e6, revokedOperation.operationId);
     }
 
     function test_setMintIntentVersion_requiredGatesPlainMintButAllowsApprovalMint() public {

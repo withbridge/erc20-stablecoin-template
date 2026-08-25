@@ -197,7 +197,7 @@ contract TokenAuthority is
      * @param amount The amount of tokens to burn
      * @param operationId The operation ID to consume for this burn
      */
-    function burn(address stablecoinContract, uint256 amount, uint256 operationId)
+    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
         public
         onlyRole(BURNER_ROLE)
     {

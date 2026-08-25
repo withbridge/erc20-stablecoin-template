@@ -167,7 +167,8 @@ interface ITIP20Controller {
      * @param amount The amount of tokens to burn
      * @param operationId The operation ID to consume for this burn
      */
-    function burn(address stablecoinContract, uint256 amount, uint256 operationId) external;
+    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
+        external;
 
     /**
      * @notice Unwraps a given amount of a stablecoin for the caller
