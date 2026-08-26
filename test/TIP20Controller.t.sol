@@ -7,8 +7,11 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 
-import { Approval } from "src/mintIntent/MintIntentStorage.sol";
+import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
+import { Approval, OperationState } from "src/mintIntent/MintIntentStorage.sol";
 import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
+import { IMintIntentErrors } from "src/mintIntent/interfaces/IMintIntentErrors.sol";
+import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { TIP20Controller } from "src/v3/tempo/TIP20Controller.sol";
 import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
 import { StdPrecompiles } from "tempo-std/StdPrecompiles.sol";
@@ -20,6 +23,7 @@ import { ITIP20RolesAuth } from "tempo-std/interfaces/ITIP20RolesAuth.sol";
 contract TIP20ControllerTest is Test {
 
     TIP20Controller controller;
+    MintIntentRegistry mintIntentRegistry;
 
     ITIP20 reserveLedgerToken;
     ITIP20 stablecoin;
@@ -50,13 +54,21 @@ contract TIP20ControllerTest is Test {
         );
         stablecoin = ITIP20(stablecoinAddr);
 
+        // Deploy the shared mint intent registry
+        mintIntentRegistry = _deployMintIntentRegistry(admin);
+
         // Deploy TIP20Controller implementation
         TIP20Controller implementation = new TIP20Controller(address(reserveLedgerToken), false);
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(TIP20Controller.initialize, (admin, admin));
+        bytes memory initData = abi.encodeCall(
+            TIP20Controller.initialize, (admin, admin, address(mintIntentRegistry))
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         controller = TIP20Controller(address(proxy));
+
+        // Authorize the controller to publish and consume intents in the shared registry
+        mintIntentRegistry.grantRole(mintIntentRegistry.CONTROLLER_ROLE(), address(controller));
 
         // Grant MINT_RATE_LIMIT_SETTER_ROLE to admin
         controller.grantRole(controller.MINT_RATE_LIMIT_SETTER_ROLE(), admin);
@@ -77,6 +89,21 @@ contract TIP20ControllerTest is Test {
             .grantRole(reserveLedgerToken.ISSUER_ROLE(), address(controller));
     }
 
+    function _deployMintIntentRegistry(address registryAdmin)
+        internal
+        returns (MintIntentRegistry)
+    {
+        MintIntentRegistry registryImplementation = new MintIntentRegistry(false);
+        return MintIntentRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(registryImplementation),
+                    abi.encodeCall(MintIntentRegistry.initialize, (registryAdmin))
+                )
+            )
+        );
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Initialization Tests
     //////////////////////////////////////////////////////////////////////////*/
@@ -85,7 +112,18 @@ contract TIP20ControllerTest is Test {
         TIP20Controller newController = new TIP20Controller(address(reserveLedgerToken), true);
 
         vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
-        newController.initialize(admin, admin);
+        newController.initialize(admin, admin, address(mintIntentRegistry));
+    }
+
+    function test_initialize_revertsWhenRegistryIsZero() public {
+        TIP20Controller newController = new TIP20Controller(address(reserveLedgerToken), false);
+
+        vm.expectRevert(IMintIntentErrors.InvalidRegistry.selector);
+        newController.initialize(admin, admin, address(0));
+    }
+
+    function test_initialize_setsMintIntentRegistry() public view {
+        assertEq(address(controller.mintIntentRegistry()), address(mintIntentRegistry));
     }
 
     function test_initialize_sets_admin() public view {
@@ -454,6 +492,28 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev burnWithOperationId is the only external path into consumeUnusedOperationId, which
+    /// retires an operation ID for every controller sharing the registry.
+    function test_burnWithOperationId_revert_not_burner() public {
+        uint256 operationId = 4242;
+        // Read the role BEFORE pranking: an intervening external call consumes the prank.
+        bytes32 burnerRole = controller.BURNER_ROLE();
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, burnerRole
+            )
+        );
+        controller.burnWithOperationId(address(stablecoin), 30e6, operationId);
+
+        assertEq(
+            uint256(mintIntentRegistry.getOperationState(operationId)),
+            uint256(OperationState.UNUSED),
+            "a rejected burn must not retire the operation ID"
+        );
+    }
+
     function test_burnWithOperationId_consumesUnusedOperationId() public {
         uint256 operationId = 1;
         uint256 mintAmount = 100e6;
@@ -465,7 +525,7 @@ contract TIP20ControllerTest is Test {
         stablecoin.approve(address(controller), burnAmount);
         controller.burnWithOperationId(address(stablecoin), burnAmount, operationId);
 
-        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
         controller.burnWithOperationId(address(stablecoin), 1, operationId);
         vm.stopPrank();
     }
@@ -490,7 +550,7 @@ contract TIP20ControllerTest is Test {
         );
 
         vm.prank(minter);
-        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
         controller.burnWithOperationId(address(stablecoin), 100e6, operationId);
     }
 
@@ -515,7 +575,7 @@ contract TIP20ControllerTest is Test {
         controller.mintWithApproval(params);
 
         vm.prank(minter);
-        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
         controller.burnWithOperationId(address(stablecoin), 100e6, operationId);
     }
 
@@ -531,7 +591,9 @@ contract TIP20ControllerTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, operationId)
+            abi.encodeWithSelector(
+                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
+            )
         );
         controller.publishApproval(
             IMintIntent.ApprovalParams({
@@ -617,12 +679,12 @@ contract TIP20ControllerTest is Test {
     }
 
     function test_publishApproval_rejectsInvalidInputsAndDuplicates() public {
-        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
         controller.publishApproval(
             _approvalParams(0, keccak256("zero-operation")), uint64(block.timestamp + 1 days)
         );
 
-        vm.expectRevert(IMintIntent.InvalidHoldId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidHoldId.selector);
         controller.publishApproval(
             _approvalParams(12, bytes32(0)), uint64(block.timestamp + 1 days)
         );
@@ -630,20 +692,20 @@ contract TIP20ControllerTest is Test {
         IMintIntent.ApprovalParams memory params = _approvalParams(13, keccak256("invalid-publish"));
 
         params.amount = 0;
-        vm.expectRevert(IMintIntent.InvalidAmount.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidAmount.selector);
         controller.publishApproval(params, uint64(block.timestamp + 1 days));
 
         params = _approvalParams(14, keccak256("zero-stablecoin"));
         params.stablecoin = address(0);
-        vm.expectRevert(IMintIntent.InvalidStablecoin.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidStablecoin.selector);
         controller.publishApproval(params, uint64(block.timestamp + 1 days));
 
         params = _approvalParams(15, keccak256("zero-recipient"));
         params.recipient = address(0);
-        vm.expectRevert(IMintIntent.InvalidRecipient.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidRecipient.selector);
         controller.publishApproval(params, uint64(block.timestamp + 1 days));
 
-        vm.expectRevert(IMintIntent.InvalidExpiry.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidExpiry.selector);
         controller.publishApproval(
             _approvalParams(16, keccak256("expired-expiry")), uint64(block.timestamp)
         );
@@ -652,14 +714,16 @@ contract TIP20ControllerTest is Test {
         controller.publishApproval(params, uint64(block.timestamp + 1 days));
 
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, 17)
+            abi.encodeWithSelector(IMintIntentErrors.ApprovalExistsForOperationId.selector, 17)
         );
         controller.publishApproval(
             _approvalParams(17, keccak256("duplicate-operation")), uint64(block.timestamp + 1 days)
         );
 
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.ApprovalExistsForHoldId.selector, params.holdId)
+            abi.encodeWithSelector(
+                IMintIntentErrors.ApprovalExistsForHoldId.selector, params.holdId
+            )
         );
         controller.publishApproval(
             _approvalParams(18, params.holdId), uint64(block.timestamp + 1 days)
@@ -690,14 +754,17 @@ contract TIP20ControllerTest is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntent.ApprovalExpiryNotExtended.selector, params.holdId, expiry, expiry
+                IMintIntentErrors.ApprovalExpiryNotExtended.selector, params.holdId, expiry, expiry
             )
         );
         controller.extendApproval(params.holdId, expiry);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntent.ApprovalExpiryNotExtended.selector, params.holdId, expiry - 1, expiry
+                IMintIntentErrors.ApprovalExpiryNotExtended.selector,
+                params.holdId,
+                expiry - 1,
+                expiry
             )
         );
         controller.extendApproval(params.holdId, expiry - 1);
@@ -707,7 +774,9 @@ contract TIP20ControllerTest is Test {
         controller.revokeApproval(revoked.holdId);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.InvalidApproval.selector, revoked.holdId, uint256(2))
+            abi.encodeWithSelector(
+                IMintIntentErrors.InvalidApproval.selector, revoked.holdId, uint256(2)
+            )
         );
         controller.extendApproval(revoked.holdId, expiry + 1);
 
@@ -720,14 +789,16 @@ contract TIP20ControllerTest is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntent.InvalidApproval.selector, consumed.holdId, uint256(1)
+                IMintIntentErrors.InvalidApproval.selector, consumed.holdId, uint256(1)
             )
         );
         controller.extendApproval(consumed.holdId, expiry + 1);
 
         bytes32 missingHoldId = keccak256("extend-missing");
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.ApprovalNotExistsForHoldId.selector, missingHoldId)
+            abi.encodeWithSelector(
+                IMintIntentErrors.ApprovalNotExistsForHoldId.selector, missingHoldId
+            )
         );
         controller.extendApproval(missingHoldId, expiry + 1);
     }
@@ -755,12 +826,14 @@ contract TIP20ControllerTest is Test {
         _allowMinter(address(stablecoin), 100e6);
         vm.prank(minter);
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.InvalidApproval.selector, holdId, uint256(1))
+            abi.encodeWithSelector(IMintIntentErrors.InvalidApproval.selector, holdId, uint256(1))
         );
         controller.mintWithApproval(params);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IMintIntent.ApprovalExistsForOperationId.selector, operationId)
+            abi.encodeWithSelector(
+                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
+            )
         );
         controller.publishApproval(
             _approvalParams(operationId, keccak256("consumed-operation-republish")),
@@ -890,7 +963,7 @@ contract TIP20ControllerTest is Test {
         vm.prank(minter);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntent.InvalidApproval.selector, revokedApproval.holdId, uint256(2)
+                IMintIntentErrors.InvalidApproval.selector, revokedApproval.holdId, uint256(2)
             )
         );
         controller.mintWithApproval(revokedApproval);
@@ -898,7 +971,7 @@ contract TIP20ControllerTest is Test {
         vm.prank(admin);
         controller.grantRole(controller.BURNER_ROLE(), minter);
         vm.prank(minter);
-        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
         controller.burnWithOperationId(address(stablecoin), 100e6, revokedApproval.operationId);
 
         IMintIntent.ApprovalParams memory revokedOperation =
@@ -919,13 +992,13 @@ contract TIP20ControllerTest is Test {
         vm.prank(minter);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntent.InvalidApproval.selector, revokedOperation.holdId, uint256(2)
+                IMintIntentErrors.InvalidApproval.selector, revokedOperation.holdId, uint256(2)
             )
         );
         controller.mintWithApproval(revokedOperation);
 
         vm.prank(minter);
-        vm.expectRevert(IMintIntent.InvalidOperationId.selector);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
         controller.burnWithOperationId(address(stablecoin), 100e6, revokedOperation.operationId);
     }
 
@@ -1390,6 +1463,73 @@ contract TIP20ControllerTest is Test {
         controller.mint(address(stablecoin), minter, amount);
     }
 
+    /*//////////////////////////////////////////////////////////////////////////
+                Shared registry across DIFFERENT controller types
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @dev The Zenith finding names both TokenAuthority and TIP20Controller, but every other
+    /// cross-controller test uses two TokenAuthority proxies or two EOAs. This is the only test
+    /// where the two real, mechanically different controller types share one registry.
+    function test_sharedRegistryWithTokenAuthority_operationIdIsSingleUse() public {
+        uint256 operationId = 4242;
+        bytes32 holdId = keccak256("cross-type");
+
+        // A TokenAuthority sharing this controller's registry
+        TokenAuthority ta = new TokenAuthority(address(reserveLedgerToken), false);
+        ta.initialize(admin, admin, address(mintIntentRegistry));
+        mintIntentRegistry.grantRole(mintIntentRegistry.CONTROLLER_ROLE(), address(ta));
+
+        // Consume the operation ID through the TIP20Controller
+        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
+        _publishApproval(params, uint64(block.timestamp + 1 days));
+        _allowMinter(address(stablecoin), 100e6);
+        vm.prank(minter);
+        controller.mintWithApproval(params);
+
+        assertEq(
+            uint256(mintIntentRegistry.getOperationState(operationId)),
+            uint256(OperationState.CONSUMED)
+        );
+
+        // The TokenAuthority cannot reuse the operation ID...
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
+            )
+        );
+        ta.publishApproval(
+            _approvalParams(operationId, keccak256("cross-type-other")),
+            uint64(block.timestamp + 1 days)
+        );
+
+        // ...nor the hold ID...
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(IMintIntentErrors.ApprovalExistsForHoldId.selector, holdId)
+        );
+        ta.publishApproval(_approvalParams(9999, holdId), uint64(block.timestamp + 1 days));
+
+        // ...nor retire it via a burn...
+        vm.startPrank(admin);
+        ta.grantRole(ta.BURNER_ROLE(), admin);
+        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
+        ta.burnWithOperationId(address(stablecoin), 1, operationId);
+        vm.stopPrank();
+
+        // ...and cannot touch the TIP20Controller's approval, since ownership is per controller.
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMintIntentErrors.NotApprovalController.selector,
+                holdId,
+                address(controller),
+                address(ta)
+            )
+        );
+        ta.revokeApproval(holdId);
+    }
+
     function _approvalParams(uint256 operationId, bytes32 holdId)
         internal
         view
@@ -1425,7 +1565,7 @@ contract TIP20ControllerTest is Test {
     ) internal {
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntent.InvalidApprovalParams.selector,
+                IMintIntentErrors.InvalidApprovalParams.selector,
                 invalidHoldId,
                 invalidOperationId,
                 invalidAmount,

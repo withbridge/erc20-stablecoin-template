@@ -5,6 +5,7 @@ import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
+import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
@@ -32,11 +33,13 @@ contract Verify is Common {
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
     bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
+    bytes32 constant CONTROLLER_ROLE = keccak256("CONTROLLER_ROLE");
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
     function run() public {
         address authRegistry = authRegistryAddress();
         address reserveLedger = reserveLedgerAddress();
+        address mintIntentRegistry = mintIntentRegistryAddress();
         address tokenAuthority = tokenAuthorityAddress();
         address stablecoin = stablecoinAddress();
 
@@ -44,7 +47,8 @@ contract Verify is Common {
         _verifyReserveLedger(ReserveLedger(reserveLedger), tokenAuthority);
         _verifyStablecoin(StablecoinTemplateV3(stablecoin), reserveLedger, tokenAuthority);
         _verifyTokenAuthority(TokenAuthority(tokenAuthority), reserveLedger, stablecoin);
-        _verifyDeployerRenunciation(reserveLedger, tokenAuthority, stablecoin);
+        _verifyMintIntentRegistry(MintIntentRegistry(mintIntentRegistry), tokenAuthority);
+        _verifyDeployerRenunciation(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin);
 
         // --- Summary ---
         console.log("---");
@@ -181,8 +185,33 @@ contract Verify is Common {
         );
     }
 
+    function _verifyMintIntentRegistry(MintIntentRegistry registry, address tokenAuthority)
+        internal
+    {
+        _check(address(registry).code.length > 0, "MintIntentRegistry has code");
+
+        // The TokenAuthority must point at this registry, and be authorized on it, or mint
+        // intents cannot be published or consumed.
+        _check(
+            address(TokenAuthority(tokenAuthority).mintIntentRegistry()) == address(registry),
+            "TA: mintIntentRegistry matches"
+        );
+        _check(
+            registry.hasRole(CONTROLLER_ROLE, tokenAuthority),
+            "MintIntentRegistry: TA has CONTROLLER_ROLE"
+        );
+
+        // Admin handover
+        address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
+        _check(
+            registry.hasRole(DEFAULT_ADMIN_ROLE, taAdmin),
+            "MintIntentRegistry: admin has DEFAULT_ADMIN_ROLE"
+        );
+    }
+
     function _verifyDeployerRenunciation(
         address reserveLedger,
+        address mintIntentRegistry,
         address tokenAuthority,
         address stablecoin
     ) internal {
@@ -222,6 +251,10 @@ contract Verify is Common {
                 !TokenAuthority(tokenAuthority)
                     .hasRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer),
                 "TA: deployer renounced TOKEN_AUTHORITY_HANDLER_SETTER_ROLE"
+            );
+            _check(
+                !MintIntentRegistry(mintIntentRegistry).hasRole(DEFAULT_ADMIN_ROLE, deployer),
+                "MintIntentRegistry: deployer renounced DEFAULT_ADMIN_ROLE"
             );
         }
     }

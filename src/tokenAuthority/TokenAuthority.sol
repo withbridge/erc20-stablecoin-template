@@ -19,6 +19,7 @@ import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC16
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
 import { IMintIntent, MintIntent } from "../mintIntent/MintIntent.sol";
+import { IMintIntentRegistry } from "../mintIntent/interfaces/IMintIntentRegistry.sol";
 
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -85,6 +86,12 @@ contract TokenAuthority is
     /// @notice Maps a stablecoin to whether or not minting/burning/wrapping/unwrapping is paused
     mapping(address stablecoinContract => bool isPaused) public stablecoinIsPaused;
 
+    /// @notice The shared registry that owns all mint intent state
+    /// @dev Shared with every other controller deployment so that operation IDs and hold IDs are
+    /// single-use across all of them. Declared here rather than in {MintIntent} so the slot is
+    /// appended after this contract's existing variables instead of shifting them.
+    IMintIntentRegistry public mintIntentRegistry;
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
@@ -109,11 +116,14 @@ contract TokenAuthority is
     /**
      * @notice Initializes the TokenAuthority contract
      * @param _admin The address to be granted the admin role
+     * @param _publisher The address to be granted the publisher role
+     * @param _registry The shared mint intent registry. This TokenAuthority must be granted
+     * CONTROLLER_ROLE on the registry before mint intents can be used.
      */
-    function initialize(address _admin, address _publisher) public initializer {
+    function initialize(address _admin, address _publisher, address _registry) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        __MintIntent_init(_publisher);
+        __MintIntent_init(_publisher, _registry);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     }
@@ -392,6 +402,12 @@ contract TokenAuthority is
         emit StablecoinUnregistered(msg.sender, stablecoinContract);
     }
 
+    /**
+     * @notice Sets whether mint intents are optional or required
+     * @dev When `Required`, plain `mint` reverts with {MintIntentRequired} and callers must use
+     *      `mintWithApproval` against a published intent. `mintBridgeEcosystem` is unaffected.
+     * @param _mintIntentVersion The new mint intent version
+     */
     function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -493,6 +509,16 @@ contract TokenAuthority is
 
     function _requireStablecoinPaused(address stablecoinContract) internal view {
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
+    }
+
+    /// @inheritdoc MintIntent
+    function _setMintIntentRegistry(IMintIntentRegistry _registry) internal override {
+        mintIntentRegistry = _registry;
+    }
+
+    /// @inheritdoc MintIntent
+    function _mintIntentRegistry() internal view override returns (IMintIntentRegistry) {
+        return mintIntentRegistry;
     }
 
 }

@@ -55,6 +55,12 @@ interface ITokenHandler is IERC165 {
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
+     * @notice The only address permitted to call this handler
+     * @dev Implementations revert with {OnlyTokenAuthority} for any other caller
+     */
+    function TOKEN_AUTHORITY() external view returns (address);
+
+    /**
      * @notice Mints tokens to a specified address
      * @param stablecoinContract The address of the stablecoin contract
      * @param to The address to mint the tokens to

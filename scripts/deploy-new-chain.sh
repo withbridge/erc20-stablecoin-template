@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # deploy-new-chain.sh — bootstraps shared infrastructure on a new chain:
-#   01. AuthRegistry
-#   02. ReserveLedger  (+ transfer and mint-recipient policies)
-#   03. TokenAuthority
+#   01.  AuthRegistry
+#   02.  ReserveLedger  (+ transfer and mint-recipient policies)
+#   03a. MintIntentRegistry  (shared by every controller on this chain)
+#   03.  TokenAuthority
 #
 # Run this once per chain. After this, use deploy-new-stablecoin.sh for each
 # stablecoin you want to deploy on this chain.
@@ -66,11 +67,23 @@ out=$(run_script "02: Deploy ReserveLedger" \
 RESERVE_LEDGER=$(extract "RESERVE_LEDGER" "$out")
 TRANSFER_POLICY_ID=$(extract_uint "TRANSFER_POLICY_ID" "$out")
 
+# ── Step 03a: Deploy MintIntentRegistry ──────────────────────────────────────
+#
+# Deploy once per chain and share across every controller. Operation IDs are only
+# single-use within the storage that tracks them, so a shared registry is what
+# makes them single-use across controller deployments.
+#
+out=$(run_script "03a: Deploy MintIntentRegistry" \
+    scripts/03a_DeployMintIntentRegistry.s.sol 2>&1 | tee /dev/stderr)
+
+MINT_INTENT_REGISTRY=$(extract "MINT_INTENT_REGISTRY" "$out")
+
 # ── Step 03: Deploy TokenAuthority ───────────────────────────────────────────
 
 out=$(run_script "03: Deploy TokenAuthority" \
     scripts/03_DeployTokenAuthority.s.sol \
-    --sig "run(address)" "${RESERVE_LEDGER}" 2>&1 | tee /dev/stderr)
+    --sig "run(address,address)" \
+    "${RESERVE_LEDGER}" "${MINT_INTENT_REGISTRY}" 2>&1 | tee /dev/stderr)
 
 TOKEN_AUTHORITY=$(extract "TOKEN_AUTHORITY" "$out")
 
@@ -80,9 +93,11 @@ echo ""
 echo "===== Chain Infrastructure Deployed ====="
 echo "AUTH_REGISTRY=${AUTH_REGISTRY}"
 echo "RESERVE_LEDGER=${RESERVE_LEDGER}"
+echo "MINT_INTENT_REGISTRY=${MINT_INTENT_REGISTRY}"
 echo "TOKEN_AUTHORITY=${TOKEN_AUTHORITY}"
 echo "TRANSFER_POLICY_ID=${TRANSFER_POLICY_ID}"
 echo ""
 echo "Deploy a stablecoin on this chain:"
 echo "  bash scripts/deploy-new-stablecoin.sh \\"
-echo "    ${AUTH_REGISTRY} ${RESERVE_LEDGER} ${TOKEN_AUTHORITY} ${TRANSFER_POLICY_ID}"
+echo "    ${AUTH_REGISTRY} ${RESERVE_LEDGER} ${MINT_INTENT_REGISTRY} \\"
+echo "    ${TOKEN_AUTHORITY} ${TRANSFER_POLICY_ID}"

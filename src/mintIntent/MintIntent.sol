@@ -1,21 +1,25 @@
 // SPDX- License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {
-    Approval,
-    MintIntentStorage,
-    MintIntentStorageLib,
-    OperationState
-} from "./MintIntentStorage.sol";
+import { Approval } from "./MintIntentStorage.sol";
 import { IMintIntent } from "./interfaces/IMintIntent.sol";
+import { IMintIntentRegistry } from "./interfaces/IMintIntentRegistry.sol";
 import {
     AccessControlEnumerableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
+/// @notice Client base that exposes the mint intent lifecycle on a controller and forwards it to
+/// the shared {MintIntentRegistry}.
+/// @dev Intent state is deliberately NOT held here. Each controller proxy would otherwise keep its
+/// own operation-ID and hold-ID mappings, which makes an operation ID single-use per controller
+/// rather than across every controller deployment. All state lives in the shared registry.
+/// @dev The registry validates and mutates; this base emits the {IMintIntent} events so the actor
+/// recorded is the original caller rather than the controller.
+/// @dev Implementers must store the registry pointer themselves and expose it through
+/// {_setMintIntentRegistry} and {_mintIntentRegistry}. Declaring it here would insert a slot ahead
+/// of the inheriting controller's existing variables and shift its storage layout.
 abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent {
-
-    using MintIntentStorageLib for MintIntentStorage;
-    using MintIntentStorageLib for Approval;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Role Constants
@@ -24,64 +28,26 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
     bytes32 public constant PUBLISHER_ROLE = keccak256("PUBLISHER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
-                                    Error Constants
-    //////////////////////////////////////////////////////////////////////////*/
-
-    uint256 constant INVALID_HOLD_ID_FLAG = 1;
-    uint256 constant INVALID_OPERATION_ID_FLAG = 2;
-    uint256 constant INVALID_AMOUNT_FLAG = 4;
-    uint256 constant INVALID_RECIPIENT_FLAG = 8;
-    uint256 constant INVALID_STABLECOIN_FLAG = 16;
-    uint256 constant INVALID_EXPIRY_FLAG = 32;
-
-    /*//////////////////////////////////////////////////////////////////////////
                                     Initializer
     //////////////////////////////////////////////////////////////////////////*/
 
-    function __MintIntent_init(address _publisher) internal onlyInitializing {
+    function __MintIntent_init(address _publisher, address _registry) internal onlyInitializing {
+        require(_registry != address(0), InvalidRegistry());
+
         _grantRole(PUBLISHER_ROLE, _publisher);
+        _setMintIntentRegistry(IMintIntentRegistry(_registry));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 External Functions
     //////////////////////////////////////////////////////////////////////////*/
 
+    /// @inheritdoc IMintIntent
     function publishApproval(ApprovalParams calldata _params, uint64 _expiry)
         external
         onlyRole(PUBLISHER_ROLE)
     {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
-
-        // Validate input parameters
-        require(_params.operationId != 0, InvalidOperationId());
-        require(_params.holdId != bytes32(0), InvalidHoldId());
-        require(_params.amount > 0, InvalidAmount());
-        require(_params.stablecoin != address(0), InvalidStablecoin());
-        require(_params.recipient != address(0), InvalidRecipient());
-        require(_expiry > block.timestamp, InvalidExpiry());
-
-        // Check that the _holdId and _operationId are not already in use
-        require(
-            $._operationStates[_params.operationId] == OperationState.UNUSED
-                && $._operationHoldId[_params.operationId] == bytes32(0),
-            ApprovalExistsForOperationId(_params.operationId)
-        );
-        require(
-            $._holdIdApproval[_params.holdId].stablecoin == address(0),
-            ApprovalExistsForHoldId(_params.holdId)
-        );
-
-        // Store operationId for the holdId and the intent for the holdId
-        $._operationStates[_params.operationId] = OperationState.RESERVED;
-        $._operationHoldId[_params.operationId] = _params.holdId;
-        $._holdIdApproval[_params.holdId] = Approval({
-            amount: _params.amount,
-            recipient: _params.recipient,
-            stablecoin: _params.stablecoin,
-            expiry: _expiry,
-            flags: MintIntentStorageLib.DEFAULT_FLAGS,
-            operationId: _params.operationId
-        });
+        _mintIntentRegistry().publishApproval(_params, _expiry);
 
         emit ApprovalPublished(
             msg.sender,
@@ -94,73 +60,57 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
         );
     }
 
+    /// @inheritdoc IMintIntent
     function revokeApproval(bytes32 _holdId) external onlyRole(PUBLISHER_ROLE) {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
-
-        Approval storage approval = $._holdIdApproval[_holdId];
-
-        // Check that the approval exists and has not been consumed or revoked
-        require(approval.stablecoin != address(0), ApprovalNotExistsForHoldId(_holdId));
-        require(approval.isValid(), InvalidApproval(_holdId, approval.flags));
-
-        // Revoke the approval
-        uint256 operationId = approval.operationId;
-        $._operationStates[operationId] = OperationState.REVOKED;
-        approval.setRevoked();
+        uint256 operationId = _mintIntentRegistry().revokeApproval(_holdId);
 
         emit ApprovalRevoked(msg.sender, _holdId, operationId);
     }
 
+    /// @inheritdoc IMintIntent
     function revokeOperationId(uint256 _operationId) external onlyRole(PUBLISHER_ROLE) {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
+        bytes32 holdId = _mintIntentRegistry().revokeOperationId(_operationId);
 
-        require(_operationId != 0, InvalidOperationId());
-
-        OperationState state = $._operationStates[_operationId];
-        require(
-            state == OperationState.UNUSED || state == OperationState.RESERVED, InvalidOperationId()
-        );
-
-        bytes32 holdId = $._operationHoldId[_operationId];
         if (holdId != bytes32(0)) {
-            Approval storage approval = $._holdIdApproval[holdId];
-            require(approval.stablecoin != address(0), ApprovalNotExistsForHoldId(holdId));
-            require(approval.isValid(), InvalidApproval(holdId, approval.flags));
-            approval.setRevoked();
             emit ApprovalRevoked(msg.sender, holdId, _operationId);
         }
-
-        $._operationStates[_operationId] = OperationState.REVOKED;
 
         emit OperationIdRevoked(msg.sender, _operationId, holdId);
     }
 
     // Do we need a version that takes in the operationId instead of the holdId?
+    /// @inheritdoc IMintIntent
     function extendApproval(bytes32 _holdId, uint64 _expiry) external onlyRole(PUBLISHER_ROLE) {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
+        uint256 operationId = _mintIntentRegistry().extendApproval(_holdId, _expiry);
 
-        Approval storage approval = $._holdIdApproval[_holdId];
+        emit ApprovalExtended(msg.sender, _holdId, operationId, _expiry);
+    }
 
-        // Check that the approval exists and has not been consumed or revoked
-        require(approval.stablecoin != address(0), ApprovalNotExistsForHoldId(_holdId));
-        require(approval.isValid(), InvalidApproval(_holdId, approval.flags));
+    /// @inheritdoc IMintIntent
+    function setMintIntentRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_registry != address(0), InvalidRegistry());
 
-        uint64 expiry = approval.expiry;
-        require(_expiry > expiry, ApprovalExpiryNotExtended(_holdId, _expiry, expiry));
+        // Reject a registry this controller is not authorized on, which would otherwise leave
+        // every intent operation reverting until the role were granted.
+        IMintIntentRegistry newRegistry = IMintIntentRegistry(_registry);
+        require(
+            IAccessControl(_registry).hasRole(newRegistry.CONTROLLER_ROLE(), address(this)),
+            ControllerNotAuthorizedOnRegistry(_registry)
+        );
 
-        // Extend the approval
-        approval.expiry = _expiry;
+        address oldRegistry = address(_mintIntentRegistry());
+        _setMintIntentRegistry(newRegistry);
 
-        emit ApprovalExtended(msg.sender, _holdId, approval.operationId, _expiry);
+        emit MintIntentRegistrySet(msg.sender, oldRegistry, _registry);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 View Functions
     //////////////////////////////////////////////////////////////////////////*/
 
+    /// @inheritdoc IMintIntent
     function getApproval(bytes32 _holdId) external view returns (Approval memory) {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
-        return $._holdIdApproval[_holdId];
+        return _mintIntentRegistry().getApproval(_holdId);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -168,71 +118,19 @@ abstract contract MintIntent is AccessControlEnumerableUpgradeable, IMintIntent 
     //////////////////////////////////////////////////////////////////////////*/
 
     function _consumeApproval(ApprovalParams memory _params) internal {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
-        bytes32 holdId = $._operationHoldId[_params.operationId];
-        Approval storage approval = $._holdIdApproval[_params.holdId];
-        OperationState operationState = $._operationStates[_params.operationId];
-
-        uint256 errors = 0;
-
-        if (_params.holdId == bytes32(0)) {
-            errors |= INVALID_HOLD_ID_FLAG;
-        }
-
-        if (
-            _params.operationId == 0 || _params.holdId != holdId
-                || _params.operationId != approval.operationId
-                || operationState != OperationState.RESERVED
-        ) {
-            errors |= INVALID_OPERATION_ID_FLAG;
-        }
-
-        if (_params.amount != approval.amount) {
-            errors |= INVALID_AMOUNT_FLAG;
-        }
-
-        if (_params.recipient != approval.recipient) {
-            errors |= INVALID_RECIPIENT_FLAG;
-        }
-
-        if (_params.stablecoin != approval.stablecoin) {
-            errors |= INVALID_STABLECOIN_FLAG;
-        }
-
-        if (approval.expiry <= block.timestamp) {
-            errors |= INVALID_EXPIRY_FLAG;
-        }
-        require(approval.isValid(), InvalidApproval(_params.holdId, approval.flags));
-
-        if (errors != 0) {
-            revert InvalidApprovalParams(
-                errors & INVALID_HOLD_ID_FLAG != 0,
-                errors & INVALID_OPERATION_ID_FLAG != 0,
-                errors & INVALID_AMOUNT_FLAG != 0,
-                errors & INVALID_RECIPIENT_FLAG != 0,
-                errors & INVALID_STABLECOIN_FLAG != 0,
-                errors & INVALID_EXPIRY_FLAG != 0
-            );
-        }
-
-        // Consume the approval
-        $._operationStates[_params.operationId] = OperationState.CONSUMED;
-        approval.setConsumed();
+        _mintIntentRegistry().consumeApproval(_params);
 
         emit ApprovalConsumed(msg.sender, _params.operationId, _params.holdId);
     }
 
     function _consumeUnusedOperationId(uint256 _operationId) internal {
-        MintIntentStorage storage $ = MintIntentStorageLib.getStorage();
-
-        require(_operationId != 0, InvalidOperationId());
-        require(
-            $._operationStates[_operationId] == OperationState.UNUSED
-                && $._operationHoldId[_operationId] == bytes32(0),
-            InvalidOperationId()
-        );
-
-        $._operationStates[_operationId] = OperationState.CONSUMED;
+        _mintIntentRegistry().consumeUnusedOperationId(_operationId);
     }
+
+    /// @dev Persists the shared registry pointer in the implementer's own storage.
+    function _setMintIntentRegistry(IMintIntentRegistry _registry) internal virtual;
+
+    /// @dev Returns the shared registry that owns all mint intent state.
+    function _mintIntentRegistry() internal view virtual returns (IMintIntentRegistry);
 
 }

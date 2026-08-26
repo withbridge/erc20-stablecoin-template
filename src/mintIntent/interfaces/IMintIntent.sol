@@ -2,11 +2,31 @@
 pragma solidity ^0.8.24;
 
 import { Approval } from "../MintIntentStorage.sol";
+import { IMintIntentErrors } from "./IMintIntentErrors.sol";
+import { IMintIntentRegistry } from "./IMintIntentRegistry.sol";
 
-/// @notice Interface for publishing, revoking, consuming, and extending mint intents.
+/// @title IMintIntent
+/// @author Bridge
+/// @notice Interface for publishing, revoking, consuming, and extending mint intents on a
+/// controller.
 /// @dev Intents are identified by both an operation ID and a hold ID.
-interface IMintIntent {
+/// @dev Implementations hold no intent state. Every function forwards to the shared
+/// {IMintIntentRegistry} so that operation IDs and hold IDs are single-use across all controller
+/// deployments rather than once per controller. Events are emitted here, by the controller, so the
+/// recorded actor is the original caller.
+interface IMintIntent is IMintIntentErrors {
 
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Structs
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice Identifying and validating fields of a mint intent.
+    /// @dev Supplied on publish, then supplied again on consume where every field must match.
+    /// @param operationId The globally single-use operation ID.
+    /// @param holdId The hold ID that reserves the operation ID.
+    /// @param amount The amount of tokens approved for minting.
+    /// @param recipient The only address that may receive the minted tokens.
+    /// @param stablecoin The stablecoin approved for minting.
     struct ApprovalParams {
         uint256 operationId;
         bytes32 holdId;
@@ -14,56 +34,6 @@ interface IMintIntent {
         address recipient;
         address stablecoin;
     }
-
-    /*//////////////////////////////////////////////////////////////////////////
-                                    Errors
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /// @notice Thrown when an approval already exists for an operation ID.
-    /// @param _operationId The operation ID that already has an approval.
-    error ApprovalExistsForOperationId(uint256 _operationId);
-
-    /// @notice Thrown when an approval already exists for a hold ID.
-    /// @param _holdId The hold ID that already has an approval.
-    error ApprovalExistsForHoldId(bytes32 _holdId);
-
-    /// @notice Thrown when an approval does not exist for a hold ID.
-    /// @param _holdId The hold ID without an approval.
-    error ApprovalNotExistsForHoldId(bytes32 _holdId);
-
-    error InvalidApproval(bytes32 _holdId, uint256 _flags);
-
-    error ApprovalExpiryNotExtended(bytes32 _holdId, uint64 _newExpiry, uint64 _oldExpiry);
-
-    error InvalidHoldId();
-
-    error InvalidExpiry();
-
-    error InvalidOperationId();
-
-    error InvalidAmount();
-
-    error InvalidRecipient();
-
-    error InvalidStablecoin();
-
-    /// @notice Thrown when the params supplied to consume an approval do not match the approval.
-    /// @dev The params are flattened rather than grouped in a struct so that block explorers and
-    /// clients decode each failure individually instead of an opaque tuple.
-    /// @param _invalidHoldId Whether the hold ID is invalid.
-    /// @param _invalidOperationId Whether the operation ID is invalid.
-    /// @param _invalidAmount Whether the amount does not match the approval.
-    /// @param _invalidRecipient Whether the recipient does not match the approval.
-    /// @param _stablecoinIsWrong Whether the stablecoin does not match the approval.
-    /// @param _invalidExpiry Whether the approval has expired.
-    error InvalidApprovalParams(
-        bool _invalidHoldId,
-        bool _invalidOperationId,
-        bool _invalidAmount,
-        bool _invalidRecipient,
-        bool _stablecoinIsWrong,
-        bool _invalidExpiry
-    );
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -123,9 +93,21 @@ interface IMintIntent {
         address indexed _publisher, uint256 indexed _operationId, bytes32 indexed _holdId
     );
 
+    /// @notice Emitted when the shared mint intent registry is changed.
+    /// @param _admin The address that set the registry.
+    /// @param _oldRegistry The previous registry.
+    /// @param _newRegistry The new registry.
+    event MintIntentRegistrySet(
+        address indexed _admin, address indexed _oldRegistry, address indexed _newRegistry
+    );
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice The role required to publish, revoke, and extend mint intents on this controller.
+    /// @dev Distinct from the registry's CONTROLLER_ROLE, which the controller itself must hold.
+    function PUBLISHER_ROLE() external view returns (bytes32);
 
     /**
      * @notice Publishes a mint approval.
@@ -165,5 +147,23 @@ interface IMintIntent {
      * @return The mint approval.
      */
     function getApproval(bytes32 _holdId) external view returns (Approval memory);
+
+    /**
+     * @notice Points this controller at a different shared mint intent registry.
+     * @dev Intended for migrating to a new registry deployment. Two operational caveats:
+     *      1. Intents published in the old registry are not carried over. Their operation IDs
+     *         become unused in the new registry and can be published again, so drain or revoke
+     *         in-flight intents before migrating.
+     *      2. This controller must be granted CONTROLLER_ROLE on the new registry, which this
+     *         function enforces, otherwise every intent operation would revert.
+     * @param _registry The new shared mint intent registry.
+     */
+    function setMintIntentRegistry(address _registry) external;
+
+    /**
+     * @notice The shared registry that owns all mint intent state.
+     * @dev Shared across controller deployments so operation IDs are single-use globally.
+     */
+    function mintIntentRegistry() external view returns (IMintIntentRegistry);
 
 }
