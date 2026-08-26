@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { ITokenHandler } from "./ITokenHandler.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { ERC165, IERC165 } from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 
 /// @title TokenHandler
@@ -16,6 +17,17 @@ abstract contract TokenHandler is ITokenHandler, ERC165 {
     /// @notice Restricts function access to the token authority
     modifier onlyTokenAuthority() {
         require(msg.sender == TOKEN_AUTHORITY, OnlyTokenAuthority());
+        _;
+    }
+
+    /// @notice Ensures that precision is equal
+    modifier requireEqualPrecision(address _reserveLedger, address _stablecoin) {
+        uint256 reserveLedgerPrecision = IERC20Metadata(_reserveLedger).decimals();
+        uint256 stablecoinPrecision = IERC20Metadata(_stablecoin).decimals();
+        require(
+            reserveLedgerPrecision == stablecoinPrecision,
+            PrecisionMismatch(reserveLedgerPrecision, stablecoinPrecision)
+        );
         _;
     }
 
