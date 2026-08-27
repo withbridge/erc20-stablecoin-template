@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
+
 /// @title ITokenAuthority
 /// @author Bridge
 /// @notice Interface for the TokenAuthority contract which manages minting rate limits and
 /// allowances for stablecoins
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITokenAuthority {
+interface ITokenAuthority is IMintIntent {
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Enums
+    //////////////////////////////////////////////////////////////////////////*/
+
+    enum MintIntentVersion {
+        Optional,
+        Required
+    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Errors
@@ -52,6 +63,18 @@ interface ITokenAuthority {
 
     /// @notice Thrown when a stablecoin is already registered
     error StablecoinAlreadyRegistered();
+
+    /// @notice Thrown when the mint approval version is required
+    error MintIntentRequired();
+
+    /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
+    error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
+
+    /// @notice Thrown when the stablecoin is paused
+    error StablecoinPaused();
+
+    /// @notice Thrown when the stablecoin is not paused
+    error StablecoinNotPaused();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -150,9 +173,70 @@ interface ITokenAuthority {
     /// @param stablecoinContract The address of the stablecoin contract
     event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
 
+    /// @notice Emitted when the mint approval version is set
+    /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
+    /// @param mintIntentVersion The new mint approval version
+    event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+
+    /// @notice Emitted when a stablecoin's pause status is set
+    /// @param sender The address that set the pause status
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param isPaused Whether the stablecoin is paused
+    event StablecoinPauseSet(
+        address indexed sender, address indexed stablecoinContract, bool isPaused
+    );
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initializes the TokenAuthority
+     * @param _admin The address to be granted the admin role
+     * @param _publisher The address to be granted the publisher role
+     * @param _registry The shared mint intent registry. This TokenAuthority must be granted
+     * CONTROLLER_ROLE on the registry before mint intents can be used.
+     */
+    function initialize(address _admin, address _publisher, address _registry) external;
+
+    /**
+     * @notice Query the address of the reserve ledger token
+     */
+    function RESERVE_LEDGER_TOKEN() external view returns (address);
+
+    /**
+     * @notice The hard cap applied to any single mint amount, allowance, or transaction limit
+     */
+    function ABSOLUTE_MAX() external view returns (uint256);
+
+    /// @notice Role that configures minter allowances and per-transaction mint limits
+    function MINT_RATE_LIMIT_SETTER_ROLE() external view returns (bytes32);
+
+    /// @notice Role that may burn through this authority
+    function BURNER_ROLE() external view returns (bytes32);
+
+    /// @notice Role that may unwrap through this authority
+    function UNWRAPPER_ROLE() external view returns (bytes32);
+
+    /// @notice Role for trusted bridge contracts that mint without rate limits
+    function BRIDGE_ECOSYSTEM_CONTRACT_ROLE() external view returns (bytes32);
+
+    /// @notice Role that registers and swaps token handlers
+    function TOKEN_AUTHORITY_HANDLER_SETTER_ROLE() external view returns (bytes32);
+
+    /// @notice Role that pauses and unpauses individual stablecoins
+    function STABLECOIN_PAUSER_ROLE() external view returns (bytes32);
+
+    /**
+     * @notice Whether mint intents are optional or required for plain `mint`
+     */
+    function mintIntentVersion() external view returns (MintIntentVersion);
+
+    /**
+     * @notice Whether minting/burning/wrapping/unwrapping is paused for a stablecoin
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function stablecoinIsPaused(address stablecoinContract) external view returns (bool);
 
     /**
      * @notice Mints stablecoins to a recipient address
@@ -175,6 +259,19 @@ interface ITokenAuthority {
     function mintBridgeEcosystem(address stablecoinContract, address to, uint256 amount) external;
 
     /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks and decrements transaction limit, and minter allowance before
+     * minting
+     * @param _params The parameters for the mint operation
+     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
+     * @custom:param _params.to The address to receive the minted tokens
+     * @custom:param _params.amount The amount of tokens to mint
+     * @custom:param _params.operationId The operation ID
+     * @custom:param _params.holdId The hold ID
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) external;
+
+    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
      * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin
@@ -182,6 +279,15 @@ interface ITokenAuthority {
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) external;
+
+    /**
+     * @notice Burns tokens from the sender's balance with a globally unique operation ID.
+     * @param stablecoinContract The address of the stablecoin contract.
+     * @param amount The amount of tokens to burn.
+     * @param operationId The operation ID to consume for this burn.
+     */
+    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
+        external;
 
     /**
      * @notice Unwraps a given amount of a wrapped stablecoin for the caller
@@ -193,6 +299,15 @@ interface ITokenAuthority {
      * @param amount The amount of wrapped tokens to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) external;
+
+    /**
+     * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
+     * recipient.
+     * @param stablecoinContract The address of the target stablecoin contract.
+     * @param to The address to receive the wrapped tokens.
+     * @param amount The amount of reserve tokens to wrap.
+     */
+    function wrap(address stablecoinContract, address to, uint256 amount) external;
 
     /**
      * @notice Sets the per-transaction mint limit for a stablecoin contract
@@ -209,6 +324,13 @@ interface ITokenAuthority {
      */
     function setMinterAllowance(address stablecoinContract, address minter, uint256 minterAllowance)
         external;
+
+    /**
+     * @notice Sets the paused state for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param pause True to pause the stablecoin, false to unpause
+     */
+    function setStablecoinPaused(address stablecoinContract, bool pause) external;
 
     /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract
@@ -237,6 +359,30 @@ interface ITokenAuthority {
      * @param tokenHandler The address of the token handler
      */
     function setTokenHandler(address stablecoinContract, address tokenHandler) external;
+
+    /**
+     * @notice Registers a stablecoin contract with the TokenAuthority
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param tokenHandler The address of the token handler
+     * @param mintTxnLimit The mint transaction limit
+     */
+    function registerStablecoin(
+        address stablecoinContract,
+        address tokenHandler,
+        uint256 mintTxnLimit
+    ) external;
+
+    /**
+     * @notice Unregisters a stablecoin contract from the TokenAuthority
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function unregisterStablecoin(address stablecoinContract) external;
+
+    /**
+     * @notice Sets whether mint intents are optional or required
+     * @param mintIntentVersion The new mint approval version
+     */
+    function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
 
     /**
      * @notice Gets the token handler for a specific stablecoin contract

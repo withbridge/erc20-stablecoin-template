@@ -82,9 +82,22 @@ contract DeployAllE2ETest is Test, DeployAll {
         );
         address secondHandler = _deployTokenHandler(r2.reserveLedger, r2.tokenAuthority);
         _configure(
-            r2.reserveLedger, r2.tokenAuthority, secondHandler, secondSc, address(this), handover2
+            r2.reserveLedger,
+            r2.mintIntentRegistry,
+            r2.tokenAuthority,
+            secondHandler,
+            secondSc,
+            address(this),
+            handover2
         );
-        _handover(r2.reserveLedger, r2.tokenAuthority, secondSc, address(this), handover2);
+        _handover(
+            r2.reserveLedger,
+            r2.mintIntentRegistry,
+            r2.tokenAuthority,
+            secondSc,
+            address(this),
+            handover2
+        );
 
         vm.setEnv("STABLECOIN", vm.toString(secondSc));
         vm.setEnv("DEPLOYER_ADDRESS", vm.toString(address(this)));
@@ -225,6 +238,7 @@ contract DeployAllE2ETest is Test, DeployAll {
     {
         vm.setEnv("AUTH_REGISTRY", vm.toString(result.authRegistry));
         vm.setEnv("RESERVE_LEDGER", vm.toString(result.reserveLedger));
+        vm.setEnv("MINT_INTENT_REGISTRY", vm.toString(result.mintIntentRegistry));
         vm.setEnv("TOKEN_AUTHORITY", vm.toString(result.tokenAuthority));
         vm.setEnv("STABLECOIN", vm.toString(result.stablecoin));
         vm.setEnv("DEPLOYER_ADDRESS", vm.toString(address(this)));

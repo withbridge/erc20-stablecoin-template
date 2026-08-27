@@ -1,12 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IMintIntent } from "../../../mintIntent/interfaces/IMintIntent.sol";
+
 /// @title ITIP20Controller
 /// @notice Interface for the TIP20Controller contract which manages minting rate limits and
 /// allowances for stablecoins backed by a reserve ledger token
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITIP20Controller {
+interface ITIP20Controller is IMintIntent {
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Enums
+    //////////////////////////////////////////////////////////////////////////*/
+
+    enum MintIntentVersion {
+        Optional,
+        Required
+    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Errors
@@ -33,6 +44,18 @@ interface ITIP20Controller {
     /// @notice Thrown when attempting to perform an operation with an invalid stablecoin contract
     /// @dev This prevents operations that would result in an invalid stablecoin contract
     error InvalidStablecoinContract();
+
+    /// @notice Thrown when the mint approval version is required
+    error MintIntentRequired();
+
+    /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
+    error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
+
+    /// @notice Thrown when the stablecoin is paused
+    error StablecoinPaused();
+
+    /// @notice Thrown when the stablecoin is not paused
+    error StablecoinNotPaused();
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -102,9 +125,89 @@ interface ITIP20Controller {
         address indexed sender, address indexed stablecoinContract, address indexed reserveStore
     );
 
+    /// @notice Emitted when the mint approval version is set
+    /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
+    /// @param mintIntentVersion The new mint approval version
+    event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+
+    /// @notice Emitted when a stablecoin's pause status is set
+    /// @param sender The address that set the pause status
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param isPaused Whether the stablecoin is paused
+    event StablecoinPauseSet(
+        address indexed sender, address indexed stablecoinContract, bool isPaused
+    );
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initializes the TIP20Controller
+     * @param _admin The address to be granted the admin role
+     * @param _publisher The address to be granted the publisher role
+     * @param _registry The shared mint intent registry. This TIP20Controller must be granted
+     * CONTROLLER_ROLE on the registry before mint intents can be used.
+     */
+    function initialize(address _admin, address _publisher, address _registry) external;
+
+    /**
+     * @notice Query the address of the reserve ledger token
+     */
+    function RESERVE_LEDGER_TOKEN() external view returns (address);
+
+    /**
+     * @notice The hard cap applied to any single mint amount, allowance, or transaction limit
+     */
+    function ABSOLUTE_MAX() external view returns (uint256);
+
+    /// @notice Role that configures minter allowances and per-transaction mint limits
+    function MINT_RATE_LIMIT_SETTER_ROLE() external view returns (bytes32);
+
+    /// @notice Role that may burn through this controller
+    function BURNER_ROLE() external view returns (bytes32);
+
+    /// @notice Role that may unwrap through this controller
+    function UNWRAPPER_ROLE() external view returns (bytes32);
+
+    /// @notice Role for trusted bridge contracts that mint without rate limits
+    function BRIDGE_ECOSYSTEM_CONTRACT_ROLE() external view returns (bytes32);
+
+    /// @notice Role that pauses and unpauses individual stablecoins
+    function STABLECOIN_PAUSER_ROLE() external view returns (bytes32);
+
+    /**
+     * @notice The remaining allowance for a minter on a stablecoin
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param minter The address of the minter
+     */
+    function minterAllowances(address stablecoinContract, address minter)
+        external
+        view
+        returns (uint256);
+
+    /**
+     * @notice The per-transaction mint limit for a stablecoin
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function mintTxnLimits(address stablecoinContract) external view returns (uint256);
+
+    /**
+     * @notice The reserve store holding reserve ledger tokens for a stablecoin
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function reserveStores(address stablecoinContract) external view returns (address);
+
+    /**
+     * @notice Whether mint intents are optional or required for plain `mint`
+     */
+    function mintIntentVersion() external view returns (MintIntentVersion);
+
+    /**
+     * @notice Whether minting/burning/wrapping/unwrapping is paused for a stablecoin
+     * @param stablecoinContract The address of the stablecoin contract
+     */
+    function stablecoinIsPaused(address stablecoinContract) external view returns (bool);
 
     /**
      * @notice Mints stablecoins to a recipient address
@@ -115,6 +218,13 @@ interface ITIP20Controller {
      * @param amount The amount of tokens to mint
      */
     function mint(address stablecoinContract, address to, uint256 amount) external;
+
+    /**
+     * @notice Mints stablecoins to a recipient address with an approval
+     * @dev Checks transaction limit and decrements minter allowance before minting.
+     * @param _params The parameters for the mint operation
+     */
+    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) external;
 
     /**
      * @notice Mints stablecoins to a specified address for bridge ecosystem contracts.
@@ -134,6 +244,15 @@ interface ITIP20Controller {
      * @param amount The amount of tokens to burn
      */
     function burn(address stablecoinContract, uint256 amount) external;
+
+    /**
+     * @notice Burns tokens from the sender's balance with a globally unique operation ID.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of tokens to burn
+     * @param operationId The operation ID to consume for this burn
+     */
+    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
+        external;
 
     /**
      * @notice Unwraps a given amount of a stablecoin for the caller
@@ -172,6 +291,13 @@ interface ITIP20Controller {
         external;
 
     /**
+     * @notice Sets the paused state for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param pause True to pause the stablecoin, false to unpause
+     */
+    function setStablecoinPaused(address stablecoinContract, bool pause) external;
+
+    /**
      * @notice Sets or overrides the reserve store for a stablecoin contract
      * @dev Reserve stores are auto-deployed lazily if not set. This function allows
      *      pre-configuration or migration to a different reserve store.
@@ -179,6 +305,12 @@ interface ITIP20Controller {
      * @param reserveStore The address of the reserve store
      */
     function setReserveStore(address stablecoinContract, address reserveStore) external;
+
+    /**
+     * @notice Sets whether mint intents are optional or required
+     * @param mintIntentVersion The new mint approval version
+     */
+    function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
 
     /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract

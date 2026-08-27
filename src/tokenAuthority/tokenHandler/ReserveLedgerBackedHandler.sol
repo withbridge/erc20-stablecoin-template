@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { ReserveStore } from "../../reserveStore/ReserveStore.sol";
 import { IERC20Mintable } from "../../utils/IERC20Mintable.sol";
 import { IWrappedERC20 } from "../../utils/IWrappedERC20.sol";
+import { ITokenAuthority } from "../ITokenAuthority.sol";
 import { TokenHandler } from "./TokenHandler.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -28,13 +29,9 @@ contract ReserveLedgerBackedHandler is TokenHandler {
     error ReserveStoreNotFound();
 
     /// @notice Initializes the handler with the reserve ledger token and token authority
-    /// @param _reserveLedgerToken The address of the reserve ledger token
     /// @param _tokenAuthority The address of the token authority
-    constructor(address _reserveLedgerToken, address _tokenAuthority)
-        TokenHandler(_tokenAuthority)
-    {
-        require(_reserveLedgerToken != address(0), ZeroAddress());
-        RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
+    constructor(address _tokenAuthority) TokenHandler(_tokenAuthority) {
+        RESERVE_LEDGER_TOKEN = ITokenAuthority(_tokenAuthority).RESERVE_LEDGER_TOKEN();
     }
 
     /**
@@ -47,6 +44,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
     function mint(address stablecoinContract, address to, uint256 amount)
         external
         onlyTokenAuthority
+        requireEqualPrecision(RESERVE_LEDGER_TOKEN, stablecoinContract)
     {
         require(to != address(0), ZeroAddress());
         IERC20Mintable(RESERVE_LEDGER_TOKEN).mint(address(this), amount);
@@ -66,7 +64,11 @@ contract ReserveLedgerBackedHandler is TokenHandler {
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of stablecoins to burn
      */
-    function burn(address stablecoinContract, uint256 amount) external onlyTokenAuthority {
+    function burn(address stablecoinContract, uint256 amount)
+        external
+        onlyTokenAuthority
+        requireEqualPrecision(RESERVE_LEDGER_TOKEN, stablecoinContract)
+    {
         address reserveStore = reserveStores[stablecoinContract];
         require(reserveStore != address(0), ReserveStoreNotFound());
         IERC20(stablecoinContract).safeTransferFrom(msg.sender, address(this), amount);
@@ -86,6 +88,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
     function wrap(address stablecoinContract, address to, uint256 amount)
         external
         onlyTokenAuthority
+        requireEqualPrecision(RESERVE_LEDGER_TOKEN, stablecoinContract)
     {
         require(to != address(0), ZeroAddress());
         address reserveStore = reserveStores[stablecoinContract];
@@ -108,6 +111,7 @@ contract ReserveLedgerBackedHandler is TokenHandler {
     function unwrap(address stablecoinContract, address to, uint256 amount)
         external
         onlyTokenAuthority
+        requireEqualPrecision(RESERVE_LEDGER_TOKEN, stablecoinContract)
     {
         require(to != address(0), ZeroAddress());
         address reserveStore = reserveStores[stablecoinContract];

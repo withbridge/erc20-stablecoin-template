@@ -44,6 +44,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
     function wrap(address to, uint256 amount) public {
         require(amount > 0, AmountCannotBeZero());
         require(isMintRecipient(to), AccountNotValidRecipient());
+        require(totalSupply() + amount <= getMaxSupply(), MaxSupplyExceeded());
 
         RESERVE_LEDGER_ADDRESS.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -120,6 +121,14 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         emit Burned(amount, msg.sender);
     }
 
+    /**
+     * @notice Permanently locks direct mint/burn, leaving wrap/unwrap as the only supply changes.
+     * @dev One-way and irreversible. Requires this contract to already hold reserve ledger tokens
+     * equal to total supply, i.e. the stablecoin is fully collateralized at the moment of
+     * migration; reverts with {ReserveLedgerBalanceMismatch} otherwise.
+     *
+     * Emits a {MigrationHasCompleted} event.
+     */
     function completeMigrationToWrapped() public onlyRole(DEFAULT_ADMIN_ROLE) {
         StablecoinTemplateV3StorageLib.getStorage()._migrationToWrappedCompleted = true;
         require(

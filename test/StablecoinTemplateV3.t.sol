@@ -120,6 +120,7 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         token.grantRole(token.PAUSER_ROLE(), pauser);
         token.grantRole(token.UNPAUSER_ROLE(), unpauser);
         token.grantRole(token.BLOCKED_ADDRESS_BURNER_ROLE(), blockedBurner);
+        token.setMaxSupply(100);
 
         // set up reserve ledger
         reserveLedger.setMaxSupply(100);
@@ -213,6 +214,15 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(AccountNotValidRecipient.selector));
         token.wrap(user2, 100);
+    }
+
+    function test_mint_revert_max_supply() public {
+        vm.prank(admin);
+        token.setMaxSupply(50);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(MaxSupplyExceeded.selector));
+        token.wrap(user1, 100);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
