@@ -1,3 +1,5 @@
+version = 2
+
 [[dependencies]]
 name = "@openzeppelin-contracts"
 version = "5.3.0"
@@ -16,7 +18,7 @@ integrity = "fa195a69ef4dfec7fec7fbbb77f424258c821832fdd355b0a6e5fe34d2986a16"
 name = "auth-registry"
 version = "1"
 git = "git@github.com:withbridge/auth-registry.git"
-rev = "972c64a75ad81da1c901a06b65e942e7825ad387"
+rev = "b2274dadd4170dba376e79f32f12e67d1d545aca"
 
 [[dependencies]]
 name = "create2-helpers"
@@ -43,4 +45,4 @@ integrity = "9e60fdba82bc374df80db7f2951faff6467b9091873004a3d314cf0c084b3c7d"
 name = "tempo-std"
 version = "0.1.1"
 git = "https://github.com/tempoxyz/tempo-std.git"
-rev = "ca8e6ac215fb3c83ab627c4a16841cc5d4232ef8"
+rev = "ed7faba2fe0ab39c8ef4a41e00b0e94cb2aa2184"
