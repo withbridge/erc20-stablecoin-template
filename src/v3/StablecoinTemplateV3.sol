@@ -50,7 +50,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
         _mint(to, amount);
 
-        emit Wrapped(amount, to, msg.sender);
+        emit Minted(amount, to, msg.sender);
     }
 
     /**
@@ -69,7 +69,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         _burn(msg.sender, amount);
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, amount);
 
-        emit Unwrapped(amount, msg.sender);
+        emit Burned(amount, msg.sender);
     }
 
     /**
@@ -122,7 +122,8 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
     }
 
     /**
-     * @notice Permanently locks direct mint/burn, leaving wrap/unwrap as the only supply changes.
+     * @notice Permanently locks direct mint/burn. Wrap, unwrap, and blocked-address burns remain
+     * available.
      * @dev One-way and irreversible. Requires this contract to already hold reserve ledger tokens
      * equal to total supply, i.e. the stablecoin is fully collateralized at the moment of
      * migration; reverts with {ReserveLedgerBalanceMismatch} otherwise.
@@ -141,10 +142,9 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
     /**
      * @dev Burns the entire balance of a blocked address.
      *
-     * This function temporarily unblocks the address to allow the burn operation,
-     * then re-blocks it after the burn is complete. Rather than burning the underlying reserve
-     * ledger token,
-     * this function transfers the balance of the blocked address to the caller.
+     * Temporarily bypasses this token's transfer-policy checks for all addresses during the
+     * burn and reserve-token transfer, then clears the bypass. Registry authorization is unchanged.
+     * Transfers matching reserve ledger tokens to the caller without burning those reserves.
      *
      * Requirements:
      * - `account` must be blocked
@@ -157,9 +157,8 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         uint256 accountBalance = balanceOf(account);
         require(accountBalance > 0, NoBalanceToBurn());
 
-        // Temporarily unblock the address to allow the burn to go through. This is needed because
-        // _update prevents transfers to and from blocked addresses. _burn() treats
-        // burns as transfers to the zero address.
+        // Temporarily bypass this token's transfer-policy checks so _burn can destroy the blocked
+        // account's balance. _burn treats the operation as a transfer to the zero address.
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(true);
         _burn(account, accountBalance);
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, accountBalance);

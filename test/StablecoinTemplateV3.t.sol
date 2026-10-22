@@ -189,8 +189,8 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
 
     function test_mint_success() public {
         vm.prank(minter);
-        vm.expectEmit(true, true, true, true);
-        emit Wrapped(100, user1, minter);
+        vm.expectEmit(true, true, false, true, address(token));
+        emit Minted(100, user1, minter);
         token.wrap(user1, 100);
         assertEq(token.totalSupply(), 100);
         assertEq(token.balanceOf(user1), 100);
@@ -236,8 +236,8 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.stopPrank();
 
         vm.startPrank(minter);
-        vm.expectEmit(true, true, true, true);
-        emit Unwrapped(100, minter);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit Burned(100, minter);
         token.unwrap(100);
         assertEq(token.totalSupply(), 0);
         assertEq(token.balanceOf(minter), 0);

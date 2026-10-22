@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { Version } from "../../Version.sol";
 import { IdempotencyKeys } from "../../idempotency/IdempotencyKeys.sol";
 import { IIdempotencyKeyRegistry } from "../../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
 import { ReserveStore } from "./ReserveStore.sol";
@@ -14,8 +15,6 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
-import { Version } from "../../Version.sol";
-
 
 /// @title TIP20Controller
 /// @notice A singleton controller contract that manages minting rate limits and allowances for
@@ -63,15 +62,13 @@ contract TIP20Controller is
     mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance)) public
         minterAllowances;
 
-    /// @notice Maps each stablecoin contract address to its respective mint rate limits.
-    /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
-    /// mint limits for the stablecoin)
+    /// @notice Maps each stablecoin contract address to its per-transaction mint limit.
     mapping(address stablecoinContract => uint256 mintTxnLimit) public mintTxnLimits;
 
     /// @notice Maps stablecoin contract address to its ReserveStore address
     mapping(address stablecoinContract => address reserveStore) public reserveStores;
 
-    /// @notice Whether empty-key `mint` is allowed (`Optional`) or keys are required (`Required`)
+    /// @notice Whether `mint` may omit idempotency keys (`Optional`) or requires them (`Required`)
     MintIntentVersion public mintIntentVersion;
 
     /// @notice Maps a stablecoin to whether or not minting/burning/wrapping/unwrapping is paused
@@ -128,20 +125,13 @@ contract TIP20Controller is
      * @param to The address to receive the minted tokens
      * @param amount The amount of tokens to mint
      * @dev Checks transaction limit and decrements minter allowance before minting.
+     *      Only allowed when {mintIntentVersion} is {MintIntentVersion-Optional}.
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
-        require(amount > 0, AmountCannotBeZero());
-
-        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
-        require(minterAllowance >= amount, MinterAllowanceExceeded());
-        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
-
-        minterAllowances[stablecoinContract][msg.sender] -= amount;
-
-        _mint(stablecoinContract, to, amount);
+        require(mintIntentVersion == MintIntentVersion.Optional, IdempotencyKeysRequired());
+        _mintWithLimits(stablecoinContract, to, amount);
     }
-    
+
     /**
      * @notice Mints stablecoins to a recipient address
      * @param stablecoinContract The address of the stablecoin contract to mint from
@@ -156,8 +146,13 @@ contract TIP20Controller is
     function mint(address stablecoinContract, address to, uint256 amount, bytes32[] calldata keys)
         public
     {
-        _useKeys(mintIntentVersion == MintIntentVersion.Optional, keys);
-        mint(stablecoinContract, to, amount);
+        if (keys.length == 0) {
+            mint(stablecoinContract, to, amount);
+            return;
+        }
+
+        _useKeys(false, keys);
+        _mintWithLimits(stablecoinContract, to, amount);
     }
 
     /**
@@ -335,9 +330,9 @@ contract TIP20Controller is
     }
 
     /**
-     * @notice Sets whether empty-key `mint` is optional or required
-     * @dev When `Required`, `mint` with empty `keys` reverts with {IdempotencyKeysRequired}.
-     *      `mintBridgeEcosystem` is unaffected.
+     * @notice Sets whether `mint` requires idempotency keys
+     * @dev When `Required`, three-argument `mint` and `mint` with empty `keys` revert with
+     *      {IdempotencyKeysRequired}. `mintBridgeEcosystem` is unaffected.
      * @param _mintIntentVersion The new mint intent version
      */
     function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
@@ -433,6 +428,19 @@ contract TIP20Controller is
             emit ReserveStoreSet(address(this), stablecoinContract, reserveStore);
         }
         return reserveStore;
+    }
+
+    function _mintWithLimits(address stablecoinContract, address to, uint256 amount) internal {
+        require(amount > 0, AmountCannotBeZero());
+
+        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
+        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
+        require(minterAllowance >= amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
+
+        minterAllowances[stablecoinContract][msg.sender] -= amount;
+
+        _mint(stablecoinContract, to, amount);
     }
 
     function _mint(address stablecoinContract, address to, uint256 amount) internal {

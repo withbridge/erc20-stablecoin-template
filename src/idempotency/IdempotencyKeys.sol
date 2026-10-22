@@ -57,7 +57,8 @@ abstract contract IdempotencyKeys is AccessControlEnumerableUpgradeable, IIdempo
     //////////////////////////////////////////////////////////////////////////*/
 
     /// @dev Forwards to the shared registry and emits {KeyUsed} for each key.
-    ///      If `isOptional` is false, empty `keys` reverts here; callers that want a no-op skip this function.
+    ///      If `isOptional` is false, empty `keys` reverts here; callers that want a no-op skip
+    /// this function.
     function _useKeys(bool isOptional, bytes32[] calldata keys) internal {
         require(isOptional || keys.length > 0, InvalidIdempotencyKeys());
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { Version } from "../Version.sol";
 import { IdempotencyKeyStorageLib } from "./IdempotencyKeyStorage.sol";
 import { IIdempotencyKeyRegistry } from "./interfaces/IIdempotencyKeyRegistry.sol";
 import {
@@ -9,7 +10,6 @@ import {
 import {
     UUPSUpgradeable
 } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import { Version } from "../Version.sol";
 
 /// @title IdempotencyKeyRegistry
 /// @author Bridge
@@ -17,8 +17,9 @@ import { Version } from "../Version.sol";
 /// @dev Keys are only single-use within the storage that tracks them. When each controller keeps
 /// its own mapping, the same key can be used once per controller. Pointing every controller at one
 /// registry instance makes those keys single-use across all of them.
-/// @dev Controllers are granted {CONTROLLER_ROLE} and are responsible for authorizing their own
-/// callers (via their publisher/minter/burner roles) before forwarding here.
+/// @dev Controllers are granted {CONTROLLER_ROLE} and must authorize their own callers as part of
+/// the same atomic operation. Key consumption may precede authorization checks; a failed check
+/// reverts the operation and rolls back key consumption.
 /// @dev Any controller with {CONTROLLER_ROLE} may use a still-free key. Uniqueness is
 /// registry-wide; authority over an individual key is not recorded.
 contract IdempotencyKeyRegistry is

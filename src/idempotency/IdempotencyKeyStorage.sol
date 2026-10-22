@@ -15,6 +15,7 @@ enum IdempotencyKeyState {
 /// @dev Held in a single ERC-7201 namespace rather than per-controller storage. See
 /// {IdempotencyKeyStorageLib-IDEMPOTENCY_KEY_STORAGE_LOCATION}.
 /// @param _idempotencyKeyStates Idempotency key to its lifecycle state.
+/// @custom:storage-location erc7201:bridge.IdempotencyKeyStorage
 struct IdempotencyKeyStorage {
     mapping(bytes32 idempotencyKey => IdempotencyKeyState state) _idempotencyKeyStates;
 }
@@ -28,7 +29,6 @@ struct IdempotencyKeyStorage {
 library IdempotencyKeyStorageLib {
 
     /// @notice The ERC-7201 storage slot for {IdempotencyKeyStorage}.
-    /// @custom:storage-location eip7201:bridge.IdempotencyKeyStorage
     bytes32 constant IDEMPOTENCY_KEY_STORAGE_LOCATION =
         0x9fb7408bbee7b8e924cfdf4c44ebbd07a3dddb4380e17cbbcb789eabcb367a00;
 

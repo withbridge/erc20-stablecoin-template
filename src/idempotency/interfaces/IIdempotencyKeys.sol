@@ -7,10 +7,10 @@ import { IIdempotencyKeyRegistry } from "./IIdempotencyKeyRegistry.sol";
 /// @title IIdempotencyKeys
 /// @author Bridge
 /// @notice Interface for using and retiring idempotency keys on a controller.
-/// @dev Implementations hold no key state. Every mutating function forwards to the shared
-/// {IIdempotencyKeyRegistry} so that keys are single-use across all controller deployments rather
-/// than once per controller. Events are emitted here, by the controller, so the recorded actor is
-/// the original caller.
+/// @dev Controllers store their registry pointer locally; key state lives in the shared
+/// {IIdempotencyKeyRegistry}. Key consumption is forwarded to that registry, making keys
+/// single-use across controllers that share it. Controllers emit events with the original caller
+/// as the recorded actor.
 interface IIdempotencyKeys is IIdempotencyKeyErrors {
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -36,11 +36,13 @@ interface IIdempotencyKeys is IIdempotencyKeyErrors {
 
     /**
      * @notice Points this controller at a different shared idempotency-key registry.
-     * @dev Intended for migrating to a new registry deployment. Two operational caveats:
-     *      1. Keys used in the old registry are not carried over. They become free in the new
-     *         registry and can be used again, so drain in-flight keys before migrating.
-     *      2. This controller must be granted CONTROLLER_ROLE on the new registry, which this
-     *         function enforces, otherwise every key operation would revert.
+     * @dev WARNING: This function does not migrate used-key state. Before switching registries,
+     *      prevent key-consuming operations, migrate all previously used keys, and coordinate
+     *      the cutover across every controller sharing the registry. Draining in-flight requests
+     *      alone does not prevent replay of historical keys. Upgrading the existing registry
+     *      proxy preserves its key state without changing the registry address.
+     * @dev This controller must be granted CONTROLLER_ROLE on the new registry, which this
+     *      function enforces, otherwise every key operation would revert.
      * @param registry The new shared idempotency-key registry.
      */
     function setIdempotencyKeyRegistry(address registry) external;

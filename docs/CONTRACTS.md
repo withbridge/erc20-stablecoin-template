@@ -300,7 +300,6 @@ Defined in `src/v3/StablecoinTemplateV3ErrorsAndEvents.sol`.
 | `0xde195716` | `OnlyOwnerOrAdmin()` | Caller is neither owner nor admin |
 | `0x271bb77f` | `ReserveLedgerBalanceMismatch()` | Reserve ledger balance does not equal total supply at migration |
 | `0x401d2707` | `MigrationToWrappedCompleted()` | Operation disabled after migration to wrapped is complete |
-| `0xd0c95e80` | `MigrationToWrappedNotCompleted()` | Operation requires migration to wrapped to be complete |
 | `0xd11b25af` | `AmountCannotBeZero()` | Zero amount passed to a mint/burn/wrap/unwrap operation |
 
 ### TokenAuthority (`ITokenAuthority`)
@@ -311,7 +310,6 @@ Defined in `src/tokenAuthority/ITokenAuthority.sol`.
 |----------|-------|---------|
 | `0xe4d2551c` | `MintTxnLimitExceeded()` | Mint amount exceeds the configured per-transaction limit |
 | `0xec408451` | `MinterAllowanceExceeded()` | Mint amount exceeds caller's remaining minter allowance |
-| `0x7b55d08d` | `CannotUnwrapReserveLedgerToken()` | The reserve ledger token cannot itself be unwrapped |
 | `0xd11b25af` | `AmountCannotBeZero()` | Zero amount passed to an authority operation |
 | `0x643687f2` | `AmountExceedsAbsoluteMax()` | Amount exceeds the absolute maximum allowed |
 | `0x271bb77f` | `ReserveLedgerBalanceMismatch()` | Reserve ledger balance does not match expected value |
@@ -320,7 +318,7 @@ Defined in `src/tokenAuthority/ITokenAuthority.sol`.
 | `0xd92e233d` | `ZeroAddress()` | A required address argument is the zero address |
 | `0x343578d7` | `InvalidTokenHandler()` | Provided handler does not implement `ITokenHandler` |
 | `0x4dfaba25` | `StablecoinAlreadyRegistered()` | Stablecoin is already registered with the authority |
-| `0x2136284a` | `IdempotencyKeysRequired()` | empty-key `mint()` called while `mintIntentVersion == Required` |
+| `0x2136284a` | `IdempotencyKeysRequired()` | Mint without idempotency keys while `idempotencyKeysVersion == Required` |
 | `0x37b3468f` | `PrecisionMismatch(uint256,uint256)` | Stablecoin decimals differ from the reserve ledger's |
 | `0xc41537d3` | `StablecoinPaused()` | Operation attempted on a paused stablecoin |
 | `0xc9fc8444` | `StablecoinNotPaused()` | Operation requires the stablecoin to be paused first |

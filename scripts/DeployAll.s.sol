@@ -180,7 +180,7 @@ contract DeployAll is Common {
         taProxy = address(
             new ERC1967Proxy(
                 address(taImpl),
-                abi.encodeCall(TokenAuthority.initialize, (deployer, deployer, registryProxy))
+                abi.encodeCall(TokenAuthority.initialize, (deployer, registryProxy))
             )
         );
         console.log("TokenAuthority proxy:", taProxy);

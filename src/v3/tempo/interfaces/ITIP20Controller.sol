@@ -6,8 +6,8 @@ import { IIdempotencyKeys } from "../../../idempotency/interfaces/IIdempotencyKe
 /// @title ITIP20Controller
 /// @notice Interface for the TIP20Controller contract which manages minting rate limits and
 /// allowances for stablecoins backed by a reserve ledger token
-/// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
-/// limits, and per-minter allowances
+/// @dev Enforces per-transaction mint limits and per-minter allowances for `mint`.
+/// Both `mint` and `mintBridgeEcosystem` are capped by ABSOLUTE_MAX.
 interface ITIP20Controller is IIdempotencyKeys {
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -45,7 +45,7 @@ interface ITIP20Controller is IIdempotencyKeys {
     /// @dev This prevents operations that would result in an invalid stablecoin contract
     error InvalidStablecoinContract();
 
-    /// @notice Thrown when empty-key `mint` is called while {mintIntentVersion} is
+    /// @notice Thrown when `mint` is called without idempotency keys while {mintIntentVersion} is
     /// {MintIntentVersion-Required}
     error IdempotencyKeysRequired();
 
@@ -126,9 +126,9 @@ interface ITIP20Controller is IIdempotencyKeys {
         address indexed sender, address indexed stablecoinContract, address indexed reserveStore
     );
 
-    /// @notice Emitted when empty-key `mint` is made optional or required
+    /// @notice Emitted when idempotency keys are made optional or required for `mint`
     /// @param sender The address that set the version (must have DEFAULT_ADMIN_ROLE)
-    /// @param mintIntentVersion The new empty-key mint policy
+    /// @param mintIntentVersion The new mint idempotency-key policy
     event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
 
     /// @notice Emitted when a stablecoin's pause status is set
@@ -199,7 +199,7 @@ interface ITIP20Controller is IIdempotencyKeys {
     function reserveStores(address stablecoinContract) external view returns (address);
 
     /**
-     * @notice Whether empty-key `mint` is optional or required
+     * @notice Whether `mint` requires idempotency keys
      */
     function mintIntentVersion() external view returns (MintIntentVersion);
 
@@ -233,8 +233,8 @@ interface ITIP20Controller is IIdempotencyKeys {
 
     /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
-     * @dev Allows the caller to burn their own tokens. Burns the stablecoin and returns
-     * reserve ledger tokens from the ReserveStore.
+     * @dev Burns the caller's tokens. For tokens other than the reserve ledger token, also
+     * burns the corresponding reserve ledger tokens withdrawn from the ReserveStore.
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
      */
@@ -301,8 +301,8 @@ interface ITIP20Controller is IIdempotencyKeys {
     function setReserveStore(address stablecoinContract, address reserveStore) external;
 
     /**
-     * @notice Sets whether empty-key `mint` is optional or required
-     * @param mintIntentVersion The new mint intent version
+     * @notice Sets whether `mint` requires idempotency keys
+     * @param mintIntentVersion The new mint idempotency-key policy
      */
     function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
 

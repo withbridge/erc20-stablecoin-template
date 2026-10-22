@@ -7,8 +7,8 @@ import { IIdempotencyKeys } from "../idempotency/interfaces/IIdempotencyKeys.sol
 /// @author Bridge
 /// @notice Interface for the TokenAuthority contract which manages minting rate limits and
 /// allowances for stablecoins
-/// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
-/// limits, and per-minter allowances
+/// @dev Enforces per-transaction mint limits and per-minter allowances for `mint`.
+/// Both `mint` and `mintBridgeEcosystem` are capped by ABSOLUTE_MAX.
 interface ITokenAuthority is IIdempotencyKeys {
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -31,10 +31,6 @@ interface ITokenAuthority is IIdempotencyKeys {
     /// @notice Thrown when a mint operation would exceed the minter's allowance
     /// @dev Each minter has an individual allowance that decrements with each mint
     error MinterAllowanceExceeded();
-
-    /// @notice Thrown when attempting to unwrap the reserve ledger token
-    /// @dev Unwrapping is only applicable to wrapped stablecoins
-    error CannotUnwrapReserveLedgerToken();
 
     /// @notice Thrown when attempting to perform an operation with an amount of zero
     /// @dev This prevents operations that would result in zero value transfers or operations
@@ -64,8 +60,8 @@ interface ITokenAuthority is IIdempotencyKeys {
     /// @notice Thrown when a stablecoin is already registered
     error StablecoinAlreadyRegistered();
 
-    /// @notice Thrown when empty-key `mint` is called while {idempotencyKeysVersion} is
-    /// {IdempotencyKeysVersion-Required}
+    /// @notice Thrown when `mint` is called without idempotency keys while
+    /// {idempotencyKeysVersion} is {IdempotencyKeysVersion-Required}
     error IdempotencyKeysRequired();
 
     /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
@@ -126,13 +122,11 @@ interface ITokenAuthority is IIdempotencyKeys {
     event Unwrap(address indexed sender, address indexed stablecoinContract, uint256 amount);
 
     /**
-     * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
-     * recipient
-     * @dev Approves the stablecoin contract to spend the specified amount of reserve ledger tokens,
-     * then wraps the tokens to the `to` address
+     * @notice Emitted when reserve ledger tokens are wrapped into stablecoins for a recipient
+     * @param sender The address that initiated the wrap operation
      * @param stablecoinContract The address of the target stablecoin contract
      * @param to The address to receive the wrapped tokens
-     * @param amount The amount of reserve tokens to wrap
+     * @param amount The amount of reserve tokens wrapped
      */
     event Wrap(
         address indexed sender,
@@ -141,19 +135,10 @@ interface ITokenAuthority is IIdempotencyKeys {
         uint256 amount
     );
 
-    /// @notice Emitted when a bridge ecosystem contract is enabled or disabled
-    /// @param sender The address that enabled or disabled the bridge ecosystem contract (must have
-    /// DEFAULT_ADMIN_ROLE) @param bridgeEcosystemContract The address of the bridge ecosystem
-    /// contract
-    /// @param enabled Set to true to enable, false to disable
-    event BridgeEcosystemContractSet(
-        address indexed sender, address indexed bridgeEcosystemContract, bool enabled
-    );
-
     /// @notice Emitted when a token handler is set for a stablecoin contract
     /// @param sender The address that set the token handler (must have
-    /// TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) @param stablecoinContract The address of the stablecoin
-    /// contract
+    /// TOKEN_AUTHORITY_HANDLER_SETTER_ROLE)
+    /// @param stablecoinContract The address of the stablecoin contract
     /// @param tokenHandler The address of the token handler
     event TokenHandlerSet(
         address indexed sender, address indexed stablecoinContract, address indexed tokenHandler
@@ -174,9 +159,9 @@ interface ITokenAuthority is IIdempotencyKeys {
     /// @param stablecoinContract The address of the stablecoin contract
     event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
 
-    /// @notice Emitted when empty-key `mint` is made optional or required
+    /// @notice Emitted when idempotency keys are made optional or required for `mint`
     /// @param sender The address that set the version (must have DEFAULT_ADMIN_ROLE)
-    /// @param idempotencyKeysVersion The new empty-key mint policy
+    /// @param idempotencyKeysVersion The new mint idempotency-key policy
     event IdempotencyKeysVersionSet(
         address indexed sender, IdempotencyKeysVersion idempotencyKeysVersion
     );
@@ -223,14 +208,14 @@ interface ITokenAuthority is IIdempotencyKeys {
     /// @notice Role for trusted bridge contracts that mint without rate limits
     function BRIDGE_ECOSYSTEM_CONTRACT_ROLE() external view returns (bytes32);
 
-    /// @notice Role that registers and swaps token handlers
+    /// @notice Role that registers and unregisters stablecoins and swaps their token handlers
     function TOKEN_AUTHORITY_HANDLER_SETTER_ROLE() external view returns (bytes32);
 
     /// @notice Role that pauses and unpauses individual stablecoins
     function STABLECOIN_PAUSER_ROLE() external view returns (bytes32);
 
     /**
-     * @notice Whether empty-key `mint` is optional or required
+     * @notice Whether `mint` requires idempotency keys
      */
     function idempotencyKeysVersion() external view returns (IdempotencyKeysVersion);
 
@@ -242,7 +227,7 @@ interface ITokenAuthority is IIdempotencyKeys {
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks and decrements transaction limit, and minter allowance before minting.
+     * @dev Checks transaction limit and decrements minter allowance before minting.
      *      Empty `keys` is allowed only when {idempotencyKeysVersion} is
      * {IdempotencyKeysVersion-Optional}.
      * @param stablecoinContract The address of the stablecoin contract to mint from
@@ -265,8 +250,9 @@ interface ITokenAuthority is IIdempotencyKeys {
 
     /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
-     * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
-     * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin
+     * @dev Transfers the caller's tokens to this contract, approves the registered handler,
+     * and delegates burning to it. The handler determines how the token and any backing
+     * reserves are burned.
      * @param stablecoinContract The address of the stablecoin contract first.
      * @param amount The amount of tokens to burn
      */
@@ -281,19 +267,20 @@ interface ITokenAuthority is IIdempotencyKeys {
     function burn(address stablecoinContract, uint256 amount, bytes32[] calldata keys) external;
 
     /**
-     * @notice Unwraps a given amount of a wrapped stablecoin for the caller
-     * @dev Reverts if the stablecoin contract provided is the reserve ledger token,
-     *      since unwrapping is only applicable to wrapped stablecoins.
-     *      Calls unwrap on the wrapped stablecoin, which should send the underlying reserve
-     *      tokens to this contract, then transfers those reserve tokens to the caller.
-     * @param stablecoinContract The address of the wrapped stablecoin contract
-     * @param amount The amount of wrapped tokens to unwrap
+     * @notice Unwraps a given amount of a stablecoin for the caller
+     * @dev Transfers the caller's stablecoins to this contract and approves the registered
+     * handler to unwrap them. The handler sends reserve tokens directly to the caller
+     * and determines whether the token supports unwrapping.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of stablecoins to unwrap
      */
     function unwrap(address stablecoinContract, uint256 amount) external;
 
     /**
      * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
      * recipient.
+     * @dev Transfers reserve tokens from the caller to this contract, approves the registered
+     * handler to spend them, and calls the handler to wrap them for the recipient.
      * @param stablecoinContract The address of the target stablecoin contract.
      * @param to The address to receive the wrapped tokens.
      * @param amount The amount of reserve tokens to wrap.
@@ -353,6 +340,7 @@ interface ITokenAuthority is IIdempotencyKeys {
 
     /**
      * @notice Registers a stablecoin contract with the TokenAuthority
+     * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      * @param tokenHandler The address of the token handler
      * @param mintTxnLimit The mint transaction limit
@@ -365,13 +353,14 @@ interface ITokenAuthority is IIdempotencyKeys {
 
     /**
      * @notice Unregisters a stablecoin contract from the TokenAuthority
+     * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      */
     function unregisterStablecoin(address stablecoinContract) external;
 
     /**
-     * @notice Sets whether empty-key `mint` is optional or required
-     * @param idempotencyKeysVersion The new mint intent version
+     * @notice Sets whether `mint` requires idempotency keys
+     * @param idempotencyKeysVersion The new mint idempotency-key policy
      */
     function setIdempotencyKeysVersion(IdempotencyKeysVersion idempotencyKeysVersion) external;
 
