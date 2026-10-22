@@ -7,7 +7,7 @@ import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.so
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
-import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
+import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import {
     ReserveLedgerWrappedHandler
@@ -42,7 +42,7 @@ contract DeployAll is Common {
     struct DeployResult {
         address authRegistry;
         address reserveLedger;
-        address mintIntentRegistry;
+        address idempotencyKeyRegistry;
         address tokenAuthority;
         address tokenHandler;
         address stablecoin;
@@ -73,7 +73,7 @@ contract DeployAll is Common {
         console.log("===== Deployment Complete =====");
         console.log("AuthRegistry:       ", result.authRegistry);
         console.log("ReserveLedger:      ", result.reserveLedger);
-        console.log("MintIntentRegistry: ", result.mintIntentRegistry);
+        console.log("IdempotencyKeyRegistry: ", result.idempotencyKeyRegistry);
         console.log("TokenAuthority:     ", result.tokenAuthority);
         console.log("TokenHandler:       ", result.tokenHandler);
         console.log("Stablecoin:         ", result.stablecoin);
@@ -98,9 +98,9 @@ contract DeployAll is Common {
         result.authRegistry = _deployAuthRegistry();
         (result.reserveLedger, result.transferPolicyId, result.rlMintPolicyId) =
             _deployReserveLedger(result.authRegistry, deployer, rlConfig);
-        result.mintIntentRegistry = _deployMintIntentRegistry(deployer);
+        result.idempotencyKeyRegistry = _deployIdempotencyKeyRegistry(deployer);
         result.tokenAuthority =
-            _deployTokenAuthority(result.reserveLedger, result.mintIntentRegistry, deployer);
+            _deployTokenAuthority(result.reserveLedger, result.idempotencyKeyRegistry, deployer);
         result.tokenHandler = _deployTokenHandler(result.reserveLedger, result.tokenAuthority);
         (result.stablecoin, result.scMintPolicyId) = _deployStablecoin(
             result.authRegistry, result.reserveLedger, result.transferPolicyId, deployer, scConfig
@@ -108,7 +108,7 @@ contract DeployAll is Common {
 
         _configure(
             result.reserveLedger,
-            result.mintIntentRegistry,
+            result.idempotencyKeyRegistry,
             result.tokenAuthority,
             result.tokenHandler,
             result.stablecoin,
@@ -117,7 +117,7 @@ contract DeployAll is Common {
         );
         _handover(
             result.reserveLedger,
-            result.mintIntentRegistry,
+            result.idempotencyKeyRegistry,
             result.tokenAuthority,
             result.stablecoin,
             deployer,
@@ -154,18 +154,21 @@ contract DeployAll is Common {
         console.log("ReserveLedger proxy:", rlProxy);
     }
 
-    /// @dev Deploy ONCE per environment and share the proxy across every controller. Operation IDs
-    ///      are only single-use within the storage that tracks them, so a shared registry is what
-    ///      makes them single-use across controller deployments.
-    function _deployMintIntentRegistry(address deployer) internal returns (address registryProxy) {
-        MintIntentRegistry registryImpl = new MintIntentRegistry(true);
+    /// @dev Deploy ONCE per environment and share the proxy across every controller. Keys are only
+    ///      single-use within the storage that tracks them, so a shared registry is what makes them
+    ///      single-use across controller deployments.
+    function _deployIdempotencyKeyRegistry(address deployer)
+        internal
+        returns (address registryProxy)
+    {
+        IdempotencyKeyRegistry registryImpl = new IdempotencyKeyRegistry(true);
 
         registryProxy = address(
             new ERC1967Proxy(
-                address(registryImpl), abi.encodeCall(MintIntentRegistry.initialize, (deployer))
+                address(registryImpl), abi.encodeCall(IdempotencyKeyRegistry.initialize, (deployer))
             )
         );
-        console.log("MintIntentRegistry proxy:", registryProxy);
+        console.log("IdempotencyKeyRegistry proxy:", registryProxy);
     }
 
     function _deployTokenAuthority(address rlProxy, address registryProxy, address deployer)
@@ -282,7 +285,7 @@ contract DeployAll is Common {
         IAccessControl(rlProxy).grantRole(MINTER_ROLE, taProxy);
         IAccessControl(scProxy).grantRole(MINTER_ROLE, taProxy);
 
-        // Authorize the TokenAuthority to publish and consume intents in the shared registry
+        // Authorize the TokenAuthority to use keys in the shared registry
         IAccessControl(registryProxy).grantRole(CONTROLLER_ROLE, taProxy);
 
         IAccessControl(scProxy).grantRole(PAUSER_ROLE, handover.pauserAddress);
@@ -338,9 +341,9 @@ contract DeployAll is Common {
             .grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, handover.tokenAuthorityAdmin);
         console.log("TA: granted admin roles to", handover.tokenAuthorityAdmin);
 
-        // The registry admin controls which controllers may share the intent namespace
+        // The registry admin controls which controllers may share the key namespace
         IAccessControl(registryProxy).grantRole(DEFAULT_ADMIN_ROLE, handover.tokenAuthorityAdmin);
-        console.log("MintIntentRegistry: granted admin to", handover.tokenAuthorityAdmin);
+        console.log("IdempotencyKeyRegistry: granted admin to", handover.tokenAuthorityAdmin);
 
         if (handover.tokenAuthorityAdmin != deployer) {
             IAccessControl(taProxy).renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);

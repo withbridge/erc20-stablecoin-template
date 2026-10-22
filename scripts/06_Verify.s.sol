@@ -5,7 +5,7 @@ import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
-import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
+import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
@@ -39,7 +39,7 @@ contract Verify is Common {
     function run() public {
         address authRegistry = authRegistryAddress();
         address reserveLedger = reserveLedgerAddress();
-        address mintIntentRegistry = mintIntentRegistryAddress();
+        address idempotencyKeyRegistry = idempotencyKeyRegistryAddress();
         address tokenAuthority = tokenAuthorityAddress();
         address stablecoin = stablecoinAddress();
 
@@ -47,8 +47,12 @@ contract Verify is Common {
         _verifyReserveLedger(ReserveLedger(reserveLedger), tokenAuthority);
         _verifyStablecoin(StablecoinTemplateV3(stablecoin), reserveLedger, tokenAuthority);
         _verifyTokenAuthority(TokenAuthority(tokenAuthority), reserveLedger, stablecoin);
-        _verifyMintIntentRegistry(MintIntentRegistry(mintIntentRegistry), tokenAuthority);
-        _verifyDeployerRenunciation(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin);
+        _verifyIdempotencyKeyRegistry(
+            IdempotencyKeyRegistry(idempotencyKeyRegistry), tokenAuthority
+        );
+        _verifyDeployerRenunciation(
+            reserveLedger, idempotencyKeyRegistry, tokenAuthority, stablecoin
+        );
 
         // --- Summary ---
         console.log("---");
@@ -185,33 +189,33 @@ contract Verify is Common {
         );
     }
 
-    function _verifyMintIntentRegistry(MintIntentRegistry registry, address tokenAuthority)
+    function _verifyIdempotencyKeyRegistry(IdempotencyKeyRegistry registry, address tokenAuthority)
         internal
     {
-        _check(address(registry).code.length > 0, "MintIntentRegistry has code");
+        _check(address(registry).code.length > 0, "IdempotencyKeyRegistry has code");
 
-        // The TokenAuthority must point at this registry, and be authorized on it, or mint
-        // intents cannot be published or consumed.
+        // The TokenAuthority must point at this registry, and be authorized on it, or keys
+        // cannot be used.
         _check(
-            address(TokenAuthority(tokenAuthority).mintIntentRegistry()) == address(registry),
-            "TA: mintIntentRegistry matches"
+            address(TokenAuthority(tokenAuthority).idempotencyKeyRegistry()) == address(registry),
+            "TA: idempotencyKeyRegistry matches"
         );
         _check(
             registry.hasRole(CONTROLLER_ROLE, tokenAuthority),
-            "MintIntentRegistry: TA has CONTROLLER_ROLE"
+            "IdempotencyKeyRegistry: TA has CONTROLLER_ROLE"
         );
 
         // Admin handover
         address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
         _check(
             registry.hasRole(DEFAULT_ADMIN_ROLE, taAdmin),
-            "MintIntentRegistry: admin has DEFAULT_ADMIN_ROLE"
+            "IdempotencyKeyRegistry: admin has DEFAULT_ADMIN_ROLE"
         );
     }
 
     function _verifyDeployerRenunciation(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin
     ) internal {
@@ -253,8 +257,9 @@ contract Verify is Common {
                 "TA: deployer renounced TOKEN_AUTHORITY_HANDLER_SETTER_ROLE"
             );
             _check(
-                !MintIntentRegistry(mintIntentRegistry).hasRole(DEFAULT_ADMIN_ROLE, deployer),
-                "MintIntentRegistry: deployer renounced DEFAULT_ADMIN_ROLE"
+                !IdempotencyKeyRegistry(idempotencyKeyRegistry)
+                    .hasRole(DEFAULT_ADMIN_ROLE, deployer),
+                "IdempotencyKeyRegistry: deployer renounced DEFAULT_ADMIN_ROLE"
             );
         }
     }

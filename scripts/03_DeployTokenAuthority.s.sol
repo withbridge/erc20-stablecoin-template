@@ -9,9 +9,9 @@ import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
 contract DeployTokenAuthority is Common {
 
-    function run(address reserveLedger, address mintIntentRegistry) public {
+    function run(address reserveLedger, address idempotencyKeyRegistry) public {
         requireDeployed(reserveLedger, "reserveLedger");
-        requireDeployed(mintIntentRegistry, "mintIntentRegistry");
+        requireDeployed(idempotencyKeyRegistry, "idempotencyKeyRegistry");
 
         vm.startBroadcast();
 
@@ -29,7 +29,7 @@ contract DeployTokenAuthority is Common {
                 new ERC1967Proxy(
                     address(taImplementation),
                     abi.encodeCall(
-                        TokenAuthority.initialize, (msg.sender, msg.sender, mintIntentRegistry)
+                        TokenAuthority.initialize, (msg.sender, msg.sender, idempotencyKeyRegistry)
                     )
                 )
             )
@@ -40,7 +40,9 @@ contract DeployTokenAuthority is Common {
         console.log("TokenAuthority proxy:", address(taProxy));
         console.log("---");
         console.log("Set in .env: TOKEN_AUTHORITY=%s", address(taProxy));
-        console.log("NOTE: grant CONTROLLER_ROLE on the MintIntentRegistry to this proxy (step 05)");
+        console.log(
+            "NOTE: grant CONTROLLER_ROLE on the IdempotencyKeyRegistry to this proxy (step 05)"
+        );
     }
 
 }

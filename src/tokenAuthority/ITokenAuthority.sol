@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
+import { IIdempotencyKeys } from "../idempotency/interfaces/IIdempotencyKeys.sol";
 
 /// @title ITokenAuthority
 /// @author Bridge
@@ -9,13 +9,13 @@ import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
 /// allowances for stablecoins
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITokenAuthority is IMintIntent {
+interface ITokenAuthority is IIdempotencyKeys {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums
     //////////////////////////////////////////////////////////////////////////*/
 
-    enum MintIntentVersion {
+    enum IdempotencyKeysVersion {
         Optional,
         Required
     }
@@ -64,8 +64,9 @@ interface ITokenAuthority is IMintIntent {
     /// @notice Thrown when a stablecoin is already registered
     error StablecoinAlreadyRegistered();
 
-    /// @notice Thrown when the mint approval version is required
-    error MintIntentRequired();
+    /// @notice Thrown when empty-key `mint` is called while {idempotencyKeysVersion} is
+    /// {IdempotencyKeysVersion-Required}
+    error IdempotencyKeysRequired();
 
     /// @notice Thrown when there is a precision mismatch between stablecoin and reserve ledger
     error PrecisionMismatch(uint256 _reserveLedgerPrecision, uint256 _stablecoinPrecision);
@@ -173,10 +174,12 @@ interface ITokenAuthority is IMintIntent {
     /// @param stablecoinContract The address of the stablecoin contract
     event StablecoinUnregistered(address indexed sender, address indexed stablecoinContract);
 
-    /// @notice Emitted when the mint approval version is set
-    /// @param sender The address that set the mint approval version (must have DEFAULT_ADMIN_ROLE)
-    /// @param mintIntentVersion The new mint approval version
-    event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+    /// @notice Emitted when empty-key `mint` is made optional or required
+    /// @param sender The address that set the version (must have DEFAULT_ADMIN_ROLE)
+    /// @param idempotencyKeysVersion The new empty-key mint policy
+    event IdempotencyKeysVersionSet(
+        address indexed sender, IdempotencyKeysVersion idempotencyKeysVersion
+    );
 
     /// @notice Emitted when a stablecoin's pause status is set
     /// @param sender The address that set the pause status
@@ -193,11 +196,10 @@ interface ITokenAuthority is IMintIntent {
     /**
      * @notice Initializes the TokenAuthority
      * @param _admin The address to be granted the admin role
-     * @param _publisher The address to be granted the publisher role
-     * @param _registry The shared mint intent registry. This TokenAuthority must be granted
-     * CONTROLLER_ROLE on the registry before mint intents can be used.
+     * @param _registry The shared idempotency-key registry. This TokenAuthority must be granted
+     * CONTROLLER_ROLE on the registry before keys can be used.
      */
-    function initialize(address _admin, address _publisher, address _registry) external;
+    function initialize(address _admin, address _registry) external;
 
     /**
      * @notice Query the address of the reserve ledger token
@@ -228,9 +230,9 @@ interface ITokenAuthority is IMintIntent {
     function STABLECOIN_PAUSER_ROLE() external view returns (bytes32);
 
     /**
-     * @notice Whether mint intents are optional or required for plain `mint`
+     * @notice Whether empty-key `mint` is optional or required
      */
-    function mintIntentVersion() external view returns (MintIntentVersion);
+    function idempotencyKeysVersion() external view returns (IdempotencyKeysVersion);
 
     /**
      * @notice Whether minting/burning/wrapping/unwrapping is paused for a stablecoin
@@ -240,13 +242,16 @@ interface ITokenAuthority is IMintIntent {
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks and decrements transaction limit, and minter allowance before
-     * minting
+     * @dev Checks and decrements transaction limit, and minter allowance before minting.
+     *      Empty `keys` is allowed only when {idempotencyKeysVersion} is
+     * {IdempotencyKeysVersion-Optional}.
      * @param stablecoinContract The address of the stablecoin contract to mint from
      * @param to The address to receive the minted tokens
      * @param amount The amount of tokens to mint
+     * @param keys Idempotency keys to mark used. Empty skips the registry when Optional.
      */
-    function mint(address stablecoinContract, address to, uint256 amount) external;
+    function mint(address stablecoinContract, address to, uint256 amount, bytes32[] calldata keys)
+        external;
 
     /**
      * @notice Mints stablecoins to a specified address for bridge ecosystem contracts.
@@ -259,19 +264,6 @@ interface ITokenAuthority is IMintIntent {
     function mintBridgeEcosystem(address stablecoinContract, address to, uint256 amount) external;
 
     /**
-     * @notice Mints stablecoins to a recipient address with an approval
-     * @dev Checks and decrements transaction limit, and minter allowance before
-     * minting
-     * @param _params The parameters for the mint operation
-     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
-     * @custom:param _params.to The address to receive the minted tokens
-     * @custom:param _params.amount The amount of tokens to mint
-     * @custom:param _params.operationId The operation ID
-     * @custom:param _params.holdId The hold ID
-     */
-    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) external;
-
-    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
      * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
      * ledger token, it calls burn directly; otherwise, it calls unwrap on the Stablecoin
@@ -281,13 +273,12 @@ interface ITokenAuthority is IMintIntent {
     function burn(address stablecoinContract, uint256 amount) external;
 
     /**
-     * @notice Burns tokens from the sender's balance with a globally unique operation ID.
+     * @notice Burns tokens from the sender's balance, marking the given idempotency keys used.
      * @param stablecoinContract The address of the stablecoin contract.
      * @param amount The amount of tokens to burn.
-     * @param operationId The operation ID to consume for this burn.
+     * @param keys The idempotency keys to mark used.
      */
-    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
-        external;
+    function burn(address stablecoinContract, uint256 amount, bytes32[] calldata keys) external;
 
     /**
      * @notice Unwraps a given amount of a wrapped stablecoin for the caller
@@ -379,10 +370,10 @@ interface ITokenAuthority is IMintIntent {
     function unregisterStablecoin(address stablecoinContract) external;
 
     /**
-     * @notice Sets whether mint intents are optional or required
-     * @param mintIntentVersion The new mint approval version
+     * @notice Sets whether empty-key `mint` is optional or required
+     * @param idempotencyKeysVersion The new mint intent version
      */
-    function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
+    function setIdempotencyKeysVersion(IdempotencyKeysVersion idempotencyKeysVersion) external;
 
     /**
      * @notice Gets the token handler for a specific stablecoin contract

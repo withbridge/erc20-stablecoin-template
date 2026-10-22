@@ -8,11 +8,19 @@
 sequenceDiagram
     participant User
     participant TA as TokenAuthority
+    participant Registry as IdempotencyKeyRegistry
     participant Handler as ITokenHandler
     participant RL as ReserveLedger
     participant SC as Stablecoin
 
-    User->>TA: mint(stablecoin, to, amount)
+    User->>TA: mint(stablecoin, to, amount, keys)
+    alt keys nonempty
+        TA->>Registry: useKeys(keys)
+    else keys empty and Optional
+        Note over TA: skip registry
+    else keys empty and Required
+        TA-->>User: revert IdempotencyKeysRequired
+    end
     TA->>TA: Check minter allowance
     TA->>TA: Check txn limit
     TA->>TA: Decrement allowance
@@ -56,13 +64,17 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant TA as TokenAuthority
+    participant Registry as IdempotencyKeyRegistry
     participant Handler as ITokenHandler
     participant SC as Stablecoin
     participant RL as ReserveLedger
     participant RS as ReserveStore
 
-    User->>TA: burn(stablecoin, amount)
+    User->>TA: burn(stablecoin, amount) or burn(stablecoin, amount, keys)
     Note over User: Must have BURNER_ROLE
+    opt keys provided
+        TA->>Registry: useKeys(keys)
+    end
     TA->>SC: transferFrom(user, tokenAuthority, amount)
     TA->>SC: approve(handler, amount)
     TA->>Handler: burn(stablecoin, amount)

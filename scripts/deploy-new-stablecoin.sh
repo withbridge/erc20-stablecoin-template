@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # deploy-new-stablecoin.sh — deploys and configures a new stablecoin on an
 # existing chain that already has AuthRegistry, ReserveLedger,
-# MintIntentRegistry, and TokenAuthority deployed.
+# IdempotencyKeyRegistry, and TokenAuthority deployed.
 #
 # Usage:
 #   source .env   # fill in stablecoin config vars (see .env.example)
 #   bash scripts/deploy-new-stablecoin.sh \
-#     <AUTH_REGISTRY> <RESERVE_LEDGER> <MINT_INTENT_REGISTRY> \
+#     <AUTH_REGISTRY> <RESERVE_LEDGER> <IDEMPOTENCY_KEY_REGISTRY> \
 #     <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> [extra forge flags]
 #
 # The first five positional arguments are the chain infrastructure addresses
@@ -17,13 +17,13 @@
 set -euo pipefail
 
 if [[ $# -lt 5 ]]; then
-    echo "Usage: $0 <AUTH_REGISTRY> <RESERVE_LEDGER> <MINT_INTENT_REGISTRY> <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> [forge flags]"
+    echo "Usage: $0 <AUTH_REGISTRY> <RESERVE_LEDGER> <IDEMPOTENCY_KEY_REGISTRY> <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> [forge flags]"
     exit 1
 fi
 
 AUTH_REGISTRY="$1"
 RESERVE_LEDGER="$2"
-MINT_INTENT_REGISTRY="$3"
+IDEMPOTENCY_KEY_REGISTRY="$3"
 TOKEN_AUTHORITY="$4"
 TRANSFER_POLICY_ID="$5"
 shift 5
@@ -82,7 +82,7 @@ HANDOVER_CONFIG="(${TXN_MINT_LIMIT},${MINTER_ADDRESS},${MINTER_ALLOWANCE},${RL_M
 run_script "05: Configure and Handover" \
     scripts/05_ConfigureAndHandover.s.sol \
     --sig "run(address,address,address,address,(uint256,address,uint256,uint256,uint256,address,address,address,address,address,address))" \
-    "${RESERVE_LEDGER}" "${MINT_INTENT_REGISTRY}" "${TOKEN_AUTHORITY}" "${STABLECOIN}" \
+    "${RESERVE_LEDGER}" "${IDEMPOTENCY_KEY_REGISTRY}" "${TOKEN_AUTHORITY}" "${STABLECOIN}" \
     "${HANDOVER_CONFIG}"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -93,6 +93,6 @@ echo "STABLECOIN=${STABLECOIN}"
 echo ""
 echo "Verify:"
 echo "  AUTH_REGISTRY=${AUTH_REGISTRY} RESERVE_LEDGER=${RESERVE_LEDGER} \\"
-echo "  MINT_INTENT_REGISTRY=${MINT_INTENT_REGISTRY} \\"
+echo "  IDEMPOTENCY_KEY_REGISTRY=${IDEMPOTENCY_KEY_REGISTRY} \\"
 echo "  TOKEN_AUTHORITY=${TOKEN_AUTHORITY} STABLECOIN=${STABLECOIN} \\"
 echo "  forge script scripts/06_Verify.s.sol --rpc-url \$RPC_URL"

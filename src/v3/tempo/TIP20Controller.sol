@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IMintIntent, MintIntent } from "../../mintIntent/MintIntent.sol";
-import { IMintIntentRegistry } from "../../mintIntent/interfaces/IMintIntentRegistry.sol";
+import { IdempotencyKeys } from "../../idempotency/IdempotencyKeys.sol";
+import { IIdempotencyKeyRegistry } from "../../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
 import { ReserveStore } from "./ReserveStore.sol";
 import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import {
@@ -14,6 +14,8 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
+import { Version } from "../../Version.sol";
+
 
 /// @title TIP20Controller
 /// @notice A singleton controller contract that manages minting rate limits and allowances for
@@ -23,8 +25,9 @@ import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 contract TIP20Controller is
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
-    MintIntent,
-    ITIP20Controller
+    IdempotencyKeys,
+    ITIP20Controller,
+    Version
 {
 
     using SafeERC20 for IERC20;
@@ -68,17 +71,17 @@ contract TIP20Controller is
     /// @notice Maps stablecoin contract address to its ReserveStore address
     mapping(address stablecoinContract => address reserveStore) public reserveStores;
 
-    /// @notice The current mint intent version
+    /// @notice Whether empty-key `mint` is allowed (`Optional`) or keys are required (`Required`)
     MintIntentVersion public mintIntentVersion;
 
     /// @notice Maps a stablecoin to whether or not minting/burning/wrapping/unwrapping is paused
     mapping(address stablecoinContract => bool isPaused) public stablecoinIsPaused;
 
-    /// @notice The shared registry that owns all mint intent state
-    /// @dev Shared with every other controller deployment so that operation IDs and hold IDs are
-    /// single-use across all of them. Declared here rather than in {MintIntent} so the slot is
-    /// appended after this contract's existing variables instead of shifting them.
-    IMintIntentRegistry public mintIntentRegistry;
+    /// @notice The shared registry that owns all idempotency-key state
+    /// @dev Shared with every other controller deployment so that keys are single-use across all
+    /// of them. Declared here rather than in {IdempotencyKeys} so the slot is appended after this
+    /// contract's existing variables instead of shifting them.
+    IIdempotencyKeyRegistry public idempotencyKeyRegistry;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -104,14 +107,13 @@ contract TIP20Controller is
     /**
      * @notice Initializes the TIP20Controller contract
      * @param _admin The address to be granted the admin role
-     * @param _publisher The address to be granted the publisher role
-     * @param _registry The shared mint intent registry. This TIP20Controller must be granted
-     * CONTROLLER_ROLE on the registry before mint intents can be used.
+     * @param _registry The shared idempotency-key registry. This TIP20Controller must be granted
+     * CONTROLLER_ROLE on the registry before keys can be used.
      */
-    function initialize(address _admin, address _publisher, address _registry) public initializer {
+    function initialize(address _admin, address _registry) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        __MintIntent_init(_publisher, _registry);
+        __IdempotencyKeys_init(_registry);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     }
@@ -122,14 +124,12 @@ contract TIP20Controller is
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks transaction limit and decrements minter allowance before
-     * minting
      * @param stablecoinContract The address of the stablecoin contract to mint from
      * @param to The address to receive the minted tokens
      * @param amount The amount of tokens to mint
+     * @dev Checks transaction limit and decrements minter allowance before minting.
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
-        require(mintIntentVersion == MintIntentVersion.Optional, MintIntentRequired());
         require(amount > 0, AmountCannotBeZero());
 
         uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
@@ -141,31 +141,23 @@ contract TIP20Controller is
 
         _mint(stablecoinContract, to, amount);
     }
-
+    
     /**
-     * @notice Mints stablecoins to a recipient address with an approval
-     * @dev Checks and decrements transaction limit, and minter allowance before
-     * minting
-     * @param _params The parameters for the mint operation
-     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
-     * @custom:param _params.to The address to receive the minted tokens
-     * @custom:param _params.amount The amount of tokens to mint
-     * @custom:param _params.operationId The operation ID
-     * @custom:param _params.holdId The hold ID
+     * @notice Mints stablecoins to a recipient address
+     * @param stablecoinContract The address of the stablecoin contract to mint from
+     * @param to The address to receive the minted tokens
+     * @param amount The amount of tokens to mint
+     * @param keys Idempotency keys to mark used. Empty skips the registry when Optional.
+     * @dev Checks transaction limit and decrements minter allowance before minting.
+     *      Non-empty `keys` are marked used in the shared registry before those checks; a later
+     *      revert rolls the key state back. Empty `keys` is allowed only when
+     *      {mintIntentVersion} is {MintIntentVersion-Optional}.
      */
-    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) public {
-        require(_params.amount > 0, AmountCannotBeZero());
-
-        uint256 mintTxnLimit = mintTxnLimits[_params.stablecoin];
-        uint256 minterAllowance = minterAllowances[_params.stablecoin][msg.sender];
-        require(minterAllowance >= _params.amount, MinterAllowanceExceeded());
-        require(mintTxnLimit >= _params.amount, MintTxnLimitExceeded());
-
-        minterAllowances[_params.stablecoin][msg.sender] -= _params.amount;
-
-        _consumeApproval(_params);
-
-        _mint(_params.stablecoin, _params.recipient, _params.amount);
+    function mint(address stablecoinContract, address to, uint256 amount, bytes32[] calldata keys)
+        public
+    {
+        _useKeys(mintIntentVersion == MintIntentVersion.Optional, keys);
+        mint(stablecoinContract, to, amount);
     }
 
     /**
@@ -194,17 +186,17 @@ contract TIP20Controller is
     }
 
     /**
-     * @notice Burns tokens with a globally unique operation ID.
-     * @dev The operation ID can only be consumed once across mint approvals and burn operations.
+     * @notice Burns tokens, marking the given idempotency keys used.
+     * @dev Keys can only be consumed once across mint and burn operations, registry-wide.
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
-     * @param operationId The operation ID to consume for this burn
+     * @param keys The idempotency keys to mark used
      */
-    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
+    function burn(address stablecoinContract, uint256 amount, bytes32[] calldata keys)
         public
         onlyRole(BURNER_ROLE)
     {
-        _consumeUnusedOperationId(operationId);
+        _useKeys(mintIntentVersion == MintIntentVersion.Optional, keys);
         _burn(stablecoinContract, amount);
     }
 
@@ -343,9 +335,9 @@ contract TIP20Controller is
     }
 
     /**
-     * @notice Sets whether mint intents are optional or required
-     * @dev When `Required`, plain `mint` reverts with {MintIntentRequired} and callers must use
-     *      `mintWithApproval` against a published intent. `mintBridgeEcosystem` is unaffected.
+     * @notice Sets whether empty-key `mint` is optional or required
+     * @dev When `Required`, `mint` with empty `keys` reverts with {IdempotencyKeysRequired}.
+     *      `mintBridgeEcosystem` is unaffected.
      * @param _mintIntentVersion The new mint intent version
      */
     function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
@@ -499,14 +491,14 @@ contract TIP20Controller is
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
     }
 
-    /// @inheritdoc MintIntent
-    function _setMintIntentRegistry(IMintIntentRegistry _registry) internal override {
-        mintIntentRegistry = _registry;
+    /// @inheritdoc IdempotencyKeys
+    function _setIdempotencyKeyRegistry(IIdempotencyKeyRegistry _registry) internal override {
+        idempotencyKeyRegistry = _registry;
     }
 
-    /// @inheritdoc MintIntent
-    function _mintIntentRegistry() internal view override returns (IMintIntentRegistry) {
-        return mintIntentRegistry;
+    /// @inheritdoc IdempotencyKeys
+    function _idempotencyKeyRegistry() internal view override returns (IIdempotencyKeyRegistry) {
+        return idempotencyKeyRegistry;
     }
 
 }
