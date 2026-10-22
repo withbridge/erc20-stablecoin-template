@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { Version } from "../Version.sol";
 import { StablecoinTemplateV3ErrorsAndEvents } from "./StablecoinTemplateV3ErrorsAndEvents.sol";
 
 import {
@@ -41,7 +42,8 @@ abstract contract StablecoinTemplateV3Base is
     AccessControlEnumerableUpgradeable,
     ERC20PermitUpgradeable,
     UUPSUpgradeable,
-    StablecoinTemplateV3ErrorsAndEvents
+    StablecoinTemplateV3ErrorsAndEvents,
+    Version
 {
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
