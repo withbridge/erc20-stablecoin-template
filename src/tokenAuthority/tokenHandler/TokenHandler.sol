@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { Version } from "../../Version.sol";
 import { ITokenHandler } from "./ITokenHandler.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { ERC165, IERC165 } from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
@@ -9,7 +10,7 @@ import { ERC165, IERC165 } from "@openzeppelin/contracts/utils/introspection/ERC
 /// @author Bridge
 /// @notice Abstract base contract for token handlers that restricts access to the token authority
 /// @dev Implements access control modifier for token authority and stores the authority address
-abstract contract TokenHandler is ITokenHandler, ERC165 {
+abstract contract TokenHandler is ITokenHandler, ERC165, Version {
 
     /// @notice The address of the token authority that can call handler functions
     address public immutable TOKEN_AUTHORITY;

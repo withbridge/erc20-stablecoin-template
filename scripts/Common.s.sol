@@ -57,9 +57,9 @@ abstract contract Common is Script {
         return addr;
     }
 
-    function mintIntentRegistryAddress() internal view returns (address) {
-        address addr = vm.envAddress("MINT_INTENT_REGISTRY");
-        require(addr != address(0), "MINT_INTENT_REGISTRY not set");
+    function idempotencyKeyRegistryAddress() internal view returns (address) {
+        address addr = vm.envAddress("IDEMPOTENCY_KEY_REGISTRY");
+        require(addr != address(0), "IDEMPOTENCY_KEY_REGISTRY not set");
         return addr;
     }
 

@@ -18,10 +18,12 @@ import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC16
 
 import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
-import { IMintIntent, MintIntent } from "../mintIntent/MintIntent.sol";
-import { IMintIntentRegistry } from "../mintIntent/interfaces/IMintIntentRegistry.sol";
+import { IdempotencyKeys } from "../idempotency/IdempotencyKeys.sol";
+import { IIdempotencyKeyRegistry } from "../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
 
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+
+import { Version } from "../Version.sol";
 
 /// @title TokenAuthority
 /// @author Bridge
@@ -30,8 +32,9 @@ import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/I
 contract TokenAuthority is
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
-    MintIntent,
-    ITokenAuthority
+    IdempotencyKeys,
+    ITokenAuthority,
+    Version
 {
 
     using SafeERC20 for IERC20;
@@ -72,25 +75,23 @@ contract TokenAuthority is
     mapping(address stablecoinContract => mapping(address user => uint256 minterAllowance))
         minterAllowances;
 
-    /// @notice Maps each stablecoin contract address to its respective mint rate limits.
-    /// @dev mintRateLimits[stablecoinContract] = MintRateLimit struct (global and per-transaction
-    /// mint limits for the stablecoin)
+    /// @notice Maps each stablecoin contract address to its per-transaction mint limit.
     mapping(address stablecoinContract => uint256 mintTxnLimit) mintTxnLimits;
 
     /// @notice Maps each stablecoin contract address to its respective token handler
     mapping(address stablecoinContract => address tokenHandler) tokenHandlers;
 
-    /// @notice The current mint intent version
-    MintIntentVersion public mintIntentVersion;
+    /// @notice Whether idempotency keys are optional or required for `mint`
+    IdempotencyKeysVersion public idempotencyKeysVersion;
 
     /// @notice Maps a stablecoin to whether or not minting/burning/wrapping/unwrapping is paused
     mapping(address stablecoinContract => bool isPaused) public stablecoinIsPaused;
 
-    /// @notice The shared registry that owns all mint intent state
-    /// @dev Shared with every other controller deployment so that operation IDs and hold IDs are
-    /// single-use across all of them. Declared here rather than in {MintIntent} so the slot is
-    /// appended after this contract's existing variables instead of shifting them.
-    IMintIntentRegistry public mintIntentRegistry;
+    /// @notice The shared registry that owns all idempotency-key state
+    /// @dev Shared with every other controller deployment so that keys are single-use across all
+    /// of them. Declared here rather than in {IdempotencyKeys} so the slot is appended after this
+    /// contract's existing variables instead of shifting them.
+    IIdempotencyKeyRegistry public idempotencyKeyRegistry;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -116,14 +117,13 @@ contract TokenAuthority is
     /**
      * @notice Initializes the TokenAuthority contract
      * @param _admin The address to be granted the admin role
-     * @param _publisher The address to be granted the publisher role
-     * @param _registry The shared mint intent registry. This TokenAuthority must be granted
-     * CONTROLLER_ROLE on the registry before mint intents can be used.
+     * @param _registry The shared idempotency-key registry. This TokenAuthority must be granted
+     * CONTROLLER_ROLE on the registry before keys can be used.
      */
-    function initialize(address _admin, address _publisher, address _registry) public initializer {
+    function initialize(address _admin, address _registry) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        __MintIntent_init(_publisher, _registry);
+        __IdempotencyKeys_init(_registry);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     }
@@ -134,24 +134,40 @@ contract TokenAuthority is
 
     /**
      * @notice Mints stablecoins to a recipient address
-     * @dev Checks and decrements transaction limit, and minter allowance before
-     * minting
      * @param stablecoinContract The address of the stablecoin contract to mint from
      * @param to The address to receive the minted tokens
      * @param amount The amount of tokens to mint
+     * @dev Checks transaction limit and decrements minter allowance before minting.
+     *      Only allowed when {idempotencyKeysVersion} is {IdempotencyKeysVersion-Optional}.
      */
     function mint(address stablecoinContract, address to, uint256 amount) public {
-        require(mintIntentVersion == MintIntentVersion.Optional, MintIntentRequired());
-        require(amount > 0, AmountCannotBeZero());
+        require(
+            idempotencyKeysVersion == IdempotencyKeysVersion.Optional, IdempotencyKeysRequired()
+        );
+        _mintWithLimits(stablecoinContract, to, amount);
+    }
 
-        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
-        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
-        require(minterAllowance >= amount, MinterAllowanceExceeded());
-        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
+    /**
+     * @notice Mints stablecoins to a recipient address
+     * @param stablecoinContract The address of the stablecoin contract to mint from
+     * @param to The address to receive the minted tokens
+     * @param amount The amount of tokens to mint
+     * @param keys Idempotency keys to mark used. Empty skips the registry when Optional.
+     * @dev Checks transaction limit and decrements minter allowance before minting.
+     *      Non-empty `keys` are marked used in the shared registry before those checks; a later
+     *      revert rolls the key state back. Empty `keys` is allowed only when
+     *      {idempotencyKeysVersion} is {IdempotencyKeysVersion-Optional}.
+     */
+    function mint(address stablecoinContract, address to, uint256 amount, bytes32[] calldata keys)
+        public
+    {
+        if (keys.length == 0) {
+            mint(stablecoinContract, to, amount);
+            return;
+        }
 
-        minterAllowances[stablecoinContract][msg.sender] -= amount;
-
-        _mint(stablecoinContract, to, amount);
+        _useKeys(false, keys);
+        _mintWithLimits(stablecoinContract, to, amount);
     }
 
     /**
@@ -170,36 +186,10 @@ contract TokenAuthority is
     }
 
     /**
-     * @notice Mints stablecoins to a recipient address with an approval
-     * @dev Checks and decrements transaction limit, and minter allowance before
-     * minting
-     * @param _params The parameters for the mint operation
-     * @custom:param _params.stablecoinContract The address of the stablecoin contract to mint from
-     * @custom:param _params.to The address to receive the minted tokens
-     * @custom:param _params.amount The amount of tokens to mint
-     * @custom:param _params.operationId The operation ID
-     * @custom:param _params.holdId The hold ID
-     */
-    function mintWithApproval(IMintIntent.ApprovalParams calldata _params) public {
-        require(_params.amount > 0, AmountCannotBeZero());
-
-        uint256 mintTxnLimit = mintTxnLimits[_params.stablecoin];
-        uint256 minterAllowance = minterAllowances[_params.stablecoin][msg.sender];
-        require(minterAllowance >= _params.amount, MinterAllowanceExceeded());
-        require(mintTxnLimit >= _params.amount, MintTxnLimitExceeded());
-
-        minterAllowances[_params.stablecoin][msg.sender] -= _params.amount;
-
-        _consumeApproval(_params);
-
-        _mint(_params.stablecoin, _params.recipient, _params.amount);
-    }
-
-    /**
      * @notice Burns tokens from the sender's balance for a given stablecoin contract
-     * @dev Allows the caller to burn their own tokens. If the stablecoin contract is the reserve
-     * ledger token, it calls burn directly; otherwise, it calls unwrap on the ERC20WrapUnwrap
-     * interface.
+     * @dev Transfers the caller's tokens to this contract, approves the registered handler,
+     * and delegates burning to it. The handler determines how the token and any backing
+     * reserves are burned.
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
      */
@@ -208,28 +198,27 @@ contract TokenAuthority is
     }
 
     /**
-     * @notice Burns tokens with a globally unique operation ID.
-     * @dev The operation ID can only be consumed once across mint approvals and burn operations.
+     * @notice Burns tokens, marking the given idempotency keys used.
+     * @dev Keys can only be consumed once across mint and burn operations, registry-wide.
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
-     * @param operationId The operation ID to consume for this burn
+     * @param keys The idempotency keys to mark used
      */
-    function burnWithOperationId(address stablecoinContract, uint256 amount, uint256 operationId)
+    function burn(address stablecoinContract, uint256 amount, bytes32[] calldata keys)
         public
         onlyRole(BURNER_ROLE)
     {
-        _consumeUnusedOperationId(operationId);
+        _useKeys(idempotencyKeysVersion == IdempotencyKeysVersion.Optional, keys);
         _burn(stablecoinContract, amount);
     }
 
     /**
-     * @notice Unwraps a given amount of a wrapped stablecoin for the caller
-     * @dev Reverts if the stablecoin contract provided is the reserve ledger token,
-     *      since unwrapping is only applicable to wrapped stablecoins.
-     *      Calls unwrap on the wrapped stablecoin, which should send the underlying reserve
-     *      tokens to this contract, then transfers those reserve tokens to the caller.
-     * @param stablecoinContract The address of the wrapped stablecoin contract
-     * @param amount The amount of wrapped tokens to unwrap
+     * @notice Unwraps a given amount of a stablecoin for the caller
+     * @dev Transfers the caller's stablecoins to this contract and approves the registered
+     * handler to unwrap them. The handler sends reserve tokens directly to the caller
+     * and determines whether the token supports unwrapping.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param amount The amount of stablecoins to unwrap
      *
      * Emits a {Unwrap} event for tracking unwrapping operations.
      */
@@ -248,8 +237,8 @@ contract TokenAuthority is
      * @notice Wraps reserve ledger tokens into the specified stablecoin and sends them to a
      * recipient.
      * @dev Transfers the specified amount of reserve ledger tokens from the caller to this
-     * contract, approves the stablecoin contract to spend these tokens, and then wraps the tokens
-     * for the recipient.
+     * contract, approves the registered handler to spend these tokens, and calls the handler
+     * to wrap them for the recipient.
      * @dev Emits a {Wrap} event upon successful wrapping.
      * @param stablecoinContract The address of the target stablecoin contract.
      * @param to The address to receive the wrapped tokens.
@@ -352,7 +341,7 @@ contract TokenAuthority is
 
     /**
      * @notice Registers a stablecoin contract with the TokenAuthority
-     * @dev Only callable by the admin role
+     * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      * @param tokenHandler The address of the token handler
      * @param mintTxnLimit The mint transaction limit
@@ -361,7 +350,7 @@ contract TokenAuthority is
         address stablecoinContract,
         address tokenHandler,
         uint256 mintTxnLimit
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
         uint256 reserveLedgerPrecision = IERC20Metadata(RESERVE_LEDGER_TOKEN).decimals();
         uint256 stablecoinPrecision = IERC20Metadata(stablecoinContract).decimals();
         require(
@@ -386,7 +375,7 @@ contract TokenAuthority is
 
     /**
      * @notice Unregisters a stablecoin contract from the TokenAuthority
-     * @dev Only callable by the admin role
+     * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @dev It it on the onus of the admin to ensure that all minter allowances are zeroed out
      * @param stablecoinContract The address of the stablecoin contract
      */
@@ -403,18 +392,18 @@ contract TokenAuthority is
     }
 
     /**
-     * @notice Sets whether mint intents are optional or required
-     * @dev When `Required`, plain `mint` reverts with {MintIntentRequired} and callers must use
-     *      `mintWithApproval` against a published intent. `mintBridgeEcosystem` is unaffected.
-     * @param _mintIntentVersion The new mint intent version
+     * @notice Sets whether `mint` requires idempotency keys
+     * @dev When `Required`, three-argument `mint` and `mint` with empty `keys` revert with
+     *      {IdempotencyKeysRequired}. `mintBridgeEcosystem` is unaffected.
+     * @param _idempotencyKeysVersion The new idempotency keys version
      */
-    function setMintIntentVersion(MintIntentVersion _mintIntentVersion)
+    function setIdempotencyKeysVersion(IdempotencyKeysVersion _idempotencyKeysVersion)
         public
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
-        mintIntentVersion = _mintIntentVersion;
+        idempotencyKeysVersion = _idempotencyKeysVersion;
 
-        emit MintIntentVersionSet(msg.sender, mintIntentVersion);
+        emit IdempotencyKeysVersionSet(msg.sender, idempotencyKeysVersion);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -480,6 +469,19 @@ contract TokenAuthority is
                                 Internal Functions
     //////////////////////////////////////////////////////////////////////////*/
 
+    function _mintWithLimits(address stablecoinContract, address to, uint256 amount) internal {
+        require(amount > 0, AmountCannotBeZero());
+
+        uint256 mintTxnLimit = mintTxnLimits[stablecoinContract];
+        uint256 minterAllowance = minterAllowances[stablecoinContract][msg.sender];
+        require(minterAllowance >= amount, MinterAllowanceExceeded());
+        require(mintTxnLimit >= amount, MintTxnLimitExceeded());
+
+        minterAllowances[stablecoinContract][msg.sender] -= amount;
+
+        _mint(stablecoinContract, to, amount);
+    }
+
     function _mint(address stablecoinContract, address to, uint256 amount) internal {
         require(amount <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
         _requireStablecoinNotPaused(stablecoinContract);
@@ -511,14 +513,14 @@ contract TokenAuthority is
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
     }
 
-    /// @inheritdoc MintIntent
-    function _setMintIntentRegistry(IMintIntentRegistry _registry) internal override {
-        mintIntentRegistry = _registry;
+    /// @inheritdoc IdempotencyKeys
+    function _setIdempotencyKeyRegistry(IIdempotencyKeyRegistry _registry) internal override {
+        idempotencyKeyRegistry = _registry;
     }
 
-    /// @inheritdoc MintIntent
-    function _mintIntentRegistry() internal view override returns (IMintIntentRegistry) {
-        return mintIntentRegistry;
+    /// @inheritdoc IdempotencyKeys
+    function _idempotencyKeyRegistry() internal view override returns (IIdempotencyKeyRegistry) {
+        return idempotencyKeyRegistry;
     }
 
 }

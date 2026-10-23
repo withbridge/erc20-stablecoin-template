@@ -24,7 +24,7 @@ graph TB
         PUB[PUBLISHER_ROLE]
     end
 
-    subgraph "MintIntentRegistry Roles"
+    subgraph "IdempotencyKeyRegistry Roles"
         MIR_DA[DEFAULT_ADMIN_ROLE]
         CR[CONTROLLER_ROLE]
     end
@@ -47,7 +47,7 @@ graph TB
     CR -.granted to.-> TA_DA
 ```
 
-The same role set applies to `TIP20Controller`, which shares the `MintIntentRegistry` with `TokenAuthority`.
+The same role set applies to `TIP20Controller`, which shares the `IdempotencyKeyRegistry` with `TokenAuthority`.
 
 ## Stablecoin Roles
 
@@ -110,8 +110,8 @@ Full administrative control over TokenAuthority.
 | Permission | Function |
 |------------|----------|
 | Register stablecoins | `registerStablecoin(address, address, uint256)` |
-| Set mint intent version | `setMintIntentVersion(MintIntentVersion)` |
-| Migrate mint intent registry | `setMintIntentRegistry(address)` |
+| Set whether keys are required on `mint` | `setMintIntentVersion(MintIntentVersion)` |
+| Migrate idempotency-key registry | `setIdempotencyKeyRegistry(address)` |
 | Manage roles | `grantRole()`, `revokeRole()` |
 | Upgrade implementation | `upgradeToAndCall(address, bytes)` |
 
@@ -129,17 +129,14 @@ Initiate token burns through TokenAuthority.
 | Permission | Function |
 |------------|----------|
 | Burn tokens | `burn(address, uint256)` |
-| Burn against an operation ID | `burnWithOperationId(address, uint256, uint256)` |
+| Burn, marking keys used | `burn(address, uint256, bytes32[])` |
 
 ### `PUBLISHER_ROLE`
-Manage the mint intent lifecycle. Each function forwards to the shared `MintIntentRegistry`; the TokenAuthority itself must hold `CONTROLLER_ROLE` there.
+Retire idempotency keys without a token movement. Each call forwards to the shared `IdempotencyKeyRegistry`; the TokenAuthority itself must hold `CONTROLLER_ROLE` there.
 
 | Permission | Function |
 |------------|----------|
-| Publish an approval | `publishApproval(ApprovalParams, uint64)` |
-| Revoke an approval | `revokeApproval(bytes32)` |
-| Revoke an operation ID | `revokeOperationId(uint256)` |
-| Extend an approval's expiry | `extendApproval(bytes32, uint64)` |
+| Mark keys used | `useKeys(bytes32[])` |
 
 ### `STABLECOIN_PAUSER_ROLE`
 Pause a single stablecoin's mint/burn/wrap/unwrap paths.
@@ -170,12 +167,12 @@ Configure token handlers.
 | Set handler | `setTokenHandler(address, address)` |
 | Unregister stablecoins | `unregisterStablecoin(address)` |
 
-## MintIntentRegistry Roles
+## IdempotencyKeyRegistry Roles
 
-One registry is shared by every controller deployment so that operation IDs and hold IDs are single-use across all of them, not once per controller.
+One registry is shared by every controller deployment so that keys are single-use across all of them, not once per controller.
 
 ### `DEFAULT_ADMIN_ROLE`
-Controls which controllers may share the intent namespace.
+Controls which controllers may share the key namespace.
 
 | Permission | Function |
 |------------|----------|
@@ -183,18 +180,13 @@ Controls which controllers may share the intent namespace.
 | Upgrade implementation | `upgradeToAndCall(address, bytes)` |
 
 ### `CONTROLLER_ROLE`
-Held by each controller contract (`TokenAuthority`, `TIP20Controller`) — never by an EOA. Controllers gate their own callers with `PUBLISHER_ROLE` / `BURNER_ROLE` before forwarding here.
+Held by each controller contract (`TokenAuthority`, `TIP20Controller`) — never by an EOA. Controllers gate their own callers with `PUBLISHER_ROLE` / minter allowance / `BURNER_ROLE` before forwarding here.
 
-`CONTROLLER_ROLE` alone is **not** sufficient to act on an arbitrary approval. Each approval records the controller that published it, and consuming, revoking, or extending is restricted to that controller — otherwise the call reverts with `NotApprovalController`. The role admits a controller to the shared ID namespace; it does not grant authority over other controllers' approvals.
+Any controller with `CONTROLLER_ROLE` may mark a still-free key used. Uniqueness is registry-wide.
 
 | Permission | Function | Additionally requires |
 |------------|----------|-----------------------|
-| Publish an approval | `publishApproval(ApprovalParams, uint64)` | ID unused registry-wide |
-| Revoke an approval | `revokeApproval(bytes32)` | caller published it |
-| Revoke an operation ID | `revokeOperationId(uint256)` | caller published it, if an approval exists |
-| Extend an approval's expiry | `extendApproval(bytes32, uint64)` | caller published it |
-| Consume an approval | `consumeApproval(ApprovalParams)` | caller published it |
-| Consume an unused operation ID | `consumeUnusedOperationId(uint256)` | — (unowned) |
+| Mark keys used | `useKeys(bytes32[])` | every key free and nonzero |
 
 Granting this role is what admits a controller into the shared namespace:
 
@@ -202,11 +194,11 @@ Granting this role is what admits a controller into the shared namespace:
 graph LR
     PUB[Publisher EOA] -->|PUBLISHER_ROLE| TA[TokenAuthority]
     BRN[Burner EOA] -->|BURNER_ROLE| TA
-    TA -->|CONTROLLER_ROLE| MIR[(MintIntentRegistry)]
+    TA -->|CONTROLLER_ROLE| MIR[(IdempotencyKeyRegistry)]
     T20[TIP20Controller] -->|CONTROLLER_ROLE| MIR
 ```
 
-Revoking `CONTROLLER_ROLE` from a controller halts all of its intent operations while leaving existing intent state intact.
+Revoking `CONTROLLER_ROLE` from a controller halts all of its key operations while leaving existing key state intact.
 
 ## Rate Limiting
 
