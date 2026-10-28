@@ -292,6 +292,18 @@ abstract contract StablecoinTemplateV3Base is
     }
 
     /**
+     * @dev Same as `whenNotPaused`, except while a privileged move has set the transient pause
+     * bypass. Only `StablecoinTemplateV3.forceTransfer` sets it, so every other path still reverts
+     * with {EnforcedPause} exactly as before.
+     */
+    modifier whenNotPausedOrBypassed() {
+        if (!StablecoinTemplateV3StorageLib.getTemporaryPauseBypassStatus()) {
+            _requireNotPaused();
+        }
+        _;
+    }
+
+    /**
      * @dev Updates the token balances of `from` and `to` after a transfer.
      *
      * Replaces _beforeTokenTransfer and _afterTokenTransfer, so add the relevant modifiers here.
@@ -302,7 +314,7 @@ abstract contract StablecoinTemplateV3Base is
     function _update(address from, address to, uint256 amount)
         internal
         override
-        whenNotPaused
+        whenNotPausedOrBypassed
         whenNotInBlockedList(to)
         whenNotInBlockedList(from)
     {

@@ -29,6 +29,12 @@ library StablecoinTemplateV3StorageLib {
     bytes32 private constant TEMPORARY_UNBLOCK_STORAGE_LOCATION =
         0xa5b639b0b8427abdcb5252638871cd5b818f821c6efce3055068666cd3e1cb00;
 
+    /// @dev Transient flag that lets a single privileged move pass the pause check. Set and cleared
+    /// within `forceTransfer` so it never outlives that call, even inside a multi-call transaction.
+    /// @custom:storage-location eip7201:bridge.TemporaryPauseBypass
+    bytes32 private constant TEMPORARY_PAUSE_BYPASS_STORAGE_LOCATION =
+        0x4ffbc5946db8fae0f3c99275e0b3bf642016cf7e0d1676ef677f721ac36af600;
+
     function getStorage() internal pure returns (StablecoinTemplateV3Storage storage s) {
         bytes32 slot = BRIDGE_STABLECOIN_TEMPLATE_V3_SLOT;
         assembly {
@@ -48,6 +54,24 @@ library StablecoinTemplateV3StorageLib {
 
     function setTemporaryUnblockStatus(bool status) internal {
         bytes32 slot = TEMPORARY_UNBLOCK_STORAGE_LOCATION;
+        uint256 value = status ? 1 : 0;
+        assembly {
+            tstore(slot, value)
+        }
+    }
+
+    function getTemporaryPauseBypassStatus() internal view returns (bool) {
+        bytes32 slot = TEMPORARY_PAUSE_BYPASS_STORAGE_LOCATION;
+        uint256 status;
+        assembly {
+            status := tload(slot)
+        }
+
+        return status != 0;
+    }
+
+    function setTemporaryPauseBypassStatus(bool status) internal {
+        bytes32 slot = TEMPORARY_PAUSE_BYPASS_STORAGE_LOCATION;
         uint256 value = status ? 1 : 0;
         assembly {
             tstore(slot, value)

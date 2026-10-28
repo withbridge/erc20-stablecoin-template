@@ -19,6 +19,11 @@ import { StdTokens } from "tempo-std/StdTokens.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 import { ITIP20Factory } from "tempo-std/interfaces/ITIP20Factory.sol";
 import { ITIP20RolesAuth } from "tempo-std/interfaces/ITIP20RolesAuth.sol";
+import { ITIP403Registry } from "tempo-std/interfaces/ITIP403Registry.sol";
+
+import { MockTIP20BurnAt } from "./utils/MockTIP20BurnAt.sol";
+import { ISeize } from "src/seize/interfaces/ISeize.sol";
+import { ITIP20BurnAt } from "src/v3/tempo/interfaces/ITIP20BurnAt.sol";
 
 contract TIP20ControllerTest is Test {
 
@@ -1573,6 +1578,363 @@ contract TIP20ControllerTest is Test {
                 stablecoinIsWrong,
                 invalidExpiry
             )
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Seize
+    //////////////////////////////////////////////////////////////////////////*/
+
+    uint256 constant SEIZE_HOLDER_BALANCE = 1000e6;
+
+    // Seize fixtures, populated by _setUpSeize
+    MockTIP20BurnAt seizableStablecoin;
+    address seizer;
+    address seizureWallet;
+    address frozenHolder;
+    uint64 transferPolicyId;
+    uint64 seizureWalletPolicyId;
+
+    /// @dev Issues SEIZE_HOLDER_BALANCE to `frozenHolder` through the controller (so the reserve
+    /// store holds matching reserve ledger tokens), freezes it under the coin's TIP-403 policy, and
+    /// grants every role monorail's setup grants. Uses a T12-style mock because the pinned
+    /// precompile has no `burnAt`.
+    function _setUpSeize() internal {
+        seizer = makeAddr("seizer");
+        seizureWallet = makeAddr("seizureWallet");
+        frozenHolder = makeAddr("frozenHolder");
+
+        ITIP403Registry registry = StdPrecompiles.TIP403_REGISTRY;
+        transferPolicyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        seizureWalletPolicyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
+
+        seizableStablecoin = new MockTIP20BurnAt(admin, transferPolicyId);
+        seizableStablecoin.grantRole(seizableStablecoin.ISSUER_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.BURN_AT_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.PAUSE_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.UNPAUSE_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.PAUSE_ROLE(), admin);
+
+        _allowMinter(address(seizableStablecoin), SEIZE_HOLDER_BALANCE);
+        vm.prank(minter);
+        controller.mint(address(seizableStablecoin), frozenHolder, SEIZE_HOLDER_BALANCE);
+        registry.modifyPolicyBlacklist(transferPolicyId, frozenHolder, true);
+
+        controller.grantRole(controller.SEIZER_ROLE(), seizer);
+        controller.setSeizureWalletPolicyId(seizureWalletPolicyId);
+    }
+
+    function _assertReserveBackingUnchanged() internal view {
+        address reserveStore = controller.getReserveStore(address(seizableStablecoin));
+        assertEq(reserveLedgerToken.totalSupply(), SEIZE_HOLDER_BALANCE, "rl total supply");
+        assertEq(
+            reserveLedgerToken.balanceOf(reserveStore), SEIZE_HOLDER_BALANCE, "rl in reserve store"
+        );
+    }
+
+    function test_seizerRole_constant() public view {
+        // Frozen literal: monorail detects an upgraded controller by calling SEIZER_ROLE().
+        assertEq(
+            controller.SEIZER_ROLE(),
+            0xe770a2b882b0a3a025be15ffce2d5d54f5d719264e701933268dd62f79db677f
+        );
+    }
+
+    function test_seize_seizerRoleIsEnumerable() public {
+        _setUpSeize();
+
+        bytes32 seizerRole = controller.SEIZER_ROLE();
+        assertEq(controller.getRoleMemberCount(seizerRole), 1);
+        assertEq(controller.getRoleMember(seizerRole, 0), seizer);
+    }
+
+    function test_seize_movesPartOfFrozenBalance() public {
+        _setUpSeize();
+
+        vm.expectEmit(true, true, true, true, address(seizableStablecoin));
+        emit MockTIP20BurnAt.BurnAt(address(controller), frozenHolder, 600e6);
+        vm.expectEmit(true, true, true, true, address(seizableStablecoin));
+        emit MockTIP20BurnAt.Mint(seizureWallet, 600e6);
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit ISeize.Seized(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6, seizer);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(seizableStablecoin.balanceOf(frozenHolder), 400e6, "holder");
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 600e6, "seizure wallet");
+        assertEq(seizableStablecoin.balanceOf(address(controller)), 0, "controller");
+        assertEq(seizableStablecoin.totalSupply(), 1000e6, "supply");
+        assertFalse(
+            StdPrecompiles.TIP403_REGISTRY.isAuthorized(transferPolicyId, frozenHolder),
+            "holder still frozen"
+        );
+        _assertReserveBackingUnchanged();
+    }
+
+    function test_seize_movesWholeFrozenBalance() public {
+        _setUpSeize();
+
+        vm.prank(seizer);
+        controller.seize(
+            address(seizableStablecoin), frozenHolder, seizureWallet, SEIZE_HOLDER_BALANCE
+        );
+
+        assertEq(seizableStablecoin.balanceOf(frozenHolder), 0, "holder");
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 1000e6, "seizure wallet");
+        assertEq(seizableStablecoin.totalSupply(), 1000e6, "supply");
+        _assertReserveBackingUnchanged();
+    }
+
+    function test_seize_pausedCoinEndsPaused() public {
+        _setUpSeize();
+        seizableStablecoin.pause();
+
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.unpause, ()), 1);
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.pause, ()), 1);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertTrue(seizableStablecoin.paused(), "re-paused");
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 600e6);
+    }
+
+    function test_seize_unpausedCoinIsNeverPaused() public {
+        _setUpSeize();
+
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.unpause, ()), 0);
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.pause, ()), 0);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertFalse(seizableStablecoin.paused());
+    }
+
+    function test_seize_neverMintsReserveLedgerTokens() public {
+        _setUpSeize();
+
+        vm.expectCall(address(reserveLedgerToken), abi.encodeWithSelector(ITIP20.mint.selector), 0);
+        vm.expectCall(address(reserveLedgerToken), abi.encodeWithSelector(ITIP20.burn.selector), 0);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        _assertReserveBackingUnchanged();
+    }
+
+    function test_seize_ignoresControllerStablecoinPause() public {
+        _setUpSeize();
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(seizableStablecoin), true);
+
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 600e6);
+        assertTrue(controller.stablecoinIsPaused(address(seizableStablecoin)));
+    }
+
+    function test_seize_doesNotTouchMintLimits() public {
+        _setUpSeize();
+        _allowMinter(address(seizableStablecoin), 500e6);
+
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(controller.getMinterAllowance(address(seizableStablecoin), minter), 500e6);
+        assertEq(controller.getStablecoinTxnMintLimit(address(seizableStablecoin)), 500e6);
+        assertEq(controller.getMinterAllowance(address(seizableStablecoin), seizer), 0);
+    }
+
+    function test_seize_revertWhenCallerLacksSeizerRole() public {
+        _setUpSeize();
+        bytes32 seizerRole = controller.SEIZER_ROLE();
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, seizerRole
+            )
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenPolicyNotSet() public {
+        _setUpSeize();
+        controller.setSeizureWalletPolicyId(0);
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.SeizeNotConfigured.selector, address(seizableStablecoin))
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenDestinationNotSeizureWallet() public {
+        _setUpSeize();
+
+        vm.prank(seizer);
+        vm.expectRevert(abi.encodeWithSelector(ISeize.DestinationNotSeizureWallet.selector, user2));
+        controller.seize(address(seizableStablecoin), frozenHolder, user2, 600e6);
+    }
+
+    function test_seize_revertWhenDestinationRemovedFromList() public {
+        _setUpSeize();
+        StdPrecompiles.TIP403_REGISTRY
+            .modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, false);
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.DestinationNotSeizureWallet.selector, seizureWallet)
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenHolderNotBlocked() public {
+        _setUpSeize();
+        StdPrecompiles.TIP403_REGISTRY.modifyPolicyBlacklist(transferPolicyId, frozenHolder, false);
+
+        vm.prank(seizer);
+        vm.expectRevert(abi.encodeWithSelector(ISeize.HolderNotBlocked.selector, frozenHolder));
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenAmountIsZeroOrAboveBalance() public {
+        _setUpSeize();
+
+        vm.startPrank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.InvalidSeizeAmount.selector, 0, SEIZE_HOLDER_BALANCE)
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISeize.InvalidSeizeAmount.selector, SEIZE_HOLDER_BALANCE + 1, SEIZE_HOLDER_BALANCE
+            )
+        );
+        controller.seize(
+            address(seizableStablecoin), frozenHolder, seizureWallet, SEIZE_HOLDER_BALANCE + 1
+        );
+        vm.stopPrank();
+    }
+
+    function test_seize_revertWhenDestinationIsHolderOrController() public {
+        _setUpSeize();
+
+        vm.startPrank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.InvalidSeizeDestination.selector, frozenHolder)
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, frozenHolder, 600e6);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.InvalidSeizeDestination.selector, address(controller))
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, address(controller), 600e6);
+        vm.stopPrank();
+    }
+
+    function test_seize_revertWhenPauseNotRestored() public {
+        _setUpSeize();
+        seizableStablecoin.pause();
+        vm.mockCall(address(seizableStablecoin), abi.encodeCall(ITIP20.pause, ()), "");
+
+        vm.prank(seizer);
+        vm.expectRevert(abi.encodeWithSelector(ISeize.PauseStateNotRestored.selector, true));
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenSeizureWalletNotAuthorizedByCoinPolicy() public {
+        _setUpSeize();
+        // The Seizure Wallet must also be allowed by the coin's own transfer policy, or the
+        // TIP-20 mint refuses it and nothing moves.
+        StdPrecompiles.TIP403_REGISTRY.modifyPolicyBlacklist(transferPolicyId, seizureWallet, true);
+
+        vm.prank(seizer);
+        vm.expectRevert(ITIP20.PolicyForbids.selector);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(seizableStablecoin.balanceOf(frozenHolder), SEIZE_HOLDER_BALANCE);
+    }
+
+    function test_seize_pinnedPrecompileHasNoBurnAt() public {
+        // Characterizes the toolchain gap behind MockTIP20BurnAt: the pinned Tempo Foundry
+        // precompile predates T12. When this starts failing, the toolchain supports burnAt and the
+        // seize tests can move to a real TIP-20.
+        (bool success,) = address(stablecoin).call(abi.encodeCall(ITIP20BurnAt.burnAt, (user1, 1)));
+        assertFalse(success);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Seizure Wallet Policy Setter
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_setSeizureWalletPolicyId_storesAndEmits() public {
+        uint64 policyId = StdPrecompiles.TIP403_REGISTRY
+        .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, policyId);
+        controller.setSeizureWalletPolicyId(policyId);
+
+        assertEq(controller.seizureWalletPolicyId(), policyId);
+    }
+
+    function test_setSeizureWalletPolicyId_zeroDisablesSeize() public {
+        _setUpSeize();
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, 0);
+        controller.setSeizureWalletPolicyId(0);
+
+        assertEq(controller.seizureWalletPolicyId(), 0);
+    }
+
+    function test_setSeizureWalletPolicyId_revertWhenNotAdmin() public {
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, bytes32(0)
+            )
+        );
+        controller.setSeizureWalletPolicyId(2);
+    }
+
+    function test_setSeizureWalletPolicyId_revertWhenPolicyUnusable() public {
+        ITIP403Registry registry = StdPrecompiles.TIP403_REGISTRY;
+        uint64 blacklistId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        uint64 listContainingController =
+            registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(listContainingController, address(controller), true);
+
+        // The always-allow built-in, a blacklist (authorizes everyone unlisted), and a whitelist
+        // that names the controller itself.
+        uint64[3] memory policyIds = [uint64(1), blacklistId, listContainingController];
+        for (uint256 i = 0; i < policyIds.length; i++) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    ISeize.InvalidSeizureWalletList.selector, address(registry), policyIds[i]
+                )
+            );
+            controller.setSeizureWalletPolicyId(policyIds[i]);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Storage Layout
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_seizureWalletPolicyId_storageSlotIsAppended() public {
+        uint64 policyId = StdPrecompiles.TIP403_REGISTRY
+        .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        controller.setSeizureWalletPolicyId(policyId);
+
+        // seizureWalletPolicyId is slot 6: minterAllowances 0, mintTxnLimits 1, reserveStores 2,
+        // mintIntentVersion 3, stablecoinIsPaused 4, mintIntentRegistry 5. Slot 5 still holds only
+        // the registry address, with nothing packed beside it.
+        assertEq(uint256(vm.load(address(controller), bytes32(uint256(6)))), policyId);
+        assertEq(
+            uint256(vm.load(address(controller), bytes32(uint256(5)))),
+            uint256(uint160(address(mintIntentRegistry))),
+            "mintIntentRegistry alone in slot 5"
         );
     }
 

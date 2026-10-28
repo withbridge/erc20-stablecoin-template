@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
+import { ISeize } from "../seize/interfaces/ISeize.sol";
 
 /// @title ITokenAuthority
 /// @author Bridge
@@ -9,7 +10,7 @@ import { IMintIntent } from "../mintIntent/interfaces/IMintIntent.sol";
 /// allowances for stablecoins
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITokenAuthority is IMintIntent {
+interface ITokenAuthority is IMintIntent, ISeize {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums
@@ -18,6 +19,30 @@ interface ITokenAuthority is IMintIntent {
     enum MintIntentVersion {
         Optional,
         Required
+    }
+
+    /// @notice How a seize moves a stablecoin's coins
+    /// @dev None means the stablecoin cannot be seized. ForceTransfer is for StablecoinTemplateV3,
+    /// whose reserve backing sits inside the coin and must not be burned. BurnAndRemint is for
+    /// StablecoinTemplateV2, which is not upgraded and so has no force transfer.
+    enum SeizeMode {
+        None,
+        ForceTransfer,
+        BurnAndRemint
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Structs
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice Per-stablecoin seize settings
+    /// @param mode How coins are moved
+    /// @param seizureWalletRegistry The registry holding the approved Seizure Wallet list
+    /// @param seizureWalletListId The list ID of approved Seizure Wallets within the registry
+    struct SeizeConfig {
+        SeizeMode mode;
+        address seizureWalletRegistry;
+        uint64 seizureWalletListId;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -75,6 +100,20 @@ interface ITokenAuthority is IMintIntent {
 
     /// @notice Thrown when the stablecoin is not paused
     error StablecoinNotPaused();
+
+    /// @notice Thrown when seize settings are cleared with a non-zero registry or list ID
+    error InvalidSeizeConfig();
+
+    /// @notice Thrown when a stablecoin does not expose the functions its seize mode drives, for
+    /// example a V2 coin set to ForceTransfer or a V3 coin set to BurnAndRemint
+    error SeizeModeMismatch(address stablecoinContract, SeizeMode mode);
+
+    /// @notice Thrown when a seize moves reserve ledger tokens into or out of the stablecoin or
+    /// this TokenAuthority. Should never happen.
+    error SeizeReserveBalanceChanged(address account, uint256 balanceBefore, uint256 balanceAfter);
+
+    /// @notice Thrown when a seize changes the reserve ledger's total supply. Should never happen.
+    error SeizeReserveSupplyChanged(uint256 totalSupplyBefore, uint256 totalSupplyAfter);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -184,6 +223,20 @@ interface ITokenAuthority is IMintIntent {
     /// @param isPaused Whether the stablecoin is paused
     event StablecoinPauseSet(
         address indexed sender, address indexed stablecoinContract, bool isPaused
+    );
+
+    /// @notice Emitted when a stablecoin's seize settings are set or cleared
+    /// @param sender The address that set the settings (must have DEFAULT_ADMIN_ROLE)
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param mode How coins are moved; None when the settings were cleared
+    /// @param seizureWalletRegistry The registry holding the Seizure Wallet list
+    /// @param seizureWalletListId The Seizure Wallet list ID
+    event SeizeConfigSet(
+        address indexed sender,
+        address indexed stablecoinContract,
+        SeizeMode mode,
+        address indexed seizureWalletRegistry,
+        uint64 seizureWalletListId
     );
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -383,6 +436,34 @@ interface ITokenAuthority is IMintIntent {
      * @param mintIntentVersion The new mint approval version
      */
     function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
+
+    /**
+     * @notice Sets or clears the seize settings for a stablecoin contract
+     * @dev Pass `SeizeMode.None` with a zero registry and list ID to clear. Otherwise the list must
+     * be usable (see {ISeize-InvalidSeizureWalletList}) and the stablecoin must expose the
+     * functions the mode drives (see {SeizeModeMismatch}), so a V3 coin must already be upgraded
+     * with `forceTransfer`.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param mode How coins are moved
+     * @param seizureWalletRegistry The registry holding the Seizure Wallet list
+     * @param seizureWalletListId The Seizure Wallet list ID
+     */
+    function setSeizeConfig(
+        address stablecoinContract,
+        SeizeMode mode,
+        address seizureWalletRegistry,
+        uint64 seizureWalletListId
+    ) external;
+
+    /**
+     * @notice Gets the seize settings for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return seizeConfig The settings; mode is None when the stablecoin cannot be seized
+     */
+    function getSeizeConfig(address stablecoinContract)
+        external
+        view
+        returns (SeizeConfig memory seizeConfig);
 
     /**
      * @notice Gets the token handler for a specific stablecoin contract
