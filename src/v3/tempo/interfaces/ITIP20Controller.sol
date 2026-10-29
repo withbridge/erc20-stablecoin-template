@@ -2,13 +2,14 @@
 pragma solidity ^0.8.24;
 
 import { IMintIntent } from "../../../mintIntent/interfaces/IMintIntent.sol";
+import { ISeize } from "../../../seize/interfaces/ISeize.sol";
 
 /// @title ITIP20Controller
 /// @notice Interface for the TIP20Controller contract which manages minting rate limits and
 /// allowances for stablecoins backed by a reserve ledger token
 /// @dev This contract enforces three types of limits: global cumulative limits, per-transaction
 /// limits, and per-minter allowances
-interface ITIP20Controller is IMintIntent {
+interface ITIP20Controller is IMintIntent, ISeize {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums
@@ -138,6 +139,11 @@ interface ITIP20Controller is IMintIntent {
         address indexed sender, address indexed stablecoinContract, bool isPaused
     );
 
+    /// @notice Emitted when the Seizure Wallet TIP-403 policy is set or cleared
+    /// @param sender The address that set the policy (must have DEFAULT_ADMIN_ROLE)
+    /// @param policyId The new Seizure Wallet policy ID; 0 disables seize
+    event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -202,6 +208,12 @@ interface ITIP20Controller is IMintIntent {
      * @notice Whether mint intents are optional or required for plain `mint`
      */
     function mintIntentVersion() external view returns (MintIntentVersion);
+
+    /**
+     * @notice The TIP-403 policy listing the approved Seizure Wallets for every stablecoin this
+     * controller seizes; 0 when seize is disabled
+     */
+    function seizureWalletPolicyId() external view returns (uint256);
 
     /**
      * @notice Whether minting/burning/wrapping/unwrapping is paused for a stablecoin
@@ -311,6 +323,14 @@ interface ITIP20Controller is IMintIntent {
      * @param mintIntentVersion The new mint approval version
      */
     function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
+
+    /**
+     * @notice Sets or clears the TIP-403 policy listing the approved Seizure Wallets
+     * @dev Pass 0 to disable seize. Any other policy must be usable (see
+     * {ISeize-InvalidSeizureWalletList}).
+     * @param policyId The Seizure Wallet policy ID
+     */
+    function setSeizureWalletPolicyId(uint64 policyId) external;
 
     /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract

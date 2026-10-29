@@ -17,6 +17,11 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
     using SafeERC20 for IERC20Mintable;
 
+    /// @notice Role that may move coins out of a blocked address. Granted by the admin only to the
+    /// TokenAuthority's force-transfer seize handler, which only the TokenAuthority can call after
+    /// it has checked the Seizure Wallet list.
+    bytes32 public constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
+
     IERC20Mintable public immutable RESERVE_LEDGER_ADDRESS;
 
     constructor(address _reserveLedgerAddress, address _authRegistry)
@@ -166,6 +171,44 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
 
         emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
+    }
+
+    /**
+     * @dev Moves `amount` from the blocked address `from` to `to`, past the freeze and pause
+     * checks that stop every other transfer.
+     *
+     * Used to seize a frozen holder's coins. The reserve ledger tokens backing them stay in this
+     * contract, so supply and backing are unchanged; a burn and re-mint would strand that backing
+     * instead. The destination list is checked by the caller, not here.
+     *
+     * Only the holder's freeze is bypassed: the temporary unblock flag would also let a blocked
+     * `to` receive, so `to` is checked explicitly first.
+     *
+     * Emits a {ForceTransferred} event.
+     *
+     * Requirements:
+     * - `from` must be blocked
+     * - `to` must not be blocked
+     * - `amount` must be greater than 0 and at most `from`'s balance
+     * - This function requires that the caller has the FORCE_TRANSFER_ROLE.
+     */
+    function forceTransfer(address from, address to, uint256 amount)
+        public
+        onlyRole(FORCE_TRANSFER_ROLE)
+    {
+        require(isBlocked(from), AddressIsNotBlocked());
+        require(!isBlocked(to), AddressBlocked());
+        require(amount > 0, AmountCannotBeZero());
+
+        // Both flags are transient and cleared straight after the move, so no other transfer in
+        // the same transaction can pass the freeze or pause checks.
+        StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(true);
+        StablecoinTemplateV3StorageLib.setTemporaryPauseBypassStatus(true);
+        _transfer(from, to, amount);
+        StablecoinTemplateV3StorageLib.setTemporaryPauseBypassStatus(false);
+        StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
+
+        emit ForceTransferred(amount, from, to, msg.sender);
     }
 
 }
