@@ -21,12 +21,8 @@ import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 import { IMintIntent, MintIntent } from "../mintIntent/MintIntent.sol";
 import { IMintIntentRegistry } from "../mintIntent/interfaces/IMintIntentRegistry.sol";
 import { Seize } from "../seize/Seize.sol";
-import {
-    IBurnAndRemintStablecoin,
-    IForceTransferStablecoin,
-    IReserveWrappedStablecoin,
-    ISeizableStablecoin
-} from "../seize/interfaces/ISeizableStablecoin.sol";
+import { ISeizableStablecoin } from "../seize/interfaces/ISeizableStablecoin.sol";
+import { ISeizeHandler } from "./seizeHandler/ISeizeHandler.sol";
 
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -45,7 +41,6 @@ contract TokenAuthority is
     using SafeERC20 for IERC20;
     using SafeERC20 for IERC20Mintable;
     using SafeERC20 for IWrappedERC20;
-    using SafeERC20 for IBurnAndRemintStablecoin;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Immutable Variables
@@ -69,22 +64,6 @@ contract TokenAuthority is
     bytes32 public constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
-
-    /// @dev Role IDs a stablecoin reports when it exposes each seize mode's functions. Read from
-    /// the stablecoin in {setSeizeConfig}; these are the stablecoins' roles, not this contract's.
-    bytes32 private constant STABLECOIN_FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
-    bytes32 private constant STABLECOIN_UNBLOCKER_ROLE = keccak256("UNBLOCKER_ROLE");
-
-    /*//////////////////////////////////////////////////////////////////////////
-                                    Structs
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /// @dev Reserve ledger balances and supply captured around a seize, compared after it.
-    struct ReserveSnapshot {
-        uint256 stablecoinReserveBalance;
-        uint256 tokenAuthorityReserveBalance;
-        uint256 reserveTotalSupply;
-    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -433,22 +412,23 @@ contract TokenAuthority is
 
     /**
      * @notice Sets or clears the seize settings for a stablecoin contract
-     * @dev Does not require the stablecoin to be registered with a token handler: seize never uses
-     * a handler, and registration is an issuance concern.
+     * @dev Mirrors {setTokenHandler}: the seize handler must implement {ISeizeHandler}. Does not
+     * require the stablecoin to be registered with a token handler: seize never uses one, and
+     * registration is an issuance concern.
      * @param stablecoinContract The address of the stablecoin contract
-     * @param mode How coins are moved; None clears the settings
+     * @param seizeHandler The seize handler that moves this stablecoin's coins; zero clears
      * @param seizureWalletRegistry The registry holding the Seizure Wallet list
      * @param seizureWalletListId The Seizure Wallet list ID
      */
     function setSeizeConfig(
         address stablecoinContract,
-        SeizeMode mode,
+        address seizeHandler,
         address seizureWalletRegistry,
         uint64 seizureWalletListId
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(stablecoinContract != address(0), ZeroAddress());
 
-        if (mode == SeizeMode.None) {
+        if (seizeHandler == address(0)) {
             // Clearing with leftover arguments is ambiguous, so it is refused rather than ignored.
             require(
                 seizureWalletRegistry == address(0) && seizureWalletListId == 0,
@@ -456,20 +436,20 @@ contract TokenAuthority is
             );
             delete seizeConfigs[stablecoinContract];
         } else {
-            _requireValidSeizureWalletList(seizureWalletRegistry, seizureWalletListId);
             require(
-                _stablecoinSupportsSeizeMode(stablecoinContract, mode),
-                SeizeModeMismatch(stablecoinContract, mode)
+                ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId),
+                InvalidSeizeHandler()
             );
+            _requireValidSeizureWalletList(seizureWalletRegistry, seizureWalletListId);
             seizeConfigs[stablecoinContract] = SeizeConfig({
-                mode: mode,
+                seizeHandler: seizeHandler,
                 seizureWalletRegistry: seizureWalletRegistry,
                 seizureWalletListId: seizureWalletListId
             });
         }
 
         emit SeizeConfigSet(
-            msg.sender, stablecoinContract, mode, seizureWalletRegistry, seizureWalletListId
+            msg.sender, stablecoinContract, seizeHandler, seizureWalletRegistry, seizureWalletListId
         );
     }
 
@@ -535,7 +515,8 @@ contract TokenAuthority is
     /**
      * @notice Gets the seize settings for a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
-     * @return seizeConfig The settings; mode is None when the stablecoin cannot be seized
+     * @return seizeConfig The settings; the seize handler is zero when the stablecoin cannot be
+     * seized
      */
     function getSeizeConfig(address stablecoinContract)
         public
@@ -603,14 +584,14 @@ contract TokenAuthority is
         returns (address registry, uint64 listId)
     {
         SeizeConfig memory seizeConfig = seizeConfigs[stablecoinContract];
-        require(seizeConfig.mode != SeizeMode.None, SeizeNotConfigured(stablecoinContract));
+        require(seizeConfig.seizeHandler != address(0), SeizeNotConfigured(stablecoinContract));
 
         return (seizeConfig.seizureWalletRegistry, seizeConfig.seizureWalletListId);
     }
 
     /// @inheritdoc Seize
-    /// @dev Checked here for both modes even though each coin re-checks it, so the rule holds
-    /// regardless of the coin's own implementation.
+    /// @dev Checked here for every seize handler even though each coin re-checks it, so the rule
+    /// holds regardless of the handler or the coin's own implementation.
     function _isHolderBlocked(address stablecoinContract, address holder)
         internal
         view
@@ -622,11 +603,9 @@ contract TokenAuthority is
 
     /**
      * @inheritdoc Seize
-     * @dev Also asserts the move left the reserve ledger untouched. {Seize} checks only the
-     * stablecoin's own balances and supply, and only this contract knows the reserve ledger. A
-     * coin whose burn releases backing would otherwise pass every stablecoin-level check: a V3
-     * coin's `burnFromBlockedAddress` pays its reserve ledger tokens to the caller, so burning and
-     * re-minting it leaves the re-minted coins unbacked.
+     * @dev A thin pass-through, like {_mint}: the stablecoin's seize handler moves the coins, and
+     * {Seize} enforces every rule around it. The handler is refused as a destination because it has
+     * no way to move coins on, so they would be stuck there.
      */
     function _executeSeize(
         address stablecoinContract,
@@ -635,156 +614,10 @@ contract TokenAuthority is
         uint256 amount,
         uint256 holderBalance
     ) internal override {
-        SeizeMode mode = seizeConfigs[stablecoinContract].mode;
-        ReserveSnapshot memory reserveBefore = _reserveSnapshot(stablecoinContract);
+        address seizeHandler = seizeConfigs[stablecoinContract].seizeHandler;
+        require(to != seizeHandler, InvalidSeizeDestination(to));
 
-        if (mode == SeizeMode.ForceTransfer) {
-            // The coin bypasses its own pause and freeze for this one move, and its reserve
-            // backing never leaves the coin.
-            IForceTransferStablecoin(stablecoinContract).forceTransfer(from, to, amount);
-        } else {
-            // _seizureWalletList already rejected None, so the only mode left is BurnAndRemint.
-            assert(mode == SeizeMode.BurnAndRemint);
-            _seizeByBurnAndRemint(
-                IBurnAndRemintStablecoin(stablecoinContract), from, to, amount, holderBalance
-            );
-        }
-
-        _requireReserveBackingUnchanged(stablecoinContract, reserveBefore);
-    }
-
-    function _reserveSnapshot(address stablecoinContract)
-        internal
-        view
-        returns (ReserveSnapshot memory)
-    {
-        IERC20 reserveLedger = IERC20(RESERVE_LEDGER_TOKEN);
-        return ReserveSnapshot({
-            stablecoinReserveBalance: reserveLedger.balanceOf(stablecoinContract),
-            tokenAuthorityReserveBalance: reserveLedger.balanceOf(address(this)),
-            reserveTotalSupply: reserveLedger.totalSupply()
-        });
-    }
-
-    function _requireReserveBackingUnchanged(
-        address stablecoinContract,
-        ReserveSnapshot memory reserveBefore
-    ) internal view {
-        ReserveSnapshot memory reserveAfter = _reserveSnapshot(stablecoinContract);
-        require(
-            reserveAfter.stablecoinReserveBalance == reserveBefore.stablecoinReserveBalance,
-            SeizeReserveBalanceChanged(
-                stablecoinContract,
-                reserveBefore.stablecoinReserveBalance,
-                reserveAfter.stablecoinReserveBalance
-            )
-        );
-        require(
-            reserveAfter.tokenAuthorityReserveBalance == reserveBefore.tokenAuthorityReserveBalance,
-            SeizeReserveBalanceChanged(
-                address(this),
-                reserveBefore.tokenAuthorityReserveBalance,
-                reserveAfter.tokenAuthorityReserveBalance
-            )
-        );
-        require(
-            reserveAfter.reserveTotalSupply == reserveBefore.reserveTotalSupply,
-            SeizeReserveSupplyChanged(
-                reserveBefore.reserveTotalSupply, reserveAfter.reserveTotalSupply
-            )
-        );
-    }
-
-    /**
-     * @notice Whether the stablecoin exposes the functions `mode` drives
-     * @dev Catches a stablecoin configured under the wrong standard when the settings are made,
-     * rather than at seize time:
-     * - ForceTransfer needs StablecoinTemplateV3's FORCE_TRANSFER_ROLE, which only coins
-     *   upgraded with `forceTransfer` report. A V2 coin, the reserve ledger, or a V3 coin that
-     *   has not been upgraded is refused.
-     * - BurnAndRemint needs StablecoinTemplateV2's UNBLOCKER_ROLE, and the coin must not hold its
-     *   own reserve backing (RESERVE_LEDGER_ADDRESS), because burning its balance would release
-     *   that backing.
-     * This is a configuration-time guard; {_requireReserveBackingUnchanged} is what enforces the
-     * backing invariant on every seize.
-     */
-    function _stablecoinSupportsSeizeMode(address stablecoinContract, SeizeMode mode)
-        internal
-        view
-        returns (bool)
-    {
-        if (mode == SeizeMode.ForceTransfer) {
-            (bool reportsForceTransferRole, bytes32 forceTransferRole) = _staticcallWord(
-                stablecoinContract, abi.encodeCall(IForceTransferStablecoin.FORCE_TRANSFER_ROLE, ())
-            );
-            return reportsForceTransferRole && forceTransferRole == STABLECOIN_FORCE_TRANSFER_ROLE;
-        }
-
-        (bool reportsUnblockerRole, bytes32 unblockerRole) = _staticcallWord(
-            stablecoinContract, abi.encodeCall(IBurnAndRemintStablecoin.UNBLOCKER_ROLE, ())
-        );
-        (bool holdsOwnReserve,) = _staticcallWord(
-            stablecoinContract, abi.encodeCall(IReserveWrappedStablecoin.RESERVE_LEDGER_ADDRESS, ())
-        );
-        return
-            reportsUnblockerRole && unblockerRole == STABLECOIN_UNBLOCKER_ROLE && !holdsOwnReserve;
-    }
-
-    /// @dev Calls a 32-byte view on `target`. A missing function, a revert, or an address without
-    /// code reads as unanswered instead of reverting, so absence can be tested.
-    function _staticcallWord(address target, bytes memory callData)
-        private
-        view
-        returns (bool answered, bytes32 word)
-    {
-        (bool success, bytes memory returnData) = target.staticcall(callData);
-        if (!success || returnData.length != 32) {
-            return (false, bytes32(0));
-        }
-        return (true, abi.decode(returnData, (bytes32)));
-    }
-
-    /**
-     * @notice Seizes from a StablecoinTemplateV2 coin, which can only burn a blocked holder's
-     * whole balance
-     * @dev Burns all of `holderBalance`, mints `amount` to `to`, then returns the unseized
-     * remainder by minting it to this contract and transferring it to `from`. A transfer is used
-     * instead of a mint to `from` because `from` is not a mint recipient, and only the coin's
-     * admin can make it one. `from` is unblocked only for that transfer, and only on the partial
-     * path.
-     *
-     * Direct mints here total exactly `holderBalance`, the amount just burned, so supply is
-     * unchanged. Nothing goes through a token handler, so no reserve ledger tokens are minted.
-     *
-     * The coin must be unpaused for its burn, mint, and transfer, so a paused coin is unpaused
-     * for the duration and re-paused before returning.
-     */
-    function _seizeByBurnAndRemint(
-        IBurnAndRemintStablecoin stablecoin,
-        address from,
-        address to,
-        uint256 amount,
-        uint256 holderBalance
-    ) internal {
-        bool wasPaused = stablecoin.paused();
-        if (wasPaused) {
-            stablecoin.unpause();
-        }
-
-        stablecoin.burnFromBlockedAddress(from);
-        stablecoin.mint(to, amount);
-
-        uint256 remainder = holderBalance - amount;
-        if (remainder > 0) {
-            stablecoin.mint(address(this), remainder);
-            stablecoin.unblockAddress(from);
-            stablecoin.safeTransfer(from, remainder);
-            stablecoin.blockAddress(from);
-        }
-
-        if (wasPaused) {
-            stablecoin.pause();
-        }
+        ISeizeHandler(seizeHandler).seize(stablecoinContract, from, to, amount, holderBalance);
     }
 
     /// @inheritdoc MintIntent

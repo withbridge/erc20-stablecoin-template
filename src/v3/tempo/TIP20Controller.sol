@@ -371,7 +371,7 @@ contract TIP20Controller is
 
     /**
      * @notice Sets or clears the TIP-403 policy listing the approved Seizure Wallets
-     * @dev 0 disables seize, mirroring `SeizeMode.None` on the TokenAuthority.
+     * @dev 0 disables seize, mirroring a zero seize handler on the TokenAuthority.
      * @param policyId The Seizure Wallet policy ID
      */
     function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {

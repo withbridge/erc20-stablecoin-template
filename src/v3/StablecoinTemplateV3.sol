@@ -17,8 +17,9 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
     using SafeERC20 for IERC20Mintable;
 
-    /// @notice Role that may move coins out of a blocked address. Granted by the admin only to
-    /// this stablecoin's TokenAuthority, which checks the Seizure Wallet list before calling.
+    /// @notice Role that may move coins out of a blocked address. Granted by the admin only to the
+    /// TokenAuthority's force-transfer seize handler, which only the TokenAuthority can call after
+    /// it has checked the Seizure Wallet list.
     bytes32 public constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
 
     IERC20Mintable public immutable RESERVE_LEDGER_ADDRESS;

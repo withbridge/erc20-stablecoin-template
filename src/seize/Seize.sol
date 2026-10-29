@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IPausableERC20 } from "./interfaces/IPausableERC20.sol";
 import { IPolicyRegistry } from "./interfaces/IPolicyRegistry.sol";
-import { IPausableERC20 } from "./interfaces/ISeizableStablecoin.sol";
 import { ISeize } from "./interfaces/ISeize.sol";
 import {
     AccessControlEnumerableUpgradeable

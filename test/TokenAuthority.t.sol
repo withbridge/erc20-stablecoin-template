@@ -13,14 +13,17 @@ import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
 import { Approval, OperationState } from "src/mintIntent/MintIntentStorage.sol";
 import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
 import { IMintIntentErrors } from "src/mintIntent/interfaces/IMintIntentErrors.sol";
-import {
-    IBurnAndRemintStablecoin,
-    IForceTransferStablecoin,
-    IReserveWrappedStablecoin
-} from "src/seize/interfaces/ISeizableStablecoin.sol";
+import { IBurnAndRemintStablecoin } from "src/seize/interfaces/IBurnAndRemintStablecoin.sol";
 import { ISeize } from "src/seize/interfaces/ISeize.sol";
 import { ITokenAuthority } from "src/tokenAuthority/ITokenAuthority.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import {
+    BurnAndRemintSeizeHandler
+} from "src/tokenAuthority/seizeHandler/BurnAndRemintSeizeHandler.sol";
+import {
+    ForceTransferSeizeHandler
+} from "src/tokenAuthority/seizeHandler/ForceTransferSeizeHandler.sol";
+import { ISeizeHandler } from "src/tokenAuthority/seizeHandler/ISeizeHandler.sol";
 
 import { AuthRegistry, IAuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 
@@ -84,6 +87,8 @@ contract TokenAuthorityTest is Test {
     ReserveLedgerWrappedHandler reserveLedgerWrappedHandler;
 
     // Seize fixtures, populated by _setUpSeize
+    ForceTransferSeizeHandler forceTransferSeizeHandler;
+    BurnAndRemintSeizeHandler burnAndRemintSeizeHandler;
     MockStablecoinTemplateV2 v2Stablecoin;
     address v2StablecoinAdmin;
     address seizer;
@@ -2147,12 +2152,15 @@ contract TokenAuthorityTest is Test {
 
     /// @dev Freezes `frozenHolder` holding SEIZE_HOLDER_BALANCE on both the V3 wrapped stablecoin
     /// (force transfer) and a V2 stablecoin behind the backed handler (burn and re-mint), with
-    /// every role and list entry monorail's setup grants.
+    /// every role and list entry each seize handler needs.
     function _setUpSeize() internal {
         seizer = makeAddr("seizer");
         seizureWallet = makeAddr("seizureWallet");
         frozenHolder = makeAddr("frozenHolder");
         v2StablecoinAdmin = makeAddr("v2StablecoinAdmin");
+
+        forceTransferSeizeHandler = new ForceTransferSeizeHandler(address(tokenAuthority));
+        burnAndRemintSeizeHandler = new BurnAndRemintSeizeHandler(address(tokenAuthority));
 
         vm.startPrank(bridgeAdmin);
         seizureWalletListId =
@@ -2160,10 +2168,10 @@ contract TokenAuthorityTest is Test {
         authRegistry.modifyPolicyWhitelist(seizureWalletListId, seizureWallet, true);
         vm.stopPrank();
 
-        // V3: the TokenAuthority holds FORCE_TRANSFER_ROLE; the holder is funded through the
-        // wrapped handler so its reserve backing sits inside the coin.
+        // V3: the force-transfer seize handler holds FORCE_TRANSFER_ROLE; the holder is funded
+        // through the wrapped token handler so its reserve backing sits inside the coin.
         vm.startPrank(wrappedStablecoinAdmin);
-        wrappedStablecoin.grantRole(FORCE_TRANSFER_ROLE, address(tokenAuthority));
+        wrappedStablecoin.grantRole(FORCE_TRANSFER_ROLE, address(forceTransferSeizeHandler));
         authRegistry.modifyPolicyWhitelist(
             wrappedStablecoin.getMintRecipientPolicyId(), frozenHolder, true
         );
@@ -2174,10 +2182,11 @@ contract TokenAuthorityTest is Test {
         vm.prank(wrappedStablecoinAdmin);
         authRegistry.modifyPolicyBlacklist(wrappedTransferPolicyId, frozenHolder, true);
 
-        // V2: registered behind the backed handler like the live V2 coins, so issuance puts
-        // reserve ledger tokens in a reserve store. The TokenAuthority gets the six V2 roles and
-        // both mint-recipient entries from monorail's prepare step.
+        // V2: registered behind the backed token handler like the live V2 coins, so issuance puts
+        // reserve ledger tokens in a reserve store. The burn-and-re-mint seize handler gets the six
+        // V2 roles and both mint-recipient entries.
         v2Stablecoin = new MockStablecoinTemplateV2("V2 Stablecoin", "V2SC", 6, v2StablecoinAdmin);
+        address burnAndRemint = address(burnAndRemintSeizeHandler);
         vm.startPrank(v2StablecoinAdmin);
         v2Stablecoin.increaseMaxSupply(1_000_000_000e6);
         v2Stablecoin.grantRole(MINTER_ROLE, address(reserveLedgerBackedHandler));
@@ -2185,14 +2194,14 @@ contract TokenAuthorityTest is Test {
         v2Stablecoin.grantRole(v2Stablecoin.UNBLOCKER_ROLE(), v2StablecoinAdmin);
         v2Stablecoin.grantRole(v2Stablecoin.PAUSER_ROLE(), v2StablecoinAdmin);
         v2Stablecoin.addMintRecipient(frozenHolder);
-        v2Stablecoin.grantRole(v2Stablecoin.BLOCKED_ADDRESS_BURNER_ROLE(), address(tokenAuthority));
-        v2Stablecoin.grantRole(MINTER_ROLE, address(tokenAuthority));
-        v2Stablecoin.grantRole(v2Stablecoin.UNBLOCKER_ROLE(), address(tokenAuthority));
-        v2Stablecoin.grantRole(v2Stablecoin.BLOCKER_ROLE(), address(tokenAuthority));
-        v2Stablecoin.grantRole(v2Stablecoin.PAUSER_ROLE(), address(tokenAuthority));
-        v2Stablecoin.grantRole(v2Stablecoin.UNPAUSER_ROLE(), address(tokenAuthority));
+        v2Stablecoin.grantRole(v2Stablecoin.BLOCKED_ADDRESS_BURNER_ROLE(), burnAndRemint);
+        v2Stablecoin.grantRole(MINTER_ROLE, burnAndRemint);
+        v2Stablecoin.grantRole(v2Stablecoin.UNBLOCKER_ROLE(), burnAndRemint);
+        v2Stablecoin.grantRole(v2Stablecoin.BLOCKER_ROLE(), burnAndRemint);
+        v2Stablecoin.grantRole(v2Stablecoin.PAUSER_ROLE(), burnAndRemint);
+        v2Stablecoin.grantRole(v2Stablecoin.UNPAUSER_ROLE(), burnAndRemint);
         v2Stablecoin.addMintRecipient(seizureWallet);
-        v2Stablecoin.addMintRecipient(address(tokenAuthority));
+        v2Stablecoin.addMintRecipient(burnAndRemint);
         vm.stopPrank();
 
         vm.startPrank(tokenAuthorityAdmin);
@@ -2210,15 +2219,12 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.grantRole(SEIZER_ROLE, seizer);
         tokenAuthority.setSeizeConfig(
             address(wrappedStablecoin),
-            ITokenAuthority.SeizeMode.ForceTransfer,
+            address(forceTransferSeizeHandler),
             address(authRegistry),
             seizureWalletListId
         );
         tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin),
-            ITokenAuthority.SeizeMode.BurnAndRemint,
-            address(authRegistry),
-            seizureWalletListId
+            address(v2Stablecoin), burnAndRemint, address(authRegistry), seizureWalletListId
         );
         vm.stopPrank();
     }
@@ -2237,7 +2243,7 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_seizerRole_constant() public view {
-        // Frozen literal: monorail grants and enumerates this role ID.
+        // Frozen literal: the role ID granted to each entity's Seize Authority vault.
         assertEq(
             tokenAuthority.SEIZER_ROLE(),
             0xe770a2b882b0a3a025be15ffce2d5d54f5d719264e701933268dd62f79db677f
@@ -2257,8 +2263,10 @@ contract TokenAuthorityTest is Test {
 
         vm.expectEmit(true, true, true, true, address(wrappedStablecoin));
         emit StablecoinTemplateV3ErrorsAndEvents.ForceTransferred(
-            600e6, frozenHolder, seizureWallet, address(tokenAuthority)
+            600e6, frozenHolder, seizureWallet, address(forceTransferSeizeHandler)
         );
+        vm.expectEmit(true, true, true, true, address(forceTransferSeizeHandler));
+        emit ISeizeHandler.Seized(address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6);
         vm.expectEmit(true, true, true, true, address(tokenAuthority));
         emit ISeize.Seized(address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6, seizer);
         vm.prank(seizer);
@@ -2267,6 +2275,9 @@ contract TokenAuthorityTest is Test {
         assertEq(wrappedStablecoin.balanceOf(frozenHolder), 400e6, "holder");
         assertEq(wrappedStablecoin.balanceOf(seizureWallet), 600e6, "seizure wallet");
         assertEq(wrappedStablecoin.balanceOf(address(tokenAuthority)), 0, "token authority");
+        assertEq(
+            wrappedStablecoin.balanceOf(address(forceTransferSeizeHandler)), 0, "seize handler"
+        );
         assertEq(wrappedStablecoin.totalSupply(), 1000e6, "supply");
         assertTrue(wrappedStablecoin.isBlocked(frozenHolder));
         _assertReserveBackingUnchanged();
@@ -2293,7 +2304,7 @@ contract TokenAuthorityTest is Test {
         wrappedStablecoin.pause();
         vm.stopPrank();
 
-        // The V3 coin bypasses its own pause, so the TokenAuthority needs no unpause role on it.
+        // The V3 coin bypasses its own pause, so the seize handler needs no unpause role on it.
         vm.expectCall(
             address(wrappedStablecoin),
             abi.encodeWithSelector(wrappedStablecoin.unpause.selector),
@@ -2306,28 +2317,46 @@ contract TokenAuthorityTest is Test {
         assertEq(wrappedStablecoin.balanceOf(seizureWallet), 600e6);
     }
 
+    function test_seize_forceTransfer_revertOnStablecoinWithoutForceTransfer() public {
+        _setUpSeize();
+        // A V2 coin wrongly given the force-transfer seize handler has no forceTransfer, so the
+        // seize reverts and nothing moves.
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizeConfig(
+            address(v2Stablecoin),
+            address(forceTransferSeizeHandler),
+            address(authRegistry),
+            seizureWalletListId
+        );
+
+        vm.prank(seizer);
+        vm.expectRevert();
+        tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(v2Stablecoin.balanceOf(frozenHolder), SEIZE_HOLDER_BALANCE);
+    }
+
     function test_seize_burnAndRemint_partialSeizeReturnsRemainderToHolder() public {
         _setUpSeize();
         address reserveStore = _v2ReserveStore();
+        address handler = address(burnAndRemintSeizeHandler);
 
-        // The exact on-chain sequence: whole-balance burn, seized mint, remainder mint to self,
-        // unblock, transfer back, re-block, then Seized.
+        // The exact on-chain sequence: whole-balance burn, seized mint, remainder mint to the
+        // handler, unblock, transfer back, re-block, then the handler and TokenAuthority events.
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.BurnedFromBlockedAddress(
-            1000e6, frozenHolder, address(tokenAuthority)
-        );
+        emit MockStablecoinTemplateV2.BurnedFromBlockedAddress(1000e6, frozenHolder, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.Minted(600e6, seizureWallet, address(tokenAuthority));
+        emit MockStablecoinTemplateV2.Minted(600e6, seizureWallet, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.Minted(
-            400e6, address(tokenAuthority), address(tokenAuthority)
-        );
+        emit MockStablecoinTemplateV2.Minted(400e6, handler, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.UnblockedAddress(frozenHolder, address(tokenAuthority));
+        emit MockStablecoinTemplateV2.UnblockedAddress(frozenHolder, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit IERC20.Transfer(address(tokenAuthority), frozenHolder, 400e6);
+        emit IERC20.Transfer(handler, frozenHolder, 400e6);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.BlockedAddress(frozenHolder, address(tokenAuthority));
+        emit MockStablecoinTemplateV2.BlockedAddress(frozenHolder, handler);
+        vm.expectEmit(true, true, true, true, handler);
+        emit ISeizeHandler.Seized(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
         vm.expectEmit(true, true, true, true, address(tokenAuthority));
         emit ISeize.Seized(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6, seizer);
         vm.prank(seizer);
@@ -2335,6 +2364,7 @@ contract TokenAuthorityTest is Test {
 
         assertEq(v2Stablecoin.balanceOf(frozenHolder), 400e6, "holder");
         assertEq(v2Stablecoin.balanceOf(seizureWallet), 600e6, "seizure wallet");
+        assertEq(v2Stablecoin.balanceOf(handler), 0, "seize handler");
         assertEq(v2Stablecoin.balanceOf(address(tokenAuthority)), 0, "token authority");
         assertEq(v2Stablecoin.totalSupply(), 1000e6, "supply");
         assertTrue(v2Stablecoin.isBlocked(frozenHolder), "holder re-blocked");
@@ -2404,12 +2434,12 @@ contract TokenAuthorityTest is Test {
         assertFalse(v2Stablecoin.paused());
     }
 
-    function test_seize_burnAndRemint_doesNotSweepStrayTokenAuthorityBalance() public {
+    function test_seize_burnAndRemint_doesNotSweepStraySeizeHandlerBalance() public {
         _setUpSeize();
-        // A minter sends coins to the TokenAuthority's address outside any seize.
+        // A minter sends coins to the seize handler's address outside any seize.
         vm.startPrank(v2StablecoinAdmin);
         v2Stablecoin.grantRole(MINTER_ROLE, v2StablecoinAdmin);
-        v2Stablecoin.mint(address(tokenAuthority), 50e6);
+        v2Stablecoin.mint(address(burnAndRemintSeizeHandler), 50e6);
         vm.stopPrank();
 
         vm.prank(seizer);
@@ -2417,7 +2447,11 @@ contract TokenAuthorityTest is Test {
         vm.prank(seizer);
         tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 400e6);
 
-        assertEq(v2Stablecoin.balanceOf(address(tokenAuthority)), 50e6, "stray balance untouched");
+        assertEq(
+            v2Stablecoin.balanceOf(address(burnAndRemintSeizeHandler)),
+            50e6,
+            "stray balance untouched"
+        );
         assertEq(v2Stablecoin.balanceOf(frozenHolder), 0, "holder");
         assertEq(v2Stablecoin.balanceOf(seizureWallet), 1000e6, "seizure wallet");
         assertEq(v2Stablecoin.totalSupply(), 1050e6, "supply");
@@ -2444,6 +2478,43 @@ contract TokenAuthorityTest is Test {
 
         assertTrue(v2Stablecoin.isBlocked(frozenHolder));
         assertTrue(v2Stablecoin.isBlocked(otherFrozenHolder));
+    }
+
+    function test_seize_burnAndRemint_revertWhenBurnReleasesReserveBacking() public {
+        _setUpSeize();
+        // A V3 coin wrongly given the burn-and-re-mint seize handler, with the handler holding V3
+        // burner and minter roles. V3's burnFromBlockedAddress pays the backing to the caller, so
+        // the handler would end up holding 1000e6 of reserve ledger tokens while 1000e6 re-minted
+        // coins sat unbacked. The handler's own balance check refuses it.
+        vm.startPrank(wrappedStablecoinAdmin);
+        wrappedStablecoin.grantRole(
+            wrappedStablecoin.BLOCKED_ADDRESS_BURNER_ROLE(), address(burnAndRemintSeizeHandler)
+        );
+        wrappedStablecoin.grantRole(MINTER_ROLE, address(burnAndRemintSeizeHandler));
+        authRegistry.modifyPolicyWhitelist(
+            wrappedStablecoin.getMintRecipientPolicyId(), seizureWallet, true
+        );
+        vm.stopPrank();
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizeConfig(
+            address(wrappedStablecoin),
+            address(burnAndRemintSeizeHandler),
+            address(authRegistry),
+            seizureWalletListId
+        );
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BurnAndRemintSeizeHandler.SeizeHandlerBalanceChanged.selector,
+                address(reserveLedgerToken),
+                0,
+                SEIZE_HOLDER_BALANCE
+            )
+        );
+        tokenAuthority.seize(
+            address(wrappedStablecoin), frozenHolder, seizureWallet, SEIZE_HOLDER_BALANCE
+        );
     }
 
     function test_seize_ignoresTokenAuthorityStablecoinPause() public {
@@ -2584,6 +2655,26 @@ contract TokenAuthorityTest is Test {
         vm.stopPrank();
     }
 
+    function test_seize_revertWhenDestinationIsSeizeHandler() public {
+        _setUpSeize();
+        // Even if the handler were wrongly added to the list, coins sent to it would be stuck.
+        vm.startPrank(bridgeAdmin);
+        authRegistry.modifyPolicyWhitelist(
+            seizureWalletListId, address(forceTransferSeizeHandler), true
+        );
+        vm.stopPrank();
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISeize.InvalidSeizeDestination.selector, address(forceTransferSeizeHandler)
+            )
+        );
+        tokenAuthority.seize(
+            address(wrappedStablecoin), frozenHolder, address(forceTransferSeizeHandler), 600e6
+        );
+    }
+
     function test_seize_revertWhenHolderLeftUnblocked() public {
         _setUpSeize();
         // A coin whose re-block silently does nothing must not leave the holder free.
@@ -2651,8 +2742,18 @@ contract TokenAuthorityTest is Test {
             abi.encodeWithSelector(StablecoinTemplateV3.forceTransfer.selector),
             0
         );
+        vm.expectCall(
+            address(burnAndRemintSeizeHandler),
+            abi.encodeWithSelector(ISeizeHandler.seize.selector),
+            0
+        );
+        vm.expectCall(
+            address(forceTransferSeizeHandler),
+            abi.encodeWithSelector(ISeizeHandler.seize.selector),
+            0
+        );
 
-        // V2 issuance still goes through the handler, never the TokenAuthority's direct mint.
+        // V2 issuance still goes through the token handler, never a seize handler.
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
         emit MockStablecoinTemplateV2.Minted(100e6, alice, address(reserveLedgerBackedHandler));
         vm.prank(minter);
@@ -2673,8 +2774,48 @@ contract TokenAuthorityTest is Test {
         assertEq(tokenAuthority.getStablecoinTxnMintLimit(address(v2Stablecoin)), 1_000_000e6);
         assertEq(tokenAuthority.getMinterAllowance(address(v2Stablecoin), seizer), 0);
         assertEq(
-            tokenAuthority.getMinterAllowance(address(v2Stablecoin), address(tokenAuthority)), 0
+            tokenAuthority.getMinterAllowance(
+                address(v2Stablecoin), address(burnAndRemintSeizeHandler)
+            ),
+            0
         );
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Seize Handlers
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_seizeHandlers_revertWhenNotTokenAuthority() public {
+        _setUpSeize();
+
+        vm.startPrank(seizer);
+        vm.expectRevert(ISeizeHandler.OnlyTokenAuthority.selector);
+        forceTransferSeizeHandler.seize(
+            address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6, SEIZE_HOLDER_BALANCE
+        );
+        vm.expectRevert(ISeizeHandler.OnlyTokenAuthority.selector);
+        burnAndRemintSeizeHandler.seize(
+            address(v2Stablecoin), frozenHolder, seizureWallet, 600e6, SEIZE_HOLDER_BALANCE
+        );
+        vm.stopPrank();
+    }
+
+    function test_seizeHandlers_revertWhenTokenAuthorityIsZero() public {
+        vm.expectRevert(ISeizeHandler.ZeroAddress.selector);
+        new ForceTransferSeizeHandler(address(0));
+    }
+
+    function test_seizeHandlers_constructorState() public {
+        _setUpSeize();
+
+        assertEq(forceTransferSeizeHandler.TOKEN_AUTHORITY(), address(tokenAuthority));
+        assertEq(burnAndRemintSeizeHandler.TOKEN_AUTHORITY(), address(tokenAuthority));
+        assertEq(burnAndRemintSeizeHandler.RESERVE_LEDGER_TOKEN(), address(reserveLedgerToken));
+        assertTrue(forceTransferSeizeHandler.supportsInterface(type(ISeizeHandler).interfaceId));
+        assertTrue(burnAndRemintSeizeHandler.supportsInterface(type(ISeizeHandler).interfaceId));
+        // A seize handler is not a token handler, and the reverse.
+        assertFalse(forceTransferSeizeHandler.supportsInterface(type(ITokenHandler).interfaceId));
+        assertFalse(singleTokenHandler.supportsInterface(type(ISeizeHandler).interfaceId));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -2688,44 +2829,38 @@ contract TokenAuthorityTest is Test {
         emit ITokenAuthority.SeizeConfigSet(
             tokenAuthorityAdmin,
             address(backedStablecoin),
-            ITokenAuthority.SeizeMode.ForceTransfer,
+            address(forceTransferSeizeHandler),
             address(authRegistry),
             seizureWalletListId
         );
         vm.prank(tokenAuthorityAdmin);
         tokenAuthority.setSeizeConfig(
             address(backedStablecoin),
-            ITokenAuthority.SeizeMode.ForceTransfer,
+            address(forceTransferSeizeHandler),
             address(authRegistry),
             seizureWalletListId
         );
 
         ITokenAuthority.SeizeConfig memory seizeConfig =
             tokenAuthority.getSeizeConfig(address(backedStablecoin));
-        assertEq(uint8(seizeConfig.mode), uint8(ITokenAuthority.SeizeMode.ForceTransfer));
+        assertEq(seizeConfig.seizeHandler, address(forceTransferSeizeHandler));
         assertEq(seizeConfig.seizureWalletRegistry, address(authRegistry));
         assertEq(seizeConfig.seizureWalletListId, seizureWalletListId);
     }
 
-    function test_setSeizeConfig_noneClearsSettings() public {
+    function test_setSeizeConfig_zeroHandlerClearsSettings() public {
         _setUpSeize();
 
         vm.expectEmit(true, true, true, true, address(tokenAuthority));
         emit ITokenAuthority.SeizeConfigSet(
-            tokenAuthorityAdmin,
-            address(v2Stablecoin),
-            ITokenAuthority.SeizeMode.None,
-            address(0),
-            0
+            tokenAuthorityAdmin, address(v2Stablecoin), address(0), address(0), 0
         );
         vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin), ITokenAuthority.SeizeMode.None, address(0), 0
-        );
+        tokenAuthority.setSeizeConfig(address(v2Stablecoin), address(0), address(0), 0);
 
         ITokenAuthority.SeizeConfig memory seizeConfig =
             tokenAuthority.getSeizeConfig(address(v2Stablecoin));
-        assertEq(uint8(seizeConfig.mode), uint8(ITokenAuthority.SeizeMode.None));
+        assertEq(seizeConfig.seizeHandler, address(0));
         assertEq(seizeConfig.seizureWalletRegistry, address(0));
         assertEq(seizeConfig.seizureWalletListId, 0);
 
@@ -2736,127 +2871,34 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
     }
 
-    function test_setSeizeConfig_revertWhenModeDoesNotMatchStablecoin() public {
+    function test_setSeizeConfig_revertWhenClearingWithLeftoverArguments() public {
         _setUpSeize();
 
-        // V2 has no forceTransfer; V3 holds its own backing and has no storage blocklist; the
-        // reserve ledger supports neither; an address without code answers nothing.
-        address[5] memory stablecoins = [
-            address(v2Stablecoin),
-            address(wrappedStablecoin),
-            address(reserveLedgerToken),
-            address(reserveLedgerToken),
-            alice
-        ];
-        ITokenAuthority.SeizeMode[5] memory modes = [
-            ITokenAuthority.SeizeMode.ForceTransfer,
-            ITokenAuthority.SeizeMode.BurnAndRemint,
-            ITokenAuthority.SeizeMode.ForceTransfer,
-            ITokenAuthority.SeizeMode.BurnAndRemint,
-            ITokenAuthority.SeizeMode.BurnAndRemint
-        ];
-
         vm.startPrank(tokenAuthorityAdmin);
-        for (uint256 i = 0; i < stablecoins.length; i++) {
-            vm.expectRevert(
-                abi.encodeWithSelector(
-                    ITokenAuthority.SeizeModeMismatch.selector, stablecoins[i], modes[i]
-                )
-            );
+        vm.expectRevert(ITokenAuthority.InvalidSeizeConfig.selector);
+        tokenAuthority.setSeizeConfig(address(v2Stablecoin), address(0), address(authRegistry), 0);
+        vm.expectRevert(ITokenAuthority.InvalidSeizeConfig.selector);
+        tokenAuthority.setSeizeConfig(
+            address(v2Stablecoin), address(0), address(0), seizureWalletListId
+        );
+        vm.stopPrank();
+    }
+
+    function test_setSeizeConfig_revertWhenSeizeHandlerIsInvalid() public {
+        _setUpSeize();
+
+        // An address without code, and a token handler, which is not a seize handler.
+        address[2] memory invalidSeizeHandlers = [alice, address(reserveLedgerBackedHandler)];
+        vm.startPrank(tokenAuthorityAdmin);
+        for (uint256 i = 0; i < invalidSeizeHandlers.length; i++) {
+            vm.expectRevert(ITokenAuthority.InvalidSeizeHandler.selector);
             tokenAuthority.setSeizeConfig(
-                stablecoins[i], modes[i], address(authRegistry), seizureWalletListId
+                address(v2Stablecoin),
+                invalidSeizeHandlers[i],
+                address(authRegistry),
+                seizureWalletListId
             );
         }
-        vm.stopPrank();
-    }
-
-    function test_setSeizeConfig_revertWhenV3NotYetUpgradedWithForceTransfer() public {
-        _setUpSeize();
-        // A V3 coin reports FORCE_TRANSFER_ROLE only once it runs the forceTransfer upgrade, so
-        // configure_ta_seize must wait for it. Simulated by making the role getter absent.
-        vm.mockCallRevert(
-            address(backedStablecoin),
-            abi.encodeCall(IForceTransferStablecoin.FORCE_TRANSFER_ROLE, ()),
-            ""
-        );
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ITokenAuthority.SeizeModeMismatch.selector,
-                address(backedStablecoin),
-                ITokenAuthority.SeizeMode.ForceTransfer
-            )
-        );
-        tokenAuthority.setSeizeConfig(
-            address(backedStablecoin),
-            ITokenAuthority.SeizeMode.ForceTransfer,
-            address(authRegistry),
-            seizureWalletListId
-        );
-    }
-
-    function test_seize_revertWhenBurnReleasesReserveBacking() public {
-        _setUpSeize();
-        // The misconfiguration the mode check exists for: a V3 coin set to BurnAndRemint while the
-        // TokenAuthority holds V3 burner and minter roles. V3's burnFromBlockedAddress pays the
-        // backing to the caller, so a whole-balance seize would pass every stablecoin-level check
-        // and leave 1000e6 re-minted coins unbacked. The mode check is mocked past to prove the
-        // reserve post-condition catches it on its own.
-        vm.startPrank(wrappedStablecoinAdmin);
-        wrappedStablecoin.grantRole(
-            wrappedStablecoin.BLOCKED_ADDRESS_BURNER_ROLE(), address(tokenAuthority)
-        );
-        wrappedStablecoin.grantRole(MINTER_ROLE, address(tokenAuthority));
-        authRegistry.modifyPolicyWhitelist(
-            wrappedStablecoin.getMintRecipientPolicyId(), seizureWallet, true
-        );
-        vm.stopPrank();
-        vm.mockCall(
-            address(wrappedStablecoin),
-            abi.encodeCall(IBurnAndRemintStablecoin.UNBLOCKER_ROLE, ()),
-            abi.encode(keccak256("UNBLOCKER_ROLE"))
-        );
-        vm.mockCallRevert(
-            address(wrappedStablecoin),
-            abi.encodeCall(IReserveWrappedStablecoin.RESERVE_LEDGER_ADDRESS, ()),
-            ""
-        );
-        vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setSeizeConfig(
-            address(wrappedStablecoin),
-            ITokenAuthority.SeizeMode.BurnAndRemint,
-            address(authRegistry),
-            seizureWalletListId
-        );
-        vm.clearMockedCalls();
-
-        vm.prank(seizer);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ITokenAuthority.SeizeReserveBalanceChanged.selector,
-                address(wrappedStablecoin),
-                SEIZE_HOLDER_BALANCE,
-                0
-            )
-        );
-        tokenAuthority.seize(
-            address(wrappedStablecoin), frozenHolder, seizureWallet, SEIZE_HOLDER_BALANCE
-        );
-    }
-
-    function test_setSeizeConfig_revertWhenNoneHasLeftoverArguments() public {
-        _setUpSeize();
-
-        vm.startPrank(tokenAuthorityAdmin);
-        vm.expectRevert(ITokenAuthority.InvalidSeizeConfig.selector);
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin), ITokenAuthority.SeizeMode.None, address(authRegistry), 0
-        );
-        vm.expectRevert(ITokenAuthority.InvalidSeizeConfig.selector);
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin), ITokenAuthority.SeizeMode.None, address(0), seizureWalletListId
-        );
         vm.stopPrank();
     }
 
@@ -2871,7 +2913,7 @@ contract TokenAuthorityTest is Test {
         );
         tokenAuthority.setSeizeConfig(
             address(v2Stablecoin),
-            ITokenAuthority.SeizeMode.BurnAndRemint,
+            address(burnAndRemintSeizeHandler),
             address(authRegistry),
             seizureWalletListId
         );
@@ -2884,7 +2926,7 @@ contract TokenAuthorityTest is Test {
         vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
         tokenAuthority.setSeizeConfig(
             address(0),
-            ITokenAuthority.SeizeMode.BurnAndRemint,
+            address(burnAndRemintSeizeHandler),
             address(authRegistry),
             seizureWalletListId
         );
@@ -2922,10 +2964,7 @@ contract TokenAuthorityTest is Test {
                 )
             );
             tokenAuthority.setSeizeConfig(
-                address(v2Stablecoin),
-                ITokenAuthority.SeizeMode.BurnAndRemint,
-                registries[i],
-                listIds[i]
+                address(v2Stablecoin), address(burnAndRemintSeizeHandler), registries[i], listIds[i]
             );
         }
         vm.stopPrank();
@@ -2939,12 +2978,18 @@ contract TokenAuthorityTest is Test {
         _setUpSeize();
 
         // seizeConfigs is slot 6: minterAllowances 0, mintTxnLimits 1, tokenHandlers 2,
-        // mintIntentVersion 3, stablecoinIsPaused 4, mintIntentRegistry 5. The struct packs
-        // mode (1 byte), registry (20 bytes), and list ID (8 bytes) into one word.
-        bytes32 seizeConfigSlot = keccak256(abi.encode(address(v2Stablecoin), uint256(6)));
-        uint256 expectedWord = uint256(uint8(ITokenAuthority.SeizeMode.BurnAndRemint))
-            | (uint256(uint160(address(authRegistry))) << 8) | (uint256(seizureWalletListId) << 168);
-        assertEq(uint256(vm.load(address(tokenAuthority), seizeConfigSlot)), expectedWord);
+        // mintIntentVersion 3, stablecoinIsPaused 4, mintIntentRegistry 5. Each SeizeConfig takes
+        // two words: the seize handler alone (two addresses don't fit one word), then the registry
+        // packed with the list ID.
+        uint256 seizeConfigSlot = uint256(keccak256(abi.encode(address(v2Stablecoin), uint256(6))));
+        assertEq(
+            uint256(vm.load(address(tokenAuthority), bytes32(seizeConfigSlot))),
+            uint256(uint160(address(burnAndRemintSeizeHandler)))
+        );
+        assertEq(
+            uint256(vm.load(address(tokenAuthority), bytes32(seizeConfigSlot + 1))),
+            uint256(uint160(address(authRegistry))) | (uint256(seizureWalletListId) << 160)
+        );
         assertEq(
             address(uint160(uint256(vm.load(address(tokenAuthority), bytes32(uint256(5)))))),
             address(mintIntentRegistry),

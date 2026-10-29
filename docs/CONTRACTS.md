@@ -107,7 +107,7 @@ mapping(address stablecoin => address handler) tokenHandlers;                   
 MintIntentVersion public mintIntentVersion;                                        // slot 3
 mapping(address stablecoin => bool) public stablecoinIsPaused;                     // slot 4
 IMintIntentRegistry public mintIntentRegistry;                                     // slot 5
-mapping(address stablecoin => SeizeConfig) seizeConfigs;                           // slot 6
+mapping(address stablecoin => SeizeConfig) seizeConfigs;                           // slot 6 (seize handler + list)
 ```
 
 Mint intent state is *not* stored here — it lives in the shared [`MintIntentRegistry`](#mintintentregistry). New variables must be appended, since this contract sits behind a UUPS proxy.
@@ -131,7 +131,7 @@ Mint intent state is *not* stored here — it lives in the shared [`MintIntentRe
 | `setMintIntentVersion(version)` | `DEFAULT_ADMIN_ROLE` | Make mint intents `Optional` or `Required` |
 | `setMintIntentRegistry(registry)` | `DEFAULT_ADMIN_ROLE` | Migrate to a different shared registry |
 | `seize(stablecoin, from, to, amount)` | `SEIZER_ROLE` | Seize from a frozen holder (see Seize below) |
-| `setSeizeConfig(stablecoin, mode, registry, listId)` | `DEFAULT_ADMIN_ROLE` | Set or clear (`mode = None`) a stablecoin's seize settings |
+| `setSeizeConfig(stablecoin, seizeHandler, registry, listId)` | `DEFAULT_ADMIN_ROLE` | Set or clear (zero seize handler) a stablecoin's seize settings |
 | `getSeizeConfig(stablecoin)` | Public | Read a stablecoin's seize settings |
 
 Intent lifecycle functions inherited from `MintIntent` — `publishApproval`, `revokeApproval`, `revokeOperationId`, `extendApproval` (all `PUBLISHER_ROLE`) and `getApproval` — forward to the shared registry.
@@ -149,7 +149,7 @@ event TxnMintLimitSet(address indexed sender, address indexed stablecoinContract
 event TokenHandlerSet(address indexed sender, address indexed stablecoinContract, address indexed tokenHandler);
 event StablecoinPauseSet(address indexed sender, address indexed stablecoinContract, bool isPaused);
 event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
-event SeizeConfigSet(address indexed sender, address indexed stablecoinContract, SeizeMode mode, address indexed seizureWalletRegistry, uint64 seizureWalletListId);
+event SeizeConfigSet(address indexed sender, address indexed stablecoinContract, address indexed seizeHandler, address seizureWalletRegistry, uint64 seizureWalletListId);
 event Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount, address caller);
 ```
 
@@ -165,36 +165,27 @@ Moves a frozen holder's coins into an approved Seizure Wallet without changing s
 3. `from` is frozen on the stablecoin.
 4. `0 < amount <= balanceOf(from)`.
 5. After the move, the base asserts: `from` lost exactly `amount`, `to` gained exactly `amount`, the controller's own balance and the stablecoin's `totalSupply` are unchanged, the pause state is restored, and `from` is still frozen.
-6. `TokenAuthority` also asserts that the reserve ledger is untouched: the reserve ledger balance held by the stablecoin, the balance held by the TokenAuthority, and the reserve ledger's `totalSupply`. Without this, a V3 coin wrongly set to `BurnAndRemint` would pass step 5 while its `burnFromBlockedAddress` paid the backing out to the TokenAuthority.
 
 It ignores the controller's own `setStablecoinPaused`, which halts issuance, not compliance actions. It never goes through a token handler or the reserve-minting path.
 
 **How coins move:**
 
-| Controller | Mode | Move |
+| Controller | Moved by | Move |
 |---|---|---|
-| `TokenAuthority` | `ForceTransfer` (V3) | `stablecoin.forceTransfer(from, to, amount)`. Reserve backing stays inside the coin. |
-| `TokenAuthority` | `BurnAndRemint` (V2) | Unpause if paused → `burnFromBlockedAddress(from)` → `mint(to, amount)`. On a partial seize: `mint(self, remainder)`, `unblockAddress(from)`, `transfer(from, remainder)`, `blockAddress(from)`. Then re-pause. |
-| `TIP20Controller` | — | Unpause if paused → `burnAt(from, amount)` → the coin's own `mint(to, amount)` → re-pause |
+| `TokenAuthority` | the stablecoin's **seize handler** (see below) | `TokenAuthority` stays a pass-through, like `mint`: it enforces the rules above and calls `seizeHandler.seize(...)` |
+| `TIP20Controller` | the controller itself | Unpause if paused → `burnAt(from, amount)` → the coin's own `mint(to, amount)` → re-pause |
 
-**Seizure Wallet list validation** (setters): the registry is non-zero, the list ID is not a built-in (`0` always-reject, `1` always-allow), and the list does not authorize the controller itself (this rejects allow-all and blacklist-type lists).
+On `TokenAuthority`, the seize handler is also refused as a destination, because it can't move coins on.
 
-**Mode validation** (`setSeizeConfig`): the stablecoin must expose the functions its mode drives, probed with `staticcall`:
+**Seizure Wallet list validation** (setters): the registry is non-zero, the list ID is not a built-in (`0` always-reject, `1` always-allow), and the list does not authorize the controller itself (this rejects allow-all and blacklist-type lists). `setSeizeConfig` also requires the seize handler to implement `ISeizeHandler` (ERC165), the same check `setTokenHandler` applies to token handlers.
 
-| Mode | Requires |
-|---|---|
-| `ForceTransfer` | `FORCE_TRANSFER_ROLE()` returns `keccak256("FORCE_TRANSFER_ROLE")`, so a V3 coin must already be upgraded with `forceTransfer` |
-| `BurnAndRemint` | `UNBLOCKER_ROLE()` returns `keccak256("UNBLOCKER_ROLE")` (V2's storage blocklist) **and** `RESERVE_LEDGER_ADDRESS()` does not answer (the coin doesn't hold its own backing) |
+**Roles each stablecoin grants for seize** (granted by the stablecoin's admin during setup, not by the upgrade):
 
-This catches a coin entered under the wrong standard when it is configured. The reserve post-condition (step 6) is what enforces backing on every seize.
-
-**Roles each controller must hold on its stablecoins** (granted by monorail's setup, not by the upgrade):
-
-| Stablecoin | Roles / lists |
-|---|---|
-| `StablecoinTemplateV3` | `FORCE_TRANSFER_ROLE` |
-| `StablecoinTemplateV2` | `BLOCKED_ADDRESS_BURNER_ROLE`, `MINTER_ROLE`, `UNBLOCKER_ROLE`, `BLOCKER_ROLE`, `PAUSER_ROLE`, `UNPAUSER_ROLE`; `addMintRecipient` for the Seizure Wallet and the TokenAuthority |
-| TIP-20 | `BURN_AT_ROLE` (T12+), `PAUSE_ROLE`, `UNPAUSE_ROLE`, plus the existing `ISSUER_ROLE`. The Seizure Wallet must be authorized under the coin's TIP-403 transfer policy, because TIP-20 `mint` checks the recipient. |
+| Stablecoin | Granted to | Roles / lists |
+|---|---|---|
+| `StablecoinTemplateV3` | `ForceTransferSeizeHandler` | `FORCE_TRANSFER_ROLE` |
+| `StablecoinTemplateV2` | `BurnAndRemintSeizeHandler` | `BLOCKED_ADDRESS_BURNER_ROLE`, `MINTER_ROLE`, `UNBLOCKER_ROLE`, `BLOCKER_ROLE`, `PAUSER_ROLE`, `UNPAUSER_ROLE`; `addMintRecipient` for the Seizure Wallet and the seize handler |
+| TIP-20 | `TIP20Controller` | `BURN_AT_ROLE` (T12+), `PAUSE_ROLE`, `UNPAUSE_ROLE`, plus the existing `ISSUER_ROLE`. The Seizure Wallet must be authorized under the coin's TIP-403 transfer policy, because TIP-20 `mint` checks the recipient. |
 
 **`TIP20Controller` additions:**
 
@@ -210,14 +201,16 @@ This catches a coin entered under the wrong standard when it is configured. The 
 |---|---|---|
 | Function | `seize(address,address,address,uint256)` | `0xacb82dec` |
 | Function | `SEIZER_ROLE()` | `0x421a40a7` (value `0xe770a2b882b0a3a025be15ffce2d5d54f5d719264e701933268dd62f79db677f`) |
-| Function | `setSeizeConfig(address,uint8,address,uint64)` | `0xaf924d5a` |
+| Function | `setSeizeConfig(address,address,address,uint64)` | `0xcc9544c9` |
 | Function | `getSeizeConfig(address)` | `0xc37f4761` |
 | Function | `setSeizureWalletPolicyId(uint64)` | `0x798953e0` |
 | Function | `seizureWalletPolicyId()` | `0xd51c6560` |
 | Function | `forceTransfer(address,address,uint256)` | `0x33bebb77` |
 | Function | `FORCE_TRANSFER_ROLE()` | `0xede3fc8c` (value `0xf03e19c53afadaa67869d28def12770ead62d3b7112af11002e6f2f27cd92391`) |
 | Event | `Seized(address,address,address,uint256,address)` | `0x61cfce727addc1ab55f91beabbd27489a8558f075cf83922e12818b77b8aa704` |
-| Event | `SeizeConfigSet(address,address,uint8,address,uint64)` | `0x0323ef3dc3c91734f7706e2e08dace3955ec1df53d95cb494f4be1bb953b25c3` |
+| Event | `SeizeConfigSet(address,address,address,address,uint64)` | `0xc37b38cd3126e8b69eb3f8dd58ec3eaf29cfee4b2e564cd52ee3806de2254ae6` |
+| Function (seize handler) | `seize(address,address,address,uint256,uint256)` | `0x17cde087` |
+| Event (seize handler) | `Seized(address,address,address,uint256)` | `0xa9aec5d8b86e2fa2fd6ac3af62f2622e3dfdab1967d4cbbb56a5df7d74cb887c` |
 | Event | `SeizureWalletPolicyIdSet(address,uint64)` | `0xb881fe19b6eeadc37f4e78a1cb1ade5fc5d0bb4e3f634d539c0807d370c28f38` |
 | Event | `ForceTransferred(uint256,address,address,address)` | `0x708057b4d5a5f38837968e955e789b952ce74d42c5eeeb4964b668fe6aaca057` |
 
@@ -364,6 +357,17 @@ mapping(address stablecoin => address reserveStore) public reserveStores;
 
 ---
 
+### Seize Handlers (`ISeizeHandler`)
+
+The seize counterpart of token handlers, in `src/tokenAuthority/seizeHandler/`. A token handler issues and redeems a stablecoin; a seize handler only moves a frozen holder's coins, using functions the stablecoin already has. They are separate from token handlers so that adding seize doesn't replace the deployed token handlers, which own the reserve stores of backed stablecoins. Seize never touches reserve ledger tokens, so seize handlers hold no state and can be swapped by pointing `setSeizeConfig` at a new one.
+
+| Contract | Stablecoins | Move |
+|---|---|---|
+| `ForceTransferSeizeHandler` | Hold their own backing (`StablecoinTemplateV3`, issued through `ReserveLedgerWrappedHandler`) | `stablecoin.forceTransfer(from, to, amount)`. Backing stays inside the coin. |
+| `BurnAndRemintSeizeHandler` | Backing in a reserve store (`StablecoinTemplateV2`, issued through `ReserveLedgerBackedHandler`) | Unpause if paused → `burnFromBlockedAddress(from)` → `mint(to, amount)`. On a partial seize: `mint(handler, remainder)`, `unblockAddress(from)`, `transfer(from, remainder)`, `blockAddress(from)`. Then re-pause. Reverts if its own stablecoin or reserve ledger balance changes, which also refuses a V3 coin wrongly given this handler (its burn would pay out backing). |
+
+Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`.
+
 ### ReserveStore
 
 Minimal contract holding reserve tokens for a single stablecoin.
@@ -424,10 +428,8 @@ Defined in `src/tokenAuthority/ITokenAuthority.sol`.
 | `0x37b3468f` | `PrecisionMismatch(uint256,uint256)` | Stablecoin decimals differ from the reserve ledger's |
 | `0xc41537d3` | `StablecoinPaused()` | Operation attempted on a paused stablecoin |
 | `0xc9fc8444` | `StablecoinNotPaused()` | Operation requires the stablecoin to be paused first |
-| `0xf042418c` | `InvalidSeizeConfig()` | `setSeizeConfig` with `mode = None` but a non-zero registry or list ID |
-| `0xd69b9324` | `SeizeModeMismatch(address,uint8)` | The stablecoin doesn't expose the functions the mode drives (e.g. V2 set to `ForceTransfer`, V3 set to `BurnAndRemint`, V3 not yet upgraded) |
-| `0x19e99d30` | `SeizeReserveBalanceChanged(address,uint256,uint256)` | Post-condition: reserve ledger tokens moved into or out of the stablecoin or the TokenAuthority during a seize. Should never happen |
-| `0x7763d19e` | `SeizeReserveSupplyChanged(uint256,uint256)` | Post-condition: the reserve ledger's total supply changed during a seize. Should never happen |
+| `0xf042418c` | `InvalidSeizeConfig()` | `setSeizeConfig` with a zero seize handler but a non-zero registry or list ID |
+| `0xaea894e7` | `InvalidSeizeHandler()` | Provided seize handler does not implement `ISeizeHandler` |
 
 ### Seize (`ISeize`)
 
@@ -477,6 +479,16 @@ Defined in `src/tokenAuthority/tokenHandler/`.
 | `0xd92e233d` | `ZeroAddress()` | `ITokenHandler` | A required address argument is the zero address |
 | `0xa0387940` | `NotSupported()` | `SingleTokenHandler` | `wrap`/`unwrap` invoked on a non-collateralized handler |
 | `0x522954b5` | `ReserveStoreNotFound()` | `ReserveLedgerBackedHandler` | No `ReserveStore` exists for the given stablecoin |
+
+### Seize Handlers (`ISeizeHandler` and implementations)
+
+Defined in `src/tokenAuthority/seizeHandler/`.
+
+| Selector | Error | Source | Meaning |
+|----------|-------|--------|---------|
+| `0xc3b27173` | `OnlyTokenAuthority()` | `ISeizeHandler` | Caller is not the configured `TOKEN_AUTHORITY` |
+| `0xd92e233d` | `ZeroAddress()` | `ISeizeHandler` | A required address argument is the zero address |
+| `0x4094e539` | `SeizeHandlerBalanceChanged(address,uint256,uint256)` | `BurnAndRemintSeizeHandler` | The handler's own balance of a token changed during a seize: the remainder wasn't fully returned, or the stablecoin paid out reserve backing. Should never happen |
 
 ### ReserveStore
 

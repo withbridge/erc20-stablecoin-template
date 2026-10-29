@@ -46,7 +46,6 @@ graph TB
     TA_DA --> SP
     TA_DA --> PUB
     TA_DA --> SZ
-    FT -.granted to.-> TA_DA
 
     MIR_DA --> CR
     CR -.granted to.-> TA_DA
@@ -108,7 +107,7 @@ Convert stablecoins back to reserve tokens.
 | Unwrap tokens | `unwrap(address, uint256)` |
 
 ### `FORCE_TRANSFER_ROLE`
-`StablecoinTemplateV3` only (not `ReserveLedger`). Grant it **only to the stablecoin's TokenAuthority**, which checks the Seizure Wallet list before calling. The coin cannot enforce who holds it, so the readiness check confirms `getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1`.
+`StablecoinTemplateV3` only (not `ReserveLedger`). Grant it **only to the TokenAuthority's `ForceTransferSeizeHandler`**, which only the TokenAuthority can call, after it has checked the Seizure Wallet list. The coin cannot enforce who holds it, so the readiness check confirms `getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1`.
 
 | Permission | Function |
 |------------|----------|
@@ -189,16 +188,16 @@ Configure token handlers.
 |------------|----------|
 | Seize from a frozen holder to a listed Seizure Wallet | `seize(address, address, address, uint256)` |
 
-Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizeConfig(address, SeizeMode, address, uint64)` on `TokenAuthority`, and `setSeizureWalletPolicyId(uint64)` on `TIP20Controller`.
+Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizeConfig(address, address, address, uint64)` (stablecoin, seize handler, registry, list ID) on `TokenAuthority`, and `setSeizureWalletPolicyId(uint64)` on `TIP20Controller`.
 
-### Roles the controllers hold on stablecoins for seize
+### Roles stablecoins grant for seize
 
-Granted by the stablecoin's admin during setup. They are used only inside `seize`; no other controller function calls them.
+Granted by the stablecoin's admin during setup. Seize handlers are called only by the TokenAuthority's `seize`; token handlers and the TokenAuthority never use these roles.
 
 | Stablecoin | Held by | Roles |
 |---|---|---|
-| `StablecoinTemplateV3` | TokenAuthority | `FORCE_TRANSFER_ROLE` |
-| `StablecoinTemplateV2` | TokenAuthority | `BLOCKED_ADDRESS_BURNER_ROLE`, `MINTER_ROLE`, `UNBLOCKER_ROLE`, `BLOCKER_ROLE`, `PAUSER_ROLE`, `UNPAUSER_ROLE`; mint recipient: the Seizure Wallet and the TokenAuthority |
+| `StablecoinTemplateV3` | `ForceTransferSeizeHandler` | `FORCE_TRANSFER_ROLE` |
+| `StablecoinTemplateV2` | `BurnAndRemintSeizeHandler` | `BLOCKED_ADDRESS_BURNER_ROLE`, `MINTER_ROLE`, `UNBLOCKER_ROLE`, `BLOCKER_ROLE`, `PAUSER_ROLE`, `UNPAUSER_ROLE`; mint recipient: the Seizure Wallet and the seize handler |
 | TIP-20 | TIP20Controller | `BURN_AT_ROLE`, `PAUSE_ROLE`, `UNPAUSE_ROLE` (plus the existing `ISSUER_ROLE`) |
 
 ## MintIntentRegistry Roles
