@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { Version } from "../Version.sol";
 import { StablecoinTemplateV3ErrorsAndEvents } from "./StablecoinTemplateV3ErrorsAndEvents.sol";
 
 import {
@@ -31,8 +32,8 @@ import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 /// @title StablecoinTemplateV3Base
 /// @author Bridge
 /// @notice Abstract base contract for stablecoin implementations with access control and
-/// pausability @dev Combines ERC20, permit, pausable, ownable, access control, and UUPS
-/// upgradeability
+/// pausability
+/// @dev Combines ERC20, permit, pausable, ownable, access control, and UUPS upgradeability
 abstract contract StablecoinTemplateV3Base is
     Initializable,
     ERC20Upgradeable,
@@ -41,7 +42,8 @@ abstract contract StablecoinTemplateV3Base is
     AccessControlEnumerableUpgradeable,
     ERC20PermitUpgradeable,
     UUPSUpgradeable,
-    StablecoinTemplateV3ErrorsAndEvents
+    StablecoinTemplateV3ErrorsAndEvents,
+    Version
 {
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
@@ -296,7 +298,7 @@ abstract contract StablecoinTemplateV3Base is
      *
      * Replaces _beforeTokenTransfer and _afterTokenTransfer, so add the relevant modifiers here.
      *
-     * - `from` and `to` must not be blocked.
+     * - `from` and `to` must not be blocked unless the token-wide temporary bypass is active.
      * - The contract must not be paused.
      */
     function _update(address from, address to, uint256 amount)

@@ -8,10 +8,9 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 
-import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
-import { Approval, OperationState } from "src/mintIntent/MintIntentStorage.sol";
-import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
-import { IMintIntentErrors } from "src/mintIntent/interfaces/IMintIntentErrors.sol";
+import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
+import { IIdempotencyKeyErrors } from "src/idempotency/interfaces/IIdempotencyKeyErrors.sol";
+import { IIdempotencyKeys } from "src/idempotency/interfaces/IIdempotencyKeys.sol";
 import { ITokenAuthority } from "src/tokenAuthority/ITokenAuthority.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 
@@ -48,7 +47,7 @@ contract TokenAuthorityTest is Test {
     bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
 
     TokenAuthority tokenAuthority;
-    MintIntentRegistry mintIntentRegistry;
+    IdempotencyKeyRegistry idempotencyKeyRegistry;
     ReserveLedger reserveLedgerToken;
     StablecoinTemplateV3 wrappedStablecoin;
     StablecoinTemplateV3 backedStablecoin;
@@ -56,7 +55,6 @@ contract TokenAuthorityTest is Test {
 
     address bridgeAdmin;
     address tokenAuthorityAdmin;
-    address tokenAuthorityPublisher;
     address reserveLedgerAdmin;
     address wrappedStablecoinAdmin;
     address backedStablecoinAdmin;
@@ -73,7 +71,6 @@ contract TokenAuthorityTest is Test {
     function setUp() public {
         bridgeAdmin = makeAddr("bridgeAdmin");
         tokenAuthorityAdmin = makeAddr("tokenAuthorityAdmin");
-        tokenAuthorityPublisher = makeAddr("tokenAuthorityPublisher");
         reserveLedgerAdmin = makeAddr("reserveLedgerAdmin");
         wrappedStablecoinAdmin = makeAddr("wrappedStablecoinAdmin");
         backedStablecoinAdmin = makeAddr("backedStablecoinAdmin");
@@ -182,17 +179,15 @@ contract TokenAuthorityTest is Test {
         ////////////////////////////////////////////////////////////////////////////////////////////
         // Deploy TokenAuthority
         ////////////////////////////////////////////////////////////////////////////////////////////
-        mintIntentRegistry = _deployMintIntentRegistry(tokenAuthorityAdmin);
+        idempotencyKeyRegistry = _deployIdempotencyKeyRegistry(tokenAuthorityAdmin);
 
         tokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
-        tokenAuthority.initialize(
-            tokenAuthorityAdmin, tokenAuthorityPublisher, address(mintIntentRegistry)
-        );
+        tokenAuthority.initialize(tokenAuthorityAdmin, address(idempotencyKeyRegistry));
 
-        // Authorize the TokenAuthority to publish and consume intents in the shared registry
-        bytes32 controllerRole = mintIntentRegistry.CONTROLLER_ROLE();
+        // Authorize the TokenAuthority to use keys in the shared registry
+        bytes32 controllerRole = idempotencyKeyRegistry.CONTROLLER_ROLE();
         vm.prank(tokenAuthorityAdmin);
-        mintIntentRegistry.grantRole(controllerRole, address(tokenAuthority));
+        idempotencyKeyRegistry.grantRole(controllerRole, address(tokenAuthority));
 
         ////////////////////////////////////////////////////////////////////////////////////////////
         // Deploy Token Handlers
@@ -274,16 +269,16 @@ contract TokenAuthorityTest is Test {
         vm.stopPrank();
     }
 
-    function _deployMintIntentRegistry(address registryAdmin)
+    function _deployIdempotencyKeyRegistry(address registryAdmin)
         internal
-        returns (MintIntentRegistry)
+        returns (IdempotencyKeyRegistry)
     {
-        MintIntentRegistry registryImplementation = new MintIntentRegistry(false);
-        return MintIntentRegistry(
+        IdempotencyKeyRegistry registryImplementation = new IdempotencyKeyRegistry(false);
+        return IdempotencyKeyRegistry(
             address(
                 new ERC1967Proxy(
                     address(registryImplementation),
-                    abi.encodeCall(MintIntentRegistry.initialize, (registryAdmin))
+                    abi.encodeCall(IdempotencyKeyRegistry.initialize, (registryAdmin))
                 )
             )
         );
@@ -435,8 +430,8 @@ contract TokenAuthorityTest is Test {
         );
     }
 
-    function test_burnWithOperationId_consumesUnusedOperationId() public {
-        uint256 operationId = 1;
+    function test_burn_withKeys_consumesKeys() public {
+        bytes32 key = keccak256("burn-key");
 
         vm.prank(minter);
         tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
@@ -446,647 +441,118 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         reserveLedgerToken.approve(address(tokenAuthority), 100e6);
-        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6, _keys(key));
 
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 1, operationId);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
+        );
+        tokenAuthority.burn(address(reserveLedgerToken), 1, _keys(key));
         vm.stopPrank();
 
+        assertFalse(idempotencyKeyRegistry.isFree(key));
         assertEq(reserveLedgerToken.balanceOf(tokenAuthorityAdmin), 0, "rl admin bal");
         assertEq(reserveLedgerToken.totalSupply(), 0, "rl total supply");
     }
 
-    function test_burnWithOperationId_revertWhenOperationIdReservedByMintApproval() public {
-        uint256 operationId = 2;
-        bytes32 holdId = keccak256("reserved-mint-approval");
+    function test_mint_withKeys_consumesKeysAndRejectsReuse() public {
+        bytes32 key = keccak256("mint-key");
+        bytes32 hold = keccak256("hold-key");
 
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.publishApproval(
-            IMintIntent.ApprovalParams({
-                operationId: operationId,
-                holdId: holdId,
-                amount: 100e6,
-                recipient: bob,
-                stablecoin: address(wrappedStablecoin)
-            }),
-            uint64(block.timestamp + 1 days)
+        vm.prank(minter);
+        vm.expectEmit(true, true, false, false, address(tokenAuthority));
+        emit IIdempotencyKeys.KeyUsed(minter, key);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6, _keys(key, hold));
+
+        assertEq(wrappedStablecoin.balanceOf(bob), 100e6, "bob wrappedStablecoin bal");
+        assertFalse(idempotencyKeyRegistry.isFree(key));
+        assertFalse(idempotencyKeyRegistry.isFree(hold));
+
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6, _keys(key));
     }
 
-    function test_burnWithOperationId_revertWhenOperationIdConsumedByMintApproval() public {
-        uint256 operationId = 6;
-        bytes32 holdId = keccak256("consumed-mint-approval");
-        IMintIntent.ApprovalParams memory params = IMintIntent.ApprovalParams({
-            operationId: operationId,
-            holdId: holdId,
-            amount: 100e6,
-            recipient: bob,
-            stablecoin: address(wrappedStablecoin)
-        });
-
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        Approval memory publishedApproval = tokenAuthority.getApproval(holdId);
-        assertEq(publishedApproval.operationId, operationId, "approval operation id");
+    function test_mint_withKeys_limitFailureDoesNotConsumeKeys() public {
+        bytes32 key = keccak256("limit-key");
 
         vm.prank(minter);
-        tokenAuthority.mintWithApproval(params);
+        vm.expectRevert(ITokenAuthority.MinterAllowanceExceeded.selector);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 1500e6, _keys(key));
 
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
+        assertTrue(idempotencyKeyRegistry.isFree(key), "failed mint must not spend the key");
     }
 
-    function test_publishApproval_revertWhenOperationIdConsumedByBurn() public {
-        uint256 operationId = 3;
+    function test_mint_and_burn_shareKeyNamespace() public {
+        bytes32 key = keccak256("shared-mint-burn");
 
         vm.prank(minter);
-        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6, _keys(key));
 
         vm.prank(alice);
         reserveLedgerToken.transfer(tokenAuthorityAdmin, 100e6);
 
         vm.startPrank(tokenAuthorityAdmin);
         reserveLedgerToken.approve(address(tokenAuthority), 100e6);
-        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
-        vm.stopPrank();
-
-        vm.prank(tokenAuthorityPublisher);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
-            )
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-        tokenAuthority.publishApproval(
-            IMintIntent.ApprovalParams({
-                operationId: operationId,
-                holdId: keccak256("burn-consumed-operation"),
-                amount: 100e6,
-                recipient: bob,
-                stablecoin: address(wrappedStablecoin)
-            }),
-            uint64(block.timestamp + 1 days)
-        );
-    }
-
-    function test_revokeOperationId_blocksBurnAndApproval() public {
-        uint256 operationId = 4;
-
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.revokeOperationId(operationId);
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
-            )
-        );
-        tokenAuthority.publishApproval(
-            IMintIntent.ApprovalParams({
-                operationId: operationId,
-                holdId: keccak256("revoked-operation"),
-                amount: 100e6,
-                recipient: bob,
-                stablecoin: address(wrappedStablecoin)
-            }),
-            uint64(block.timestamp + 1 days)
-        );
-    }
-
-    function test_revokeOperationId_revokesReservedMintApproval() public {
-        uint256 operationId = 5;
-        bytes32 holdId = keccak256("revoke-reserved-operation");
-        IMintIntent.ApprovalParams memory params = IMintIntent.ApprovalParams({
-            operationId: operationId,
-            holdId: holdId,
-            amount: 100e6,
-            recipient: bob,
-            stablecoin: address(wrappedStablecoin)
-        });
-
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        Approval memory publishedApproval = tokenAuthority.getApproval(holdId);
-        assertEq(publishedApproval.operationId, operationId, "approval operation id");
-
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.revokeOperationId(operationId);
-
-        Approval memory approval = tokenAuthority.getApproval(holdId);
-        assertEq(approval.flags, 2, "approval revoked");
-
-        vm.prank(minter);
-        vm.expectRevert(
-            abi.encodeWithSelector(IMintIntentErrors.InvalidApproval.selector, holdId, uint256(2))
-        );
-        tokenAuthority.mintWithApproval(params);
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
-    }
-
-    function test_revokeApproval_revokesOperationId() public {
-        uint256 operationId = 7;
-        bytes32 holdId = keccak256("revoke-approval-operation");
-
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.publishApproval(
-            IMintIntent.ApprovalParams({
-                operationId: operationId,
-                holdId: holdId,
-                amount: 100e6,
-                recipient: bob,
-                stablecoin: address(wrappedStablecoin)
-            }),
-            uint64(block.timestamp + 1 days)
-        );
-
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.revokeApproval(holdId);
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(address(wrappedStablecoin), 100e6, operationId);
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-    // Test mint intent functionality
-    ////////////////////////////////////////////////////////////////////////////////////////////
-
-    function test_initialize_grantsPublisherRole() public view {
-        assertTrue(tokenAuthority.hasRole(tokenAuthority.PUBLISHER_ROLE(), tokenAuthorityPublisher));
-    }
-
-    function test_publishRevokeExtend_revertWhenNotPublisher() public {
-        IMintIntent.ApprovalParams memory params = _approvalParams(10, keccak256("not-publisher"));
-
-        vm.startPrank(maliciousUser);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                maliciousUser,
-                tokenAuthority.PUBLISHER_ROLE()
-            )
-        );
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                maliciousUser,
-                tokenAuthority.PUBLISHER_ROLE()
-            )
-        );
-        tokenAuthority.revokeApproval(params.holdId);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                maliciousUser,
-                tokenAuthority.PUBLISHER_ROLE()
-            )
-        );
-        tokenAuthority.revokeOperationId(params.operationId);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                maliciousUser,
-                tokenAuthority.PUBLISHER_ROLE()
-            )
-        );
-        tokenAuthority.extendApproval(params.holdId, uint64(block.timestamp + 2 days));
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6, _keys(key));
         vm.stopPrank();
     }
 
-    function test_publishApproval_storesFieldsAndEmits() public {
-        uint256 operationId = 11;
-        bytes32 holdId = keccak256("publish-stores-fields");
-        uint64 expiry = uint64(block.timestamp + 1 days);
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit IMintIntent.ApprovalPublished(
-            tokenAuthorityPublisher,
-            operationId,
-            holdId,
-            address(wrappedStablecoin),
-            bob,
-            100e6,
-            expiry
-        );
-        tokenAuthority.publishApproval(params, expiry);
-
-        Approval memory approval = tokenAuthority.getApproval(holdId);
-        assertEq(approval.amount, params.amount, "approval amount");
-        assertEq(approval.recipient, params.recipient, "approval recipient");
-        assertEq(approval.stablecoin, params.stablecoin, "approval stablecoin");
-        assertEq(approval.expiry, expiry, "approval expiry");
-        assertEq(approval.flags, 0, "approval flags");
-        assertEq(approval.operationId, operationId, "approval operation id");
-    }
-
-    function test_publishApproval_rejectsInvalidInputsAndDuplicates() public {
-        vm.startPrank(tokenAuthorityPublisher);
-
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.publishApproval(
-            _approvalParams(0, keccak256("zero-operation")), uint64(block.timestamp + 1 days)
-        );
-
-        vm.expectRevert(IMintIntentErrors.InvalidHoldId.selector);
-        tokenAuthority.publishApproval(
-            _approvalParams(12, bytes32(0)), uint64(block.timestamp + 1 days)
-        );
-
-        IMintIntent.ApprovalParams memory params = _approvalParams(13, keccak256("invalid-publish"));
-
-        params.amount = 0;
-        vm.expectRevert(IMintIntentErrors.InvalidAmount.selector);
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        params = _approvalParams(14, keccak256("zero-stablecoin"));
-        params.stablecoin = address(0);
-        vm.expectRevert(IMintIntentErrors.InvalidStablecoin.selector);
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        params = _approvalParams(15, keccak256("zero-recipient"));
-        params.recipient = address(0);
-        vm.expectRevert(IMintIntentErrors.InvalidRecipient.selector);
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.expectRevert(IMintIntentErrors.InvalidExpiry.selector);
-        tokenAuthority.publishApproval(
-            _approvalParams(16, keccak256("expired-expiry")), uint64(block.timestamp)
-        );
-
-        params = _approvalParams(17, keccak256("duplicate-original"));
-        tokenAuthority.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(IMintIntentErrors.ApprovalExistsForOperationId.selector, 17)
-        );
-        tokenAuthority.publishApproval(
-            _approvalParams(17, keccak256("duplicate-operation")), uint64(block.timestamp + 1 days)
-        );
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForHoldId.selector, params.holdId
-            )
-        );
-        tokenAuthority.publishApproval(
-            _approvalParams(18, params.holdId), uint64(block.timestamp + 1 days)
-        );
-
-        vm.stopPrank();
-    }
-
-    function test_extendApproval_updatesExpiryAndEmits() public {
-        uint256 operationId = 19;
-        bytes32 holdId = keccak256("extend-success");
-        uint64 expiry = uint64(block.timestamp + 1 days);
-        uint64 newExpiry = uint64(block.timestamp + 2 days);
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
-        _publishApproval(params, expiry);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit IMintIntent.ApprovalExtended(tokenAuthorityPublisher, holdId, operationId, newExpiry);
-        tokenAuthority.extendApproval(holdId, newExpiry);
-
-        Approval memory approval = tokenAuthority.getApproval(holdId);
-        assertEq(approval.expiry, newExpiry, "approval expiry");
-        assertEq(approval.operationId, operationId, "approval operation id");
-    }
-
-    function test_extendApproval_rejectsSameOlderRevokedConsumedAndNonexistent() public {
-        uint64 expiry = uint64(block.timestamp + 1 days);
-        IMintIntent.ApprovalParams memory params = _approvalParams(20, keccak256("extend-invalid"));
-        _publishApproval(params, expiry);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExpiryNotExtended.selector, params.holdId, expiry, expiry
-            )
-        );
-        tokenAuthority.extendApproval(params.holdId, expiry);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExpiryNotExtended.selector,
-                params.holdId,
-                expiry - 1,
-                expiry
-            )
-        );
-        tokenAuthority.extendApproval(params.holdId, expiry - 1);
-
-        IMintIntent.ApprovalParams memory revoked = _approvalParams(21, keccak256("extend-revoked"));
-        _publishApproval(revoked, expiry);
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.revokeApproval(revoked.holdId);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, revoked.holdId, uint256(2)
-            )
-        );
-        tokenAuthority.extendApproval(revoked.holdId, expiry + 1);
-
-        IMintIntent.ApprovalParams memory consumed =
-            _approvalParams(22, keccak256("extend-consumed"));
-        _publishApproval(consumed, expiry);
-        vm.prank(minter);
-        tokenAuthority.mintWithApproval(consumed);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, consumed.holdId, uint256(1)
-            )
-        );
-        tokenAuthority.extendApproval(consumed.holdId, expiry + 1);
-
-        bytes32 missingHoldId = keccak256("extend-missing");
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalNotExistsForHoldId.selector, missingHoldId
-            )
-        );
-        tokenAuthority.extendApproval(missingHoldId, expiry + 1);
-    }
-
-    function test_mintWithApproval_consumesApprovalAndRejectsReuse() public {
-        uint256 operationId = 23;
-        bytes32 holdId = keccak256("mint-with-approval");
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
-        _publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.prank(minter);
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit IMintIntent.ApprovalConsumed(minter, operationId, holdId);
-        tokenAuthority.mintWithApproval(params);
-
-        Approval memory approval = tokenAuthority.getApproval(holdId);
-        assertEq(approval.flags, 1, "approval consumed");
-        assertEq(wrappedStablecoin.balanceOf(bob), 100e6, "recipient balance");
-        assertEq(
-            tokenAuthority.getMinterAllowance(address(wrappedStablecoin), minter),
-            900e6,
-            "minter allowance"
-        );
-
-        vm.prank(minter);
-        vm.expectRevert(
-            abi.encodeWithSelector(IMintIntentErrors.InvalidApproval.selector, holdId, uint256(1))
-        );
-        tokenAuthority.mintWithApproval(params);
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
-            )
-        );
-        tokenAuthority.publishApproval(
-            _approvalParams(operationId, keccak256("consumed-operation-republish")),
-            uint64(block.timestamp + 1 days)
-        );
-    }
-
-    function test_mintWithApproval_limitFailuresDoNotConsumeApproval() public {
-        IMintIntent.ApprovalParams memory allowanceParams =
-            _approvalParams(30, keccak256("approval-allowance-limit"));
-        _publishApproval(allowanceParams, uint64(block.timestamp + 1 days));
-
-        vm.prank(maliciousUser);
-        vm.expectRevert(ITokenAuthority.MinterAllowanceExceeded.selector);
-        tokenAuthority.mintWithApproval(allowanceParams);
-
-        Approval memory approval = tokenAuthority.getApproval(allowanceParams.holdId);
-        assertEq(approval.flags, 0, "arbitrary caller failure should not consume approval");
+    function test_mint_revertWhenKeyRetiredByAnotherController() public {
+        bytes32 key = keccak256("retire");
+        address otherController = makeAddr("otherController");
+        bytes32 controllerRole = idempotencyKeyRegistry.CONTROLLER_ROLE();
 
         vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setMinterAllowance(address(wrappedStablecoin), minter, 99e6);
+        idempotencyKeyRegistry.grantRole(controllerRole, otherController);
 
-        vm.prank(minter);
-        vm.expectRevert(ITokenAuthority.MinterAllowanceExceeded.selector);
-        tokenAuthority.mintWithApproval(allowanceParams);
+        vm.prank(otherController);
+        idempotencyKeyRegistry.useKeys(_keys(key));
 
-        approval = tokenAuthority.getApproval(allowanceParams.holdId);
-        assertEq(approval.flags, 0, "allowance failure should not consume approval");
-
-        vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setMinterAllowance(address(wrappedStablecoin), minter, 100e6);
-
-        vm.prank(minter);
-        tokenAuthority.mintWithApproval(allowanceParams);
-
-        IMintIntent.ApprovalParams memory txnLimitParams =
-            _approvalParams(31, keccak256("approval-txn-limit"));
-        _publishApproval(txnLimitParams, uint64(block.timestamp + 1 days));
-
-        vm.startPrank(tokenAuthorityAdmin);
-        tokenAuthority.setMinterAllowance(address(wrappedStablecoin), minter, 100e6);
-        tokenAuthority.setTxnMintLimit(address(wrappedStablecoin), 99e6);
-        vm.stopPrank();
-
-        vm.prank(minter);
-        vm.expectRevert(ITokenAuthority.MintTxnLimitExceeded.selector);
-        tokenAuthority.mintWithApproval(txnLimitParams);
-
-        approval = tokenAuthority.getApproval(txnLimitParams.holdId);
-        assertEq(approval.flags, 0, "txn limit failure should not consume approval");
-
-        vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setTxnMintLimit(address(wrappedStablecoin), 100e6);
-
-        vm.prank(minter);
-        tokenAuthority.mintWithApproval(txnLimitParams);
-    }
-
-    function test_mintWithApproval_invalidParamsReportExpectedBooleans() public {
-        IMintIntent.ApprovalParams memory params = _approvalParams(24, keccak256("invalid-params"));
-        _publishApproval(params, uint64(block.timestamp + 1 days));
-
-        IMintIntent.ApprovalParams memory invalid = params;
-        invalid.holdId = keccak256("wrong-hold");
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, true, true, true, true, true);
-        tokenAuthority.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.holdId = bytes32(0);
-        vm.prank(minter);
-        _expectInvalidApprovalParams(true, true, true, true, true, true);
-        tokenAuthority.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.operationId = 25;
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, true, false, false, false, false);
-        tokenAuthority.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.amount = 99e6;
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, true, false, false, false);
-        tokenAuthority.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.recipient = alice;
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, false, true, false, false);
-        tokenAuthority.mintWithApproval(invalid);
-
-        vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setMinterAllowance(address(backedStablecoin), minter, 100e6);
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.stablecoin = address(backedStablecoin);
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, false, false, true, false);
-        tokenAuthority.mintWithApproval(invalid);
-
-        IMintIntent.ApprovalParams memory expired =
-            _approvalParams(26, keccak256("expired-approval"));
-        _publishApproval(expired, uint64(block.timestamp + 1 days));
-        vm.warp(block.timestamp + 2 days);
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, false, false, false, true);
-        tokenAuthority.mintWithApproval(expired);
-    }
-
-    /// @dev The error params are deliberately flat rather than wrapped in a struct: off-chain
-    /// clients that stringify a decoded tuple render it as an opaque object instead of the
-    /// individual failures. A struct of six bools is a static tuple, so re-nesting them would
-    /// encode to the same bytes and only change the selector -- hence the selector assertion
-    /// below is what catches a regression, and the decode confirms the bools stay in order.
-    function test_mintWithApproval_invalidParamsRevertDataIsFlat() public {
-        IMintIntent.ApprovalParams memory params =
-            _approvalParams(28, keccak256("flat-revert-data"));
-        _publishApproval(params, uint64(block.timestamp + 1 days));
-
-        IMintIntent.ApprovalParams memory invalid = params;
-        invalid.amount = 99e6;
-
-        bytes memory callData = abi.encodeCall(TokenAuthority.mintWithApproval, (invalid));
-
-        vm.prank(minter);
-        (bool success, bytes memory revertData) = address(tokenAuthority).call(callData);
-
-        assertFalse(success, "call should revert");
-        assertEq(revertData.length, 4 + 6 * 32, "selector plus six words");
-        assertEq(
-            bytes4(revertData),
-            IMintIntentErrors.InvalidApprovalParams.selector,
-            "InvalidApprovalParams selector"
-        );
-        // Pinned so a struct-wrapped signature -- which encodes identically -- is caught here.
-        assertEq(
-            bytes4(revertData), bytes4(0xf474cfad), "flat InvalidApprovalParams(bool x6) selector"
-        );
-
-        bytes memory args = new bytes(revertData.length - 4);
-        for (uint256 i = 0; i < args.length; i++) {
-            args[i] = revertData[i + 4];
-        }
-
-        (
-            bool invalidHoldId,
-            bool invalidOperationId,
-            bool invalidAmount,
-            bool invalidRecipient,
-            bool stablecoinIsWrong,
-            bool invalidExpiry
-        ) = abi.decode(args, (bool, bool, bool, bool, bool, bool));
-
-        assertFalse(invalidHoldId, "hold ID valid");
-        assertFalse(invalidOperationId, "operation ID valid");
-        assertTrue(invalidAmount, "amount mismatch reported");
-        assertFalse(invalidRecipient, "recipient valid");
-        assertFalse(stablecoinIsWrong, "stablecoin valid");
-        assertFalse(invalidExpiry, "expiry valid");
-    }
-
-    function test_revokeApprovalAndOperationId_emitFieldsAndBlockReuse() public {
-        IMintIntent.ApprovalParams memory revokedApproval =
-            _approvalParams(27, keccak256("revoke-approval-fields"));
-        _publishApproval(revokedApproval, uint64(block.timestamp + 1 days));
-
-        vm.prank(tokenAuthorityPublisher);
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit IMintIntent.ApprovalRevoked(
-            tokenAuthorityPublisher, revokedApproval.holdId, revokedApproval.operationId
-        );
-        tokenAuthority.revokeApproval(revokedApproval.holdId);
+        assertFalse(idempotencyKeyRegistry.isFree(key));
 
         vm.prank(minter);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, revokedApproval.holdId, uint256(2)
-            )
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-        tokenAuthority.mintWithApproval(revokedApproval);
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(
-            address(wrappedStablecoin), 100e6, revokedApproval.operationId
-        );
-
-        IMintIntent.ApprovalParams memory revokedOperation =
-            _approvalParams(28, keccak256("revoke-operation-fields"));
-        _publishApproval(revokedOperation, uint64(block.timestamp + 1 days));
-
-        vm.startPrank(tokenAuthorityPublisher);
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit IMintIntent.ApprovalRevoked(
-            tokenAuthorityPublisher, revokedOperation.holdId, revokedOperation.operationId
-        );
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit IMintIntent.OperationIdRevoked(
-            tokenAuthorityPublisher, revokedOperation.operationId, revokedOperation.holdId
-        );
-        tokenAuthority.revokeOperationId(revokedOperation.operationId);
-        vm.stopPrank();
-
-        vm.prank(minter);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, revokedOperation.holdId, uint256(2)
-            )
-        );
-        tokenAuthority.mintWithApproval(revokedOperation);
-
-        vm.prank(tokenAuthorityAdmin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        tokenAuthority.burnWithOperationId(
-            address(wrappedStablecoin), 100e6, revokedOperation.operationId
-        );
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6, _keys(key));
     }
 
-    function test_setMintIntentVersion_requiredGatesPlainMintButAllowsApprovalMint() public {
-        IMintIntent.ApprovalParams memory params =
-            _approvalParams(29, keccak256("required-version"));
-        _publishApproval(params, uint64(block.timestamp + 1 days));
+    function test_mint_withKeys_emptyAllowedWhenOptionalSkipsRegistry() public {
+        bytes32 controllerRole = idempotencyKeyRegistry.CONTROLLER_ROLE();
+        vm.prank(tokenAuthorityAdmin);
+        idempotencyKeyRegistry.revokeRole(controllerRole, address(tokenAuthority));
 
+        vm.prank(minter);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6, new bytes32[](0));
+
+        assertEq(wrappedStablecoin.balanceOf(bob), 100e6);
+        assertEq(tokenAuthority.getMinterAllowance(address(wrappedStablecoin), minter), 900e6);
+    }
+
+    function test_mint_withoutKeys_revertWhenRequired() public {
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setIdempotencyKeysVersion(ITokenAuthority.IdempotencyKeysVersion.Required);
+
+        vm.prank(minter);
+        vm.expectRevert(ITokenAuthority.IdempotencyKeysRequired.selector);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6);
+
+        assertEq(wrappedStablecoin.balanceOf(bob), 0);
+        assertEq(tokenAuthority.getMinterAllowance(address(wrappedStablecoin), minter), 1000e6);
+    }
+
+    function test_burn_withKeys_revertWhenEmpty() public {
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(IIdempotencyKeyErrors.InvalidIdempotencyKeys.selector);
+        tokenAuthority.burn(address(reserveLedgerToken), 1, new bytes32[](0));
+    }
+
+    function test_setIdempotencyKeysVersion_requiredGatesEmptyKeyMint() public {
         vm.prank(maliciousUser);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1095,27 +561,30 @@ contract TokenAuthorityTest is Test {
                 DEFAULT_ADMIN_ROLE
             )
         );
-        tokenAuthority.setMintIntentVersion(ITokenAuthority.MintIntentVersion.Required);
+        tokenAuthority.setIdempotencyKeysVersion(ITokenAuthority.IdempotencyKeysVersion.Required);
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectEmit(true, false, false, true, address(tokenAuthority));
-        emit ITokenAuthority.MintIntentVersionSet(
-            tokenAuthorityAdmin, ITokenAuthority.MintIntentVersion.Required
+        emit ITokenAuthority.IdempotencyKeysVersionSet(
+            tokenAuthorityAdmin, ITokenAuthority.IdempotencyKeysVersion.Required
         );
-        tokenAuthority.setMintIntentVersion(ITokenAuthority.MintIntentVersion.Required);
+        tokenAuthority.setIdempotencyKeysVersion(ITokenAuthority.IdempotencyKeysVersion.Required);
 
         vm.prank(minter);
-        vm.expectRevert(ITokenAuthority.MintIntentRequired.selector);
-        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6);
+        vm.expectRevert(ITokenAuthority.IdempotencyKeysRequired.selector);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6, new bytes32[](0));
+
+        bytes32 key = keccak256("required-ok");
+        vm.prank(minter);
+        tokenAuthority.mint(address(wrappedStablecoin), bob, 100e6, _keys(key));
 
         vm.prank(tokenAuthorityAdmin);
         tokenAuthority.mintBridgeEcosystem(address(reserveLedgerToken), alice, 1);
 
-        vm.prank(minter);
-        tokenAuthority.mintWithApproval(params);
-
-        assertEq(wrappedStablecoin.balanceOf(bob), 100e6, "approval mint balance");
+        assertEq(wrappedStablecoin.balanceOf(bob), 100e6, "keyed mint balance");
+        assertEq(tokenAuthority.getMinterAllowance(address(wrappedStablecoin), minter), 900e6);
         assertEq(reserveLedgerToken.balanceOf(alice), 1, "bridge ecosystem mint balance");
+        assertFalse(idempotencyKeyRegistry.isFree(key));
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -1303,27 +772,25 @@ contract TokenAuthorityTest is Test {
 
     function test_tokenAuthorityInitialize() public {
         TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
-        newTokenAuthority.initialize(
-            bridgeAdmin, tokenAuthorityPublisher, address(mintIntentRegistry)
-        );
+        newTokenAuthority.initialize(bridgeAdmin, address(idempotencyKeyRegistry));
         bool adminHasRole = newTokenAuthority.hasRole(DEFAULT_ADMIN_ROLE, bridgeAdmin);
 
         assert(adminHasRole);
-        assertEq(address(newTokenAuthority.mintIntentRegistry()), address(mintIntentRegistry));
+        assertEq(
+            address(newTokenAuthority.idempotencyKeyRegistry()), address(idempotencyKeyRegistry)
+        );
     }
 
     function test_tokenAuthorityInitialize_revertWhenDisabled() public {
         TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
         vm.expectRevert(InvalidInitialization.selector);
-        newTokenAuthority.initialize(
-            bridgeAdmin, tokenAuthorityPublisher, address(mintIntentRegistry)
-        );
+        newTokenAuthority.initialize(bridgeAdmin, address(idempotencyKeyRegistry));
     }
 
     function test_tokenAuthorityInitialize_revertWhenRegistryIsZero() public {
         TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
-        vm.expectRevert(IMintIntentErrors.InvalidRegistry.selector);
-        newTokenAuthority.initialize(bridgeAdmin, tokenAuthorityPublisher, address(0));
+        vm.expectRevert(IIdempotencyKeyErrors.InvalidRegistry.selector);
+        newTokenAuthority.initialize(bridgeAdmin, address(0));
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -1339,7 +806,8 @@ contract TokenAuthorityTest is Test {
     function test_mint_revertWhenMinterAllowanceExceeded() public {
         vm.prank(minter);
         vm.expectRevert(ITokenAuthority.MinterAllowanceExceeded.selector);
-        tokenAuthority.mint(address(reserveLedgerToken), alice, 500e6); // allowance is 250e6
+        tokenAuthority.mint(address(reserveLedgerToken), alice, 500e6); // allowance
+        // is 250e6
     }
 
     function test_mint_revertWhenMintTxnLimitExceeded() public {
@@ -1430,11 +898,8 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.burn(address(reserveLedgerToken), 100e6);
     }
 
-    /// @dev burnWithOperationId is the only external path into consumeUnusedOperationId, which
-    /// retires an operation ID for every controller sharing the registry. Asserts the role gate
-    /// holds and that a rejected call leaves the ID claimable.
-    function test_burnWithOperationId_revertWhenNotBurnerRole() public {
-        uint256 operationId = 4242;
+    function test_burn_withKeys_revertWhenNotBurnerRole() public {
+        bytes32 key = keccak256("burn-role");
 
         vm.prank(minter);
         tokenAuthority.mint(address(reserveLedgerToken), alice, 100e6);
@@ -1448,13 +913,9 @@ contract TokenAuthorityTest is Test {
                 IAccessControl.AccessControlUnauthorizedAccount.selector, alice, BURNER_ROLE
             )
         );
-        tokenAuthority.burnWithOperationId(address(reserveLedgerToken), 100e6, operationId);
+        tokenAuthority.burn(address(reserveLedgerToken), 100e6, _keys(key));
 
-        assertEq(
-            uint256(mintIntentRegistry.getOperationState(operationId)),
-            uint256(OperationState.UNUSED),
-            "a rejected burn must not retire the operation ID"
-        );
+        assertTrue(idempotencyKeyRegistry.isFree(key), "a rejected burn must not retire the key");
     }
 
     function test_burn_revertWhenTokenHandlerNotSet() public {
@@ -1501,6 +962,12 @@ contract TokenAuthorityTest is Test {
         vm.prank(alice);
         vm.expectRevert(ITokenAuthority.AmountCannotBeZero.selector);
         tokenAuthority.wrap(address(wrappedStablecoin), bob, 0);
+    }
+
+    function test_wrap_revertWhenRecipientIsZero() public {
+        vm.prank(alice);
+        vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
+        tokenAuthority.wrap(address(wrappedStablecoin), address(0), 50e6);
     }
 
     function test_wrap_revertWhenTokenHandlerNotSet() public {
@@ -1604,6 +1071,20 @@ contract TokenAuthorityTest is Test {
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.InvalidTokenHandler.selector);
         tokenAuthority.setTokenHandler(address(wrappedStablecoin), newHandler);
+    }
+
+    function test_setTokenHandler_revertWhenTokenHandlerIsZero() public {
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.setStablecoinPaused(address(wrappedStablecoin), true);
+
+        vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
+        tokenAuthority.setTokenHandler(address(wrappedStablecoin), address(0));
+        vm.stopPrank();
+
+        assertEq(
+            tokenAuthority.getTokenHandler(address(wrappedStablecoin)),
+            address(reserveLedgerWrappedHandler)
+        );
     }
 
     function test_setTokenHandler_revertWhenNotPaused() public {
@@ -1756,6 +1237,10 @@ contract TokenAuthorityTest is Test {
 
     function test_registerStablecoin() public {
         address newStablecoin = makeAddr("newStablecoin");
+        address handlerSetter = makeAddr("handlerSetter");
+
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, handlerSetter);
 
         vm.mockCall(
             address(reserveLedgerToken),
@@ -1769,10 +1254,10 @@ contract TokenAuthorityTest is Test {
             abi.encode(uint256(6))
         );
 
-        vm.prank(tokenAuthorityAdmin);
+        vm.prank(handlerSetter);
         vm.expectEmit(true, true, false, true, address(tokenAuthority));
         emit ITokenAuthority.StablecoinRegistered(
-            tokenAuthorityAdmin, newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
+            handlerSetter, newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
         );
         tokenAuthority.registerStablecoin(
             newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
@@ -1781,18 +1266,18 @@ contract TokenAuthorityTest is Test {
         assertEq(tokenAuthority.getStablecoinTxnMintLimit(newStablecoin), 1_000_000e6);
     }
 
-    function test_registerStablecoin_revertWhenNotDefaultAdmin() public {
-        address handlerSetter = makeAddr("handlerSetter");
+    function test_registerStablecoin_revertWhenNotTokenAuthorityHandlerSetterRole() public {
+        address adminOnly = makeAddr("adminOnly");
 
         vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, handlerSetter);
+        tokenAuthority.grantRole(DEFAULT_ADMIN_ROLE, adminOnly);
 
-        vm.prank(handlerSetter);
+        vm.prank(adminOnly);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
-                handlerSetter,
-                DEFAULT_ADMIN_ROLE
+                adminOnly,
+                TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
             )
         );
         tokenAuthority.registerStablecoin(
@@ -1830,6 +1315,99 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.registerStablecoin(
             address(wrappedStablecoin), address(reserveLedgerWrappedHandler), 1_000_000e6
         );
+    }
+
+    function test_registerStablecoin_revertWhenTokenHandlerIsZero() public {
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+
+        vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
+        tokenAuthority.registerStablecoin(address(wrappedStablecoin), address(0), 1_000_000e6);
+        vm.stopPrank();
+    }
+
+    function test_registerStablecoin_revertWhenAmountExceedsAbsoluteMax() public {
+        uint256 exceedsMax = tokenAuthority.ABSOLUTE_MAX() + 1;
+
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+
+        vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), exceedsMax
+        );
+        vm.stopPrank();
+    }
+
+    function test_registerStablecoin_revertWhenTokenHandlerIsInvalid() public {
+        address invalidHandler = makeAddr("invalidHandler");
+
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+
+        vm.expectRevert(ITokenAuthority.InvalidTokenHandler.selector);
+        tokenAuthority.registerStablecoin(address(wrappedStablecoin), invalidHandler, 1_000_000e6);
+        vm.stopPrank();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Test unregisterStablecoin
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    function test_unregisterStablecoin() public {
+        address handlerSetter = makeAddr("handlerSetter");
+
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, handlerSetter);
+
+        vm.prank(handlerSetter);
+        vm.expectEmit(true, true, false, false, address(tokenAuthority));
+        emit ITokenAuthority.StablecoinUnregistered(handlerSetter, address(wrappedStablecoin));
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+
+        assertEq(tokenAuthority.getTokenHandler(address(wrappedStablecoin)), address(0));
+        assertEq(tokenAuthority.getStablecoinTxnMintLimit(address(wrappedStablecoin)), 0);
+        assertEq(tokenAuthority.getMinterAllowance(address(wrappedStablecoin), minter), 1000e6);
+        assertEq(
+            tokenAuthority.getTokenHandler(address(backedStablecoin)),
+            address(reserveLedgerBackedHandler)
+        );
+        assertEq(tokenAuthority.getStablecoinTxnMintLimit(address(backedStablecoin)), 1_000_000e6);
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.TokenHandlerNotSet.selector);
+        tokenAuthority.mintBridgeEcosystem(address(wrappedStablecoin), bob, 100e6);
+    }
+
+    function test_unregisterStablecoin_revertWhenNotTokenAuthorityHandlerSetterRole() public {
+        address adminOnly = makeAddr("adminOnly");
+
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.grantRole(DEFAULT_ADMIN_ROLE, adminOnly);
+
+        vm.prank(adminOnly);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                adminOnly,
+                TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
+            )
+        );
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+    }
+
+    function test_unregisterStablecoin_revertWhenStablecoinIsZero() public {
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
+        tokenAuthority.unregisterStablecoin(address(0));
+    }
+
+    function test_unregisterStablecoin_revertWhenStablecoinNotRegistered() public {
+        address unregisteredStablecoin = makeAddr("unregisteredStablecoin");
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinNotRegistered.selector);
+        tokenAuthority.unregisterStablecoin(unregisteredStablecoin);
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -2078,44 +1656,15 @@ contract TokenAuthorityTest is Test {
         assertEq(backedStablecoin.totalSupply(), 150e6, "backed stablecoin total supply");
     }
 
-    function _approvalParams(uint256 operationId, bytes32 holdId)
-        internal
-        view
-        returns (IMintIntent.ApprovalParams memory)
-    {
-        return IMintIntent.ApprovalParams({
-            operationId: operationId,
-            holdId: holdId,
-            amount: 100e6,
-            recipient: bob,
-            stablecoin: address(wrappedStablecoin)
-        });
+    function _keys(bytes32 a) internal pure returns (bytes32[] memory keys) {
+        keys = new bytes32[](1);
+        keys[0] = a;
     }
 
-    function _publishApproval(IMintIntent.ApprovalParams memory params, uint64 expiry) internal {
-        vm.prank(tokenAuthorityPublisher);
-        tokenAuthority.publishApproval(params, expiry);
-    }
-
-    function _expectInvalidApprovalParams(
-        bool invalidHoldId,
-        bool invalidOperationId,
-        bool invalidAmount,
-        bool invalidRecipient,
-        bool stablecoinIsWrong,
-        bool invalidExpiry
-    ) internal {
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApprovalParams.selector,
-                invalidHoldId,
-                invalidOperationId,
-                invalidAmount,
-                invalidRecipient,
-                stablecoinIsWrong,
-                invalidExpiry
-            )
-        );
+    function _keys(bytes32 a, bytes32 b) internal pure returns (bytes32[] memory keys) {
+        keys = new bytes32[](2);
+        keys[0] = a;
+        keys[1] = b;
     }
 
 }

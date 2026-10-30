@@ -22,27 +22,10 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.ERC20_STABLECOIN_CI_SSH_KEY }}
 
-      - name: Install Foundry (ethereum)
-        if: matrix.network == 'ethereum'
+      - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-
-      - name: Install Foundry (tempo)
-        if: matrix.network == 'tempo'
-        run: |
-          # Upstream foundryup deprecated --network, so we install the Tempo
-          # fork directly from its GitHub release.
-          TAG="v1.6.0-t3"
-          ASSET="foundry_${TAG}_linux_amd64.tar.gz"
-          URL="https://github.com/tempoxyz/tempo-foundry/releases/download/${TAG}/${ASSET}"
-          echo "Downloading Tempo Foundry ${TAG}..."
-          curl -sSfL "$URL" -o /tmp/foundry.tar.gz
-          mkdir -p "$HOME/.foundry/bin"
-          tar xzf /tmp/foundry.tar.gz -C "$HOME/.foundry/bin"
-          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Show Forge version
         run: |
@@ -66,7 +49,7 @@ jobs:
       - name: Run Forge tests
         run: |
           if [[ "${{ matrix.network }}" == "tempo" ]]; then
-            forge test -vv
+            forge test --network tempo -vv
           else
             forge test --no-match-contract TIP20ControllerTest -vv
           fi

@@ -2,7 +2,7 @@
 # deploy-new-chain.sh — bootstraps shared infrastructure on a new chain:
 #   01.  AuthRegistry
 #   02.  ReserveLedger  (+ transfer and mint-recipient policies)
-#   03a. MintIntentRegistry  (shared by every controller on this chain)
+#   03a. IdempotencyKeyRegistry  (shared by every controller on this chain)
 #   03.  TokenAuthority
 #
 # Run this once per chain. After this, use deploy-new-stablecoin.sh for each
@@ -67,23 +67,23 @@ out=$(run_script "02: Deploy ReserveLedger" \
 RESERVE_LEDGER=$(extract "RESERVE_LEDGER" "$out")
 TRANSFER_POLICY_ID=$(extract_uint "TRANSFER_POLICY_ID" "$out")
 
-# ── Step 03a: Deploy MintIntentRegistry ──────────────────────────────────────
+# ── Step 03a: Deploy IdempotencyKeyRegistry ──────────────────────────────────
 #
-# Deploy once per chain and share across every controller. Operation IDs are only
+# Deploy once per chain and share across every controller. Keys are only
 # single-use within the storage that tracks them, so a shared registry is what
 # makes them single-use across controller deployments.
 #
-out=$(run_script "03a: Deploy MintIntentRegistry" \
-    scripts/03a_DeployMintIntentRegistry.s.sol 2>&1 | tee /dev/stderr)
+out=$(run_script "03a: Deploy IdempotencyKeyRegistry" \
+    scripts/03a_DeployIdempotencyKeyRegistry.s.sol 2>&1 | tee /dev/stderr)
 
-MINT_INTENT_REGISTRY=$(extract "MINT_INTENT_REGISTRY" "$out")
+IDEMPOTENCY_KEY_REGISTRY=$(extract "IDEMPOTENCY_KEY_REGISTRY" "$out")
 
 # ── Step 03: Deploy TokenAuthority ───────────────────────────────────────────
 
 out=$(run_script "03: Deploy TokenAuthority" \
     scripts/03_DeployTokenAuthority.s.sol \
     --sig "run(address,address)" \
-    "${RESERVE_LEDGER}" "${MINT_INTENT_REGISTRY}" 2>&1 | tee /dev/stderr)
+    "${RESERVE_LEDGER}" "${IDEMPOTENCY_KEY_REGISTRY}" 2>&1 | tee /dev/stderr)
 
 TOKEN_AUTHORITY=$(extract "TOKEN_AUTHORITY" "$out")
 
@@ -93,11 +93,11 @@ echo ""
 echo "===== Chain Infrastructure Deployed ====="
 echo "AUTH_REGISTRY=${AUTH_REGISTRY}"
 echo "RESERVE_LEDGER=${RESERVE_LEDGER}"
-echo "MINT_INTENT_REGISTRY=${MINT_INTENT_REGISTRY}"
+echo "IDEMPOTENCY_KEY_REGISTRY=${IDEMPOTENCY_KEY_REGISTRY}"
 echo "TOKEN_AUTHORITY=${TOKEN_AUTHORITY}"
 echo "TRANSFER_POLICY_ID=${TRANSFER_POLICY_ID}"
 echo ""
 echo "Deploy a stablecoin on this chain:"
 echo "  bash scripts/deploy-new-stablecoin.sh \\"
-echo "    ${AUTH_REGISTRY} ${RESERVE_LEDGER} ${MINT_INTENT_REGISTRY} \\"
+echo "    ${AUTH_REGISTRY} ${RESERVE_LEDGER} ${IDEMPOTENCY_KEY_REGISTRY} \\"
 echo "    ${TOKEN_AUTHORITY} ${TRANSFER_POLICY_ID}"

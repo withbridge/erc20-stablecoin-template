@@ -69,7 +69,7 @@ interface ITokenHandler is IERC165 {
     function mint(address stablecoinContract, address to, uint256 amount) external;
 
     /**
-     * @notice Burns tokens from a specified address
+     * @notice Burns tokens transferred from the calling TokenAuthority
      * @param stablecoinContract The address of the stablecoin contract
      * @param amount The amount of tokens to burn
      */

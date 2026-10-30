@@ -43,13 +43,13 @@ contract SingleTokenHandler is TokenHandler {
     }
 
     /// @notice Not supported for single token handler
-    /// @dev Always reverts with NotSupported error
+    /// @dev Reverts with OnlyTokenAuthority for other callers, and NotSupported for the authority.
     function wrap(address, address, uint256) external view onlyTokenAuthority {
         revert NotSupported();
     }
 
     /// @notice Not supported for single token handler
-    /// @dev Always reverts with NotSupported error
+    /// @dev Reverts with OnlyTokenAuthority for other callers, and NotSupported for the authority.
     function unwrap(address, address, uint256) external view onlyTokenAuthority {
         revert NotSupported();
     }

@@ -16,14 +16,6 @@ interface StablecoinTemplateV3ErrorsAndEvents {
     event Minted(uint256 amount, address indexed to, address indexed sender);
 
     /**
-     * @notice Emitted when tokens are wrapped.
-     * @param amount The amount of tokens wrapped.
-     * @param to The address receiving the wrapped tokens.
-     * @param sender The address that triggered the wrap.
-     */
-    event Wrapped(uint256 amount, address indexed to, address indexed sender);
-
-    /**
      * @notice Emitted when tokens are burned.
      * @param amount The amount of tokens burned.
      * @param sender The address whose tokens were burned.
@@ -40,45 +32,10 @@ interface StablecoinTemplateV3ErrorsAndEvents {
 
     /**
      * @notice Emitted when the maximum supply is set.
-     * @param value The new maximum supply.
+     * @param amount The new maximum supply.
      * @param sender The address that set the max supply.
      */
-    event MaxSupplySet(uint256 value, address indexed sender);
-
-    /**
-     * @notice Emitted when an address has been added to the blocked list.
-     * @param account The address that was blocked.
-     * @param sender The address that added the block.
-     */
-    event BlockedAddress(address indexed account, address indexed sender);
-
-    /**
-     * @notice Emitted when an address has been removed from the blocked list.
-     * @param account The address that was unblocked.
-     * @param sender The address that removed the block.
-     */
-    event UnblockedAddress(address indexed account, address indexed sender);
-
-    /**
-     * @notice Emitted when an address is added as a valid mint recipient.
-     * @param account The address added as mint recipient.
-     * @param sender The address that performed the addition.
-     */
-    event AddedMintRecipient(address indexed account, address indexed sender);
-
-    /**
-     * @notice Emitted when an address is removed as a valid mint recipient.
-     * @param account The address removed from mint recipients.
-     * @param sender The address that performed the removal.
-     */
-    event RemovedMintRecipient(address indexed account, address indexed sender);
-
-    /**
-     * @notice Emitted when wrapped tokens are unwrapped (burned to withdraw underlying).
-     * @param amount The amount unwrapped.
-     * @param sender The address that performed the unwrapping.
-     */
-    event Unwrapped(uint256 amount, address indexed sender);
+    event MaxSupplySet(uint256 amount, address indexed sender);
 
     /**
      * @notice Emitted when the transfer policy ID is updated.
@@ -158,11 +115,6 @@ interface StablecoinTemplateV3ErrorsAndEvents {
      * @notice Thrown when the migration to wrapped is completed.
      */
     error MigrationToWrappedCompleted();
-
-    /**
-     * @notice Thrown when the migration to wrapped is not completed.
-     */
-    error MigrationToWrappedNotCompleted();
 
     /**
      * @notice Thrown when attempting to perform an operation with an amount of zero.

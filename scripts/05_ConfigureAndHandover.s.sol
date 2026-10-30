@@ -21,7 +21,7 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  *
  *         This script:
  *         1. Grants MINTER_ROLE on RL and SC to TokenAuthority
- *         2. Grants CONTROLLER_ROLE on the MintIntentRegistry to TokenAuthority
+ *         2. Grants CONTROLLER_ROLE on the IdempotencyKeyRegistry to TokenAuthority
  *         3. Grants PAUSER, UNPAUSER, BLOCKED_ADDRESS_BURNER roles on SC
  *         4. Sets txn mint limit and minter allowance on TokenAuthority
  *         5. Sets max supply on RL and SC
@@ -42,13 +42,13 @@ contract ConfigureAndHandover is Common {
 
     function run(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin,
         HandoverConfig calldata config
     ) public {
         requireDeployed(reserveLedger, "reserveLedger");
-        requireDeployed(mintIntentRegistry, "mintIntentRegistry");
+        requireDeployed(idempotencyKeyRegistry, "idempotencyKeyRegistry");
         requireDeployed(tokenAuthority, "tokenAuthority");
         requireDeployed(stablecoin, "stablecoin");
 
@@ -58,11 +58,11 @@ contract ConfigureAndHandover is Common {
 
         vm.startBroadcast();
 
-        _configureRoles(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin, config);
+        _configureRoles(reserveLedger, idempotencyKeyRegistry, tokenAuthority, stablecoin, config);
         _deployHandlerAndRegister(reserveLedger, tokenAuthority, stablecoin, config);
         _configureLimits(tokenAuthority, stablecoin, config);
         _configureMaxSupply(reserveLedger, stablecoin, config);
-        _handover(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin, config);
+        _handover(reserveLedger, idempotencyKeyRegistry, tokenAuthority, stablecoin, config);
 
         vm.stopBroadcast();
     }
@@ -86,7 +86,7 @@ contract ConfigureAndHandover is Common {
 
     function _configureRoles(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin,
         HandoverConfig calldata config
@@ -94,8 +94,8 @@ contract ConfigureAndHandover is Common {
         IAccessControl(reserveLedger).grantRole(MINTER_ROLE, tokenAuthority);
         IAccessControl(stablecoin).grantRole(MINTER_ROLE, tokenAuthority);
 
-        // Authorize the TokenAuthority to publish and consume intents in the shared registry
-        IAccessControl(mintIntentRegistry).grantRole(CONTROLLER_ROLE, tokenAuthority);
+        // Authorize the TokenAuthority to use keys in the shared registry
+        IAccessControl(idempotencyKeyRegistry).grantRole(CONTROLLER_ROLE, tokenAuthority);
 
         IAccessControl(stablecoin).grantRole(PAUSER_ROLE, config.pauserAddress);
         IAccessControl(stablecoin).grantRole(UNPAUSER_ROLE, config.unpauserAddress);
@@ -127,7 +127,7 @@ contract ConfigureAndHandover is Common {
 
     function _handover(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin,
         HandoverConfig calldata config
@@ -147,16 +147,17 @@ contract ConfigureAndHandover is Common {
             .grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, config.tokenAuthorityAdmin);
         console.log("TA: admin handed over to", config.tokenAuthorityAdmin);
 
-        // The registry admin controls which controllers may share the intent namespace
-        IAccessControl(mintIntentRegistry).grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
-        console.log("MintIntentRegistry: admin handed over to", config.tokenAuthorityAdmin);
+        // The registry admin controls which controllers may share the key namespace
+        IAccessControl(idempotencyKeyRegistry)
+            .grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
+        console.log("IdempotencyKeyRegistry: admin handed over to", config.tokenAuthorityAdmin);
 
         if (config.tokenAuthorityAdmin != msg.sender) {
             IAccessControl(tokenAuthority)
                 .renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
             IAccessControl(tokenAuthority).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
             IAccessControl(tokenAuthority).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
-            IAccessControl(mintIntentRegistry).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+            IAccessControl(idempotencyKeyRegistry).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         if (config.rlAdmin != msg.sender) {
             IAccessControl(reserveLedger).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);

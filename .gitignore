@@ -24,3 +24,5 @@ node_modules
 typechain-types
 artifacts
 gambit_*
+
+.vscode/
