@@ -20,6 +20,9 @@ import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
 import { IdempotencyKeys } from "../idempotency/IdempotencyKeys.sol";
 import { IIdempotencyKeyRegistry } from "../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
+import { Seize } from "../seize/Seize.sol";
+import { ISeizableStablecoin } from "../seize/interfaces/ISeizableStablecoin.sol";
+import { ISeizeHandler } from "./seizeHandler/ISeizeHandler.sol";
 
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -33,6 +36,7 @@ contract TokenAuthority is
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
     IdempotencyKeys,
+    Seize,
     ITokenAuthority,
     Version
 {
@@ -92,6 +96,10 @@ contract TokenAuthority is
     /// of them. Declared here rather than in {IdempotencyKeys} so the slot is appended after this
     /// contract's existing variables instead of shifting them.
     IIdempotencyKeyRegistry public idempotencyKeyRegistry;
+
+    /// @notice Maps each stablecoin contract address to its seize settings
+    /// @dev Appended after {idempotencyKeyRegistry} so the upgrade keeps every existing slot.
+    mapping(address stablecoinContract => SeizeConfig seizeConfig) seizeConfigs;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -392,6 +400,49 @@ contract TokenAuthority is
     }
 
     /**
+     * @notice Sets or clears the seize settings for a stablecoin contract
+     * @dev Mirrors {setTokenHandler}: the seize handler must implement {ISeizeHandler}. Does not
+     * require the stablecoin to be registered with a token handler: seize never uses one, and
+     * registration is an issuance concern.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param seizeHandler The seize handler that moves this stablecoin's coins; zero clears
+     * @param seizureWalletRegistry The registry holding the Seizure Wallet list
+     * @param seizureWalletListId The Seizure Wallet list ID
+     */
+    function setSeizeConfig(
+        address stablecoinContract,
+        address seizeHandler,
+        address seizureWalletRegistry,
+        uint64 seizureWalletListId
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(stablecoinContract != address(0), ZeroAddress());
+
+        if (seizeHandler == address(0)) {
+            // Clearing with leftover arguments is ambiguous, so it is refused rather than ignored.
+            require(
+                seizureWalletRegistry == address(0) && seizureWalletListId == 0,
+                InvalidSeizeConfig()
+            );
+            delete seizeConfigs[stablecoinContract];
+        } else {
+            require(
+                ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId),
+                InvalidSeizeHandler()
+            );
+            _requireValidSeizureWalletList(seizureWalletRegistry, seizureWalletListId);
+            seizeConfigs[stablecoinContract] = SeizeConfig({
+                seizeHandler: seizeHandler,
+                seizureWalletRegistry: seizureWalletRegistry,
+                seizureWalletListId: seizureWalletListId
+            });
+        }
+
+        emit SeizeConfigSet(
+            msg.sender, stablecoinContract, seizeHandler, seizureWalletRegistry, seizureWalletListId
+        );
+    }
+
+    /**
      * @notice Sets whether `mint` requires idempotency keys
      * @dev When `Required`, three-argument `mint` and `mint` with empty `keys` revert with
      *      {IdempotencyKeysRequired}. `mintBridgeEcosystem` is unaffected.
@@ -448,6 +499,20 @@ contract TokenAuthority is
         returns (address tokenHandler)
     {
         return tokenHandlers[stablecoinContract];
+    }
+
+    /**
+     * @notice Gets the seize settings for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return seizeConfig The settings; the seize handler is zero when the stablecoin cannot be
+     * seized
+     */
+    function getSeizeConfig(address stablecoinContract)
+        public
+        view
+        returns (SeizeConfig memory seizeConfig)
+    {
+        return seizeConfigs[stablecoinContract];
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -511,6 +576,50 @@ contract TokenAuthority is
 
     function _requireStablecoinPaused(address stablecoinContract) internal view {
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
+    }
+
+    /// @inheritdoc Seize
+    function _seizureWalletList(address stablecoinContract)
+        internal
+        view
+        override
+        returns (address registry, uint64 listId)
+    {
+        SeizeConfig memory seizeConfig = seizeConfigs[stablecoinContract];
+        require(seizeConfig.seizeHandler != address(0), SeizeNotConfigured(stablecoinContract));
+
+        return (seizeConfig.seizureWalletRegistry, seizeConfig.seizureWalletListId);
+    }
+
+    /// @inheritdoc Seize
+    /// @dev Checked here for every seize handler even though each coin re-checks it, so the rule
+    /// holds regardless of the handler or the coin's own implementation.
+    function _isHolderBlocked(address stablecoinContract, address holder)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        return ISeizableStablecoin(stablecoinContract).isBlocked(holder);
+    }
+
+    /**
+     * @inheritdoc Seize
+     * @dev A thin pass-through, like {_mint}: the stablecoin's seize handler moves the coins, and
+     * {Seize} enforces every rule around it. The handler is refused as a destination because it has
+     * no way to move coins on, so they would be stuck there.
+     */
+    function _executeSeize(
+        address stablecoinContract,
+        address from,
+        address to,
+        uint256 amount,
+        uint256 holderBalance
+    ) internal override {
+        address seizeHandler = seizeConfigs[stablecoinContract].seizeHandler;
+        require(to != seizeHandler, InvalidSeizeDestination(to));
+
+        ISeizeHandler(seizeHandler).seize(stablecoinContract, from, to, amount, holderBalance);
     }
 
     /// @inheritdoc IdempotencyKeys

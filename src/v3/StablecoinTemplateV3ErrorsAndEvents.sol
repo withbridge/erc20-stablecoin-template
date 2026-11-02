@@ -31,6 +31,17 @@ interface StablecoinTemplateV3ErrorsAndEvents {
     event BurnedFromBlockedAddress(uint256 amount, address indexed account, address indexed sender);
 
     /**
+     * @notice Emitted when coins are moved out of a blocked address by a force transfer.
+     * @param amount The amount moved.
+     * @param from The blocked address the coins were moved from.
+     * @param to The address that received the coins.
+     * @param sender The address that triggered the force transfer.
+     */
+    event ForceTransferred(
+        uint256 amount, address indexed from, address indexed to, address indexed sender
+    );
+
+    /**
      * @notice Emitted when the maximum supply is set.
      * @param amount The new maximum supply.
      * @param sender The address that set the max supply.
