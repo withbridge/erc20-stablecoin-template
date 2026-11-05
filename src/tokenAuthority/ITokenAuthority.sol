@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IIdempotencyKeys } from "../idempotency/interfaces/IIdempotencyKeys.sol";
 import { ISeize } from "../seize/interfaces/ISeize.sol";
+import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 
 /// @title ITokenAuthority
 /// @author Bridge
@@ -19,21 +20,6 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
     enum IdempotencyKeysVersion {
         Optional,
         Required
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
-                                    Structs
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /// @notice Per-stablecoin seize settings
-    /// @param seizeHandler The seize handler that moves this stablecoin's coins; zero when the
-    /// stablecoin cannot be seized
-    /// @param seizureWalletRegistry The registry holding the approved Seizure Wallet list
-    /// @param seizureWalletListId The list ID of approved Seizure Wallets within the registry
-    struct SeizeConfig {
-        address seizeHandler;
-        address seizureWalletRegistry;
-        uint64 seizureWalletListId;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -89,11 +75,14 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
     /// @notice Thrown when the stablecoin is not paused
     error StablecoinNotPaused();
 
-    /// @notice Thrown when seize settings are cleared with a non-zero registry or list ID
-    error InvalidSeizeConfig();
-
-    /// @notice Thrown when the seize handler does not implement {ISeizeHandler}
+    /// @notice Thrown when the seize handler does not implement {ISeizeHandler}, or was built for
+    /// a different TokenAuthority
     error InvalidSeizeHandler();
+
+    /// @notice Thrown at construction when the AuthRegistry differs from the reserve ledger's
+    /// @param reserveLedgerAuthRegistry The AuthRegistry the reserve ledger token checks against
+    /// @param authRegistry The AuthRegistry passed to the constructor
+    error AuthRegistryMismatch(address reserveLedgerAuthRegistry, address authRegistry);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -196,18 +185,12 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
         address indexed sender, address indexed stablecoinContract, bool isPaused
     );
 
-    /// @notice Emitted when a stablecoin's seize settings are set or cleared
-    /// @param sender The address that set the settings (must have DEFAULT_ADMIN_ROLE)
+    /// @notice Emitted when a seize handler is set or cleared for a stablecoin contract
+    /// @param sender The address that set the seize handler (must have DEFAULT_ADMIN_ROLE)
     /// @param stablecoinContract The address of the stablecoin contract
-    /// @param seizeHandler The seize handler; zero when the settings were cleared
-    /// @param seizureWalletRegistry The registry holding the Seizure Wallet list
-    /// @param seizureWalletListId The Seizure Wallet list ID
-    event SeizeConfigSet(
-        address indexed sender,
-        address indexed stablecoinContract,
-        address indexed seizeHandler,
-        address seizureWalletRegistry,
-        uint64 seizureWalletListId
+    /// @param seizeHandler The seize handler; zero when cleared
+    event SeizeHandlerSet(
+        address indexed sender, address indexed stablecoinContract, address indexed seizeHandler
     );
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -226,6 +209,12 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
      * @notice Query the address of the reserve ledger token
      */
     function RESERVE_LEDGER_TOKEN() external view returns (address);
+
+    /**
+     * @notice The AuthRegistry holding this TokenAuthority's Seizure Wallet list
+     * @dev Fixed at deployment to the reserve ledger token's own AuthRegistry
+     */
+    function AUTH_REGISTRY() external view returns (IAuthRegistry);
 
     /**
      * @notice The hard cap applied to any single mint amount, allowance, or transaction limit
@@ -379,11 +368,14 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      * @param tokenHandler The address of the token handler
+     * @param seizeHandler The seize handler that moves this stablecoin's coins; zero leaves the
+     * stablecoin unseizable until {setSeizeHandler} is called
      * @param mintTxnLimit The mint transaction limit
      */
     function registerStablecoin(
         address stablecoinContract,
         address tokenHandler,
+        address seizeHandler,
         uint256 mintTxnLimit
     ) external;
 
@@ -392,6 +384,7 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      */
+    /// @dev Also clears the stablecoin's seize handler
     function unregisterStablecoin(address stablecoinContract) external;
 
     /**
@@ -401,32 +394,25 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
     function setIdempotencyKeysVersion(IdempotencyKeysVersion idempotencyKeysVersion) external;
 
     /**
-     * @notice Sets or clears the seize settings for a stablecoin contract
-     * @dev Pass a zero seize handler, registry, and list ID to clear. Otherwise the seize handler
-     * must implement {ISeizeHandler} and the list must be usable (see
-     * {ISeize-InvalidSeizureWalletList}).
+     * @notice Sets or clears the seize handler for a registered stablecoin contract
+     * @dev Only callable by DEFAULT_ADMIN_ROLE. Sets the handler for stablecoins registered before
+     * {registerStablecoin} took one, and replaces or clears it later. A non-zero seize handler
+     * must implement {ISeizeHandler} and belong to this TokenAuthority. Pass the zero address to
+     * clear, which makes the stablecoin unseizable.
      * @param stablecoinContract The address of the stablecoin contract
      * @param seizeHandler The seize handler that moves this stablecoin's coins
-     * @param seizureWalletRegistry The registry holding the Seizure Wallet list
-     * @param seizureWalletListId The Seizure Wallet list ID
      */
-    function setSeizeConfig(
-        address stablecoinContract,
-        address seizeHandler,
-        address seizureWalletRegistry,
-        uint64 seizureWalletListId
-    ) external;
+    function setSeizeHandler(address stablecoinContract, address seizeHandler) external;
 
     /**
-     * @notice Gets the seize settings for a stablecoin contract
+     * @notice Gets the seize handler for a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
-     * @return seizeConfig The settings; the seize handler is zero when the stablecoin cannot be
-     * seized
+     * @return seizeHandler The seize handler; zero when the stablecoin cannot be seized
      */
-    function getSeizeConfig(address stablecoinContract)
+    function getSeizeHandler(address stablecoinContract)
         external
         view
-        returns (SeizeConfig memory seizeConfig);
+        returns (address seizeHandler);
 
     /**
      * @notice Gets the token handler for a specific stablecoin contract

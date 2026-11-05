@@ -140,11 +140,6 @@ interface ITIP20Controller is IIdempotencyKeys, ISeize {
         address indexed sender, address indexed stablecoinContract, bool isPaused
     );
 
-    /// @notice Emitted when the Seizure Wallet TIP-403 policy is set or cleared
-    /// @param sender The address that set the policy (must have DEFAULT_ADMIN_ROLE)
-    /// @param policyId The new Seizure Wallet policy ID; 0 disables seize
-    event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId);
-
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -208,12 +203,6 @@ interface ITIP20Controller is IIdempotencyKeys, ISeize {
      * @notice Whether `mint` requires idempotency keys
      */
     function mintIntentVersion() external view returns (MintIntentVersion);
-
-    /**
-     * @notice The TIP-403 policy listing the approved Seizure Wallets for every stablecoin this
-     * controller seizes; 0 when seize is disabled
-     */
-    function seizureWalletPolicyId() external view returns (uint256);
 
     /**
      * @notice Whether minting/burning/wrapping/unwrapping is paused for a stablecoin
@@ -317,14 +306,6 @@ interface ITIP20Controller is IIdempotencyKeys, ISeize {
      * @param mintIntentVersion The new mint idempotency-key policy
      */
     function setMintIntentVersion(MintIntentVersion mintIntentVersion) external;
-
-    /**
-     * @notice Sets or clears the TIP-403 policy listing the approved Seizure Wallets
-     * @dev Pass 0 to disable seize. Any other policy must be usable (see
-     * {ISeize-InvalidSeizureWalletList}).
-     * @param policyId The Seizure Wallet policy ID
-     */
-    function setSeizureWalletPolicyId(uint64 policyId) external;
 
     /**
      * @notice Gets the mint allowance for a specific minter on a stablecoin contract

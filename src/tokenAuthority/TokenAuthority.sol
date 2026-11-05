@@ -24,6 +24,9 @@ import { Seize } from "../seize/Seize.sol";
 import { ISeizableStablecoin } from "../seize/interfaces/ISeizableStablecoin.sol";
 import { ISeizeHandler } from "./seizeHandler/ISeizeHandler.sol";
 
+import { ReserveLedger } from "../v3/ReserveLedger.sol";
+import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
+
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import { Version } from "../Version.sol";
@@ -54,6 +57,12 @@ contract TokenAuthority is
 
     /// @notice The absolute maximum amount of tokens that can be minted
     uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
+
+    /// @notice The AuthRegistry holding this TokenAuthority's Seizure Wallet list
+    /// @dev Immutable, like the TIP20Controller's fixed TIP-403 registry, so only the list ID is
+    /// ever configured. It must be the reserve ledger token's own AuthRegistry: a TokenAuthority
+    /// serves one entity on one chain, and that entity's lists all live in that registry.
+    IAuthRegistry public immutable AUTH_REGISTRY;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Constants
@@ -97,9 +106,18 @@ contract TokenAuthority is
     /// contract's existing variables instead of shifting them.
     IIdempotencyKeyRegistry public idempotencyKeyRegistry;
 
-    /// @notice Maps each stablecoin contract address to its seize settings
+    /// @notice Maps each stablecoin contract address to the seize handler that moves its coins
     /// @dev Appended after {idempotencyKeyRegistry} so the upgrade keeps every existing slot.
-    mapping(address stablecoinContract => SeizeConfig seizeConfig) seizeConfigs;
+    mapping(address stablecoinContract => address seizeHandler) seizeHandlers;
+
+    /// @notice The {AUTH_REGISTRY} policy listing the approved Seizure Wallets; 0 when seize is
+    /// disabled
+    /// @dev One list serves every stablecoin on this TokenAuthority, because a TokenAuthority
+    /// belongs to one entity and that entity seizes into the same wallets for all of its coins.
+    /// Stored as a full word in its own fresh slot (7), the same as
+    /// {TIP20Controller-seizureWalletPolicyId}. {setSeizureWalletPolicyId} only accepts a
+    /// `uint64`, so the value always fits one.
+    uint256 public seizureWalletPolicyId;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -108,10 +126,24 @@ contract TokenAuthority is
     /**
      * @notice Constructs the TokenAuthority contract
      * @param _reserveLedgerToken The address of the reserve ledger token
+     * @param _authRegistry The AuthRegistry holding the Seizure Wallet list; must be the reserve
+     * ledger token's own AuthRegistry
      * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
      */
-    constructor(address _reserveLedgerToken, bool _disableInitializer) {
+    constructor(address _reserveLedgerToken, address _authRegistry, bool _disableInitializer) {
+        require(_authRegistry != address(0), ZeroAddress());
+
+        // A wrong registry would otherwise surface only later, as Seizure Wallet policy IDs being
+        // rejected or, worse, resolved against a registry the entity does not control.
+        address reserveLedgerAuthRegistry =
+            address(ReserveLedger(_reserveLedgerToken).AUTH_REGISTRY());
+        require(
+            reserveLedgerAuthRegistry == _authRegistry,
+            AuthRegistryMismatch(reserveLedgerAuthRegistry, _authRegistry)
+        );
+
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
+        AUTH_REGISTRY = IAuthRegistry(_authRegistry);
 
         if (_disableInitializer) {
             _disableInitializers();
@@ -351,12 +383,17 @@ contract TokenAuthority is
      * @notice Registers a stablecoin contract with the TokenAuthority
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
+     * @dev Sets the seize handler in the same call, so a newly registered stablecoin needs no
+     * separate seize setup.
      * @param tokenHandler The address of the token handler
+     * @param seizeHandler The seize handler that moves this stablecoin's coins; zero leaves the
+     * stablecoin unseizable until {setSeizeHandler} is called
      * @param mintTxnLimit The mint transaction limit
      */
     function registerStablecoin(
         address stablecoinContract,
         address tokenHandler,
+        address seizeHandler,
         uint256 mintTxnLimit
     ) public onlyRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE) {
         uint256 reserveLedgerPrecision = IERC20Metadata(RESERVE_LEDGER_TOKEN).decimals();
@@ -374,9 +411,11 @@ contract TokenAuthority is
             ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
             InvalidTokenHandler()
         );
+        _requireValidSeizeHandler(seizeHandler);
 
         tokenHandlers[stablecoinContract] = tokenHandler;
         mintTxnLimits[stablecoinContract] = mintTxnLimit;
+        seizeHandlers[stablecoinContract] = seizeHandler;
 
         emit StablecoinRegistered(msg.sender, stablecoinContract, tokenHandler, mintTxnLimit);
     }
@@ -385,6 +424,8 @@ contract TokenAuthority is
      * @notice Unregisters a stablecoin contract from the TokenAuthority
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @dev It it on the onus of the admin to ensure that all minter allowances are zeroed out
+     * @dev Also clears the seize handler, so an unregistered stablecoin cannot be seized through
+     * this TokenAuthority and a later {registerStablecoin} starts from a clean slate.
      * @param stablecoinContract The address of the stablecoin contract
      */
     function unregisterStablecoin(address stablecoinContract)
@@ -395,51 +436,31 @@ contract TokenAuthority is
         require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         delete tokenHandlers[stablecoinContract];
         delete mintTxnLimits[stablecoinContract];
+        delete seizeHandlers[stablecoinContract];
 
         emit StablecoinUnregistered(msg.sender, stablecoinContract);
     }
 
     /**
-     * @notice Sets or clears the seize settings for a stablecoin contract
-     * @dev Mirrors {setTokenHandler}: the seize handler must implement {ISeizeHandler}. Does not
-     * require the stablecoin to be registered with a token handler: seize never uses one, and
-     * registration is an issuance concern.
+     * @notice Sets or clears the seize handler for a registered stablecoin contract
+     * @dev For stablecoins registered before {registerStablecoin} took a seize handler, and to
+     * replace or clear one later. Unlike {setTokenHandler} it does not require the stablecoin to
+     * be paused, because the seize handler never touches issuance or reserve backing. Gated by
+     * DEFAULT_ADMIN_ROLE because it decides which contract may move a frozen holder's coins.
      * @param stablecoinContract The address of the stablecoin contract
      * @param seizeHandler The seize handler that moves this stablecoin's coins; zero clears
-     * @param seizureWalletRegistry The registry holding the Seizure Wallet list
-     * @param seizureWalletListId The Seizure Wallet list ID
      */
-    function setSeizeConfig(
-        address stablecoinContract,
-        address seizeHandler,
-        address seizureWalletRegistry,
-        uint64 seizureWalletListId
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setSeizeHandler(address stablecoinContract, address seizeHandler)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         require(stablecoinContract != address(0), ZeroAddress());
+        require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
+        _requireValidSeizeHandler(seizeHandler);
 
-        if (seizeHandler == address(0)) {
-            // Clearing with leftover arguments is ambiguous, so it is refused rather than ignored.
-            require(
-                seizureWalletRegistry == address(0) && seizureWalletListId == 0,
-                InvalidSeizeConfig()
-            );
-            delete seizeConfigs[stablecoinContract];
-        } else {
-            require(
-                ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId),
-                InvalidSeizeHandler()
-            );
-            _requireValidSeizureWalletList(seizureWalletRegistry, seizureWalletListId);
-            seizeConfigs[stablecoinContract] = SeizeConfig({
-                seizeHandler: seizeHandler,
-                seizureWalletRegistry: seizureWalletRegistry,
-                seizureWalletListId: seizureWalletListId
-            });
-        }
+        seizeHandlers[stablecoinContract] = seizeHandler;
 
-        emit SeizeConfigSet(
-            msg.sender, stablecoinContract, seizeHandler, seizureWalletRegistry, seizureWalletListId
-        );
+        emit SeizeHandlerSet(msg.sender, stablecoinContract, seizeHandler);
     }
 
     /**
@@ -502,17 +523,16 @@ contract TokenAuthority is
     }
 
     /**
-     * @notice Gets the seize settings for a stablecoin contract
+     * @notice Gets the seize handler for a stablecoin contract
      * @param stablecoinContract The address of the stablecoin contract
-     * @return seizeConfig The settings; the seize handler is zero when the stablecoin cannot be
-     * seized
+     * @return seizeHandler The seize handler; zero when the stablecoin cannot be seized
      */
-    function getSeizeConfig(address stablecoinContract)
+    function getSeizeHandler(address stablecoinContract)
         public
         view
-        returns (SeizeConfig memory seizeConfig)
+        returns (address seizeHandler)
     {
-        return seizeConfigs[stablecoinContract];
+        return seizeHandlers[stablecoinContract];
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -585,10 +605,41 @@ contract TokenAuthority is
         override
         returns (address registry, uint64 listId)
     {
-        SeizeConfig memory seizeConfig = seizeConfigs[stablecoinContract];
-        require(seizeConfig.seizeHandler != address(0), SeizeNotConfigured(stablecoinContract));
+        require(
+            seizeHandlers[stablecoinContract] != address(0) && seizureWalletPolicyId != 0,
+            SeizeNotConfigured(stablecoinContract)
+        );
 
-        return (seizeConfig.seizureWalletRegistry, seizeConfig.seizureWalletListId);
+        // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return (_seizureWalletRegistry(), uint64(seizureWalletPolicyId));
+    }
+
+    /// @inheritdoc Seize
+    function _seizureWalletRegistry() internal view override returns (address) {
+        return address(AUTH_REGISTRY);
+    }
+
+    /// @inheritdoc Seize
+    function _setSeizureWalletPolicyId(uint64 policyId) internal override {
+        seizureWalletPolicyId = policyId;
+    }
+
+    /**
+     * @dev Reverts unless `seizeHandler` is zero (unseizable) or a seize handler built for this
+     * TokenAuthority. A handler built for another TokenAuthority would accept calls only from that
+     * one, so every seize would revert; it is caught here instead.
+     */
+    function _requireValidSeizeHandler(address seizeHandler) internal view {
+        if (seizeHandler == address(0)) {
+            return;
+        }
+
+        require(
+            ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId)
+                && ISeizeHandler(seizeHandler).TOKEN_AUTHORITY() == address(this),
+            InvalidSeizeHandler()
+        );
     }
 
     /// @inheritdoc Seize
@@ -616,7 +667,7 @@ contract TokenAuthority is
         uint256 amount,
         uint256 holderBalance
     ) internal override {
-        address seizeHandler = seizeConfigs[stablecoinContract].seizeHandler;
+        address seizeHandler = seizeHandlers[stablecoinContract];
         require(to != seizeHandler, InvalidSeizeDestination(to));
 
         ISeizeHandler(seizeHandler).seize(stablecoinContract, from, to, amount, holderBalance);

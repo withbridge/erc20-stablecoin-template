@@ -4,10 +4,13 @@ pragma solidity ^0.8.24;
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
+import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 import { Test } from "forge-std/Test.sol";
 import { Verify } from "scripts/06_Verify.s.sol";
+import { DeploySeizeHandlers } from "scripts/07_DeploySeizeHandlers.s.sol";
 import { DeployAll } from "scripts/DeployAll.s.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ISeizeHandler } from "src/tokenAuthority/seizeHandler/ISeizeHandler.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
 
@@ -20,10 +23,13 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  *         2. Deployer == admin: renunciation skipped
  *         3. Mint→burn round-trip through the TokenAuthority
  *         4. Adding a second stablecoin to existing infrastructure
+ *         5. Seize handlers deployed by 07_DeploySeizeHandlers, then a seize end to end
  */
 contract DeployAllE2ETest is Test, DeployAll {
 
     bytes32 constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    bytes32 constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
+    bytes32 constant SEIZER_ROLE = keccak256("SEIZER_ROLE");
 
     function test_fullDeployment() public {
         // ================================================================
@@ -156,18 +162,8 @@ contract DeployAllE2ETest is Test, DeployAll {
         address recipient = makeAddr("recipient");
         uint256 mintAmount = 1_000_000; // 1 USDB (6 decimals)
 
+        _allowMintTo(result, recipient);
         uint64 transferPolicyId = rl.getTransferPolicyId();
-        registry.modifyPolicyWhitelist(transferPolicyId, address(0), true);
-        registry.modifyPolicyWhitelist(transferPolicyId, recipient, true);
-        registry.modifyPolicyWhitelist(transferPolicyId, result.stablecoin, true);
-        registry.modifyPolicyWhitelist(transferPolicyId, result.tokenHandler, true);
-        registry.modifyPolicyWhitelist(transferPolicyId, result.tokenAuthority, true);
-
-        uint64 scMintPolicyId = sc.getMintRecipientPolicyId();
-        registry.modifyPolicyWhitelist(scMintPolicyId, recipient, true);
-
-        uint64 rlMintPolicyId = rl.getMintRecipientPolicyId();
-        registry.modifyPolicyWhitelist(rlMintPolicyId, result.tokenHandler, true);
 
         // --- Mint ---
         vm.prank(minter);
@@ -191,6 +187,104 @@ contract DeployAllE2ETest is Test, DeployAll {
 
         assertEq(sc.balanceOf(burner), 0, "Burner balance should be zero after burn");
         assertEq(sc.totalSupply(), 0, "SC total supply should be zero after burn");
+    }
+
+    /// @dev Whitelists everything a wrapped-handler mint to `recipient` touches. DeployAll gives
+    ///      the reserve ledger and the stablecoin one shared WHITELIST transfer policy.
+    function _allowMintTo(DeployResult memory result, address recipient) internal {
+        AuthRegistry registry = AuthRegistry(result.authRegistry);
+        StablecoinTemplateV3Base rl = StablecoinTemplateV3Base(result.reserveLedger);
+        StablecoinTemplateV3 sc = StablecoinTemplateV3(result.stablecoin);
+
+        uint64 transferPolicyId = rl.getTransferPolicyId();
+        registry.modifyPolicyWhitelist(transferPolicyId, address(0), true);
+        registry.modifyPolicyWhitelist(transferPolicyId, recipient, true);
+        registry.modifyPolicyWhitelist(transferPolicyId, result.stablecoin, true);
+        registry.modifyPolicyWhitelist(transferPolicyId, result.tokenHandler, true);
+        registry.modifyPolicyWhitelist(transferPolicyId, result.tokenAuthority, true);
+
+        registry.modifyPolicyWhitelist(sc.getMintRecipientPolicyId(), recipient, true);
+        registry.modifyPolicyWhitelist(rl.getMintRecipientPolicyId(), result.tokenHandler, true);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Seize Handlers Deployment
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @dev Runs 07_DeploySeizeHandlers against a DeployAll deployment, then sets seize up the way
+    ///      a stablecoin registered before seize existed gets it (DeployAll registers it with no
+    ///      seize handler), and seizes from a frozen holder.
+    function test_seizeHandlersDeployment_seizeEndToEnd() public {
+        // deployer == admin, so this contract can act as every admin below
+        DeployResult memory result =
+            _execute(address(this), _defaultRlConfig(), _defaultScConfig(), _handoverConfig(true));
+        TokenAuthority ta = TokenAuthority(result.tokenAuthority);
+        StablecoinTemplateV3 sc = StablecoinTemplateV3(result.stablecoin);
+        AuthRegistry registry = AuthRegistry(result.authRegistry);
+
+        // --- Deploy the seize handlers with the script ---
+        DeploySeizeHandlers.SeizeHandlers memory seizeHandlers =
+            (new DeploySeizeHandlers()).run(result.tokenAuthority);
+
+        assertEq(
+            ISeizeHandler(seizeHandlers.forceTransferSeizeHandler).TOKEN_AUTHORITY(),
+            result.tokenAuthority,
+            "force-transfer handler built for this TA"
+        );
+        assertEq(
+            ISeizeHandler(seizeHandlers.burnAndRemintSeizeHandler).TOKEN_AUTHORITY(),
+            result.tokenAuthority,
+            "burn-and-re-mint handler built for this TA"
+        );
+
+        // --- Admin setup, as each admin would sign it ---
+        address seizer = makeAddr("seizer");
+        address seizureWallet = makeAddr("seizureWallet");
+        address holder = makeAddr("holder");
+
+        uint64 seizureWalletPolicyId =
+            registry.createPolicy(address(this), IAuthRegistry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
+
+        sc.grantRole(FORCE_TRANSFER_ROLE, seizeHandlers.forceTransferSeizeHandler);
+        ta.setSeizeHandler(result.stablecoin, seizeHandlers.forceTransferSeizeHandler);
+        ta.setSeizureWalletPolicyId(seizureWalletPolicyId);
+        ta.grantRole(SEIZER_ROLE, seizer);
+
+        assertEq(
+            ta.getSeizeHandler(result.stablecoin),
+            seizeHandlers.forceTransferSeizeHandler,
+            "seize handler set"
+        );
+        assertEq(ta.seizureWalletPolicyId(), seizureWalletPolicyId, "seizure wallet policy set");
+
+        // --- Fund the holder, then freeze it ---
+        _allowMintTo(result, holder);
+        uint64 transferPolicyId = sc.getTransferPolicyId();
+        // The Seizure Wallet must not be frozen: forceTransfer rejects a blocked destination.
+        registry.modifyPolicyWhitelist(transferPolicyId, seizureWallet, true);
+        vm.prank(makeAddr("minter"));
+        ta.mint(result.stablecoin, holder, 1_000_000);
+        // On DeployAll's WHITELIST transfer policy, freezing means removing the holder from it.
+        registry.modifyPolicyWhitelist(transferPolicyId, holder, false);
+        assertTrue(sc.isBlocked(holder), "holder frozen");
+
+        uint256 totalSupplyBefore = sc.totalSupply();
+        uint256 backingBefore = IERC20(result.reserveLedger).balanceOf(result.stablecoin);
+
+        // --- Seize ---
+        vm.prank(seizer);
+        ta.seize(result.stablecoin, holder, seizureWallet, 600_000);
+
+        assertEq(sc.balanceOf(holder), 400_000, "holder keeps the unseized remainder");
+        assertEq(sc.balanceOf(seizureWallet), 600_000, "Seizure Wallet receives the seized amount");
+        assertEq(sc.totalSupply(), totalSupplyBefore, "supply unchanged");
+        assertEq(
+            IERC20(result.reserveLedger).balanceOf(result.stablecoin),
+            backingBefore,
+            "reserve backing stays inside the coin"
+        );
+        assertTrue(sc.isBlocked(holder), "holder still frozen");
     }
 
     /*//////////////////////////////////////////////////////////////////////////

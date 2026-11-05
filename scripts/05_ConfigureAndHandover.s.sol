@@ -80,7 +80,10 @@ contract ConfigureAndHandover is Common {
         IAccessControl(stablecoin).grantRole(MINTER_ROLE, handler);
 
         IAccessControl(tokenAuthority).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
-        TokenAuthority(tokenAuthority).registerStablecoin(stablecoin, handler, config.txnMintLimit);
+        // This script deploys no seize handler, so the stablecoin is registered unseizable. The
+        // admin sets one later with setSeizeHandler.
+        TokenAuthority(tokenAuthority)
+            .registerStablecoin(stablecoin, handler, address(0), config.txnMintLimit);
         console.log("Registered stablecoin with handler on TA");
     }
 

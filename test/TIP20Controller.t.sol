@@ -1098,7 +1098,15 @@ contract TIP20ControllerTest is Test {
     function test_sharedRegistryWithTokenAuthority_keyIsSingleUse() public {
         bytes32 key = keccak256("cross-type");
 
-        TokenAuthority ta = new TokenAuthority(address(reserveLedgerToken), false);
+        // The TokenAuthority constructor requires the reserve ledger's own AuthRegistry. A TIP-20
+        // reserve ledger has none, so its getter is mocked; this test never seizes.
+        address authRegistry = makeAddr("authRegistry");
+        vm.mockCall(
+            address(reserveLedgerToken),
+            abi.encodeWithSignature("AUTH_REGISTRY()"),
+            abi.encode(authRegistry)
+        );
+        TokenAuthority ta = new TokenAuthority(address(reserveLedgerToken), authRegistry, false);
         ta.initialize(admin, address(idempotencyKeyRegistry));
         idempotencyKeyRegistry.grantRole(idempotencyKeyRegistry.CONTROLLER_ROLE(), address(ta));
 
@@ -1426,7 +1434,7 @@ contract TIP20ControllerTest is Test {
         .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
 
         vm.expectEmit(true, true, true, true, address(controller));
-        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, policyId);
+        emit ISeize.SeizureWalletPolicyIdSet(admin, policyId);
         controller.setSeizureWalletPolicyId(policyId);
 
         assertEq(controller.seizureWalletPolicyId(), policyId);
@@ -1436,7 +1444,7 @@ contract TIP20ControllerTest is Test {
         _setUpSeize();
 
         vm.expectEmit(true, true, true, true, address(controller));
-        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, 0);
+        emit ISeize.SeizureWalletPolicyIdSet(admin, 0);
         controller.setSeizureWalletPolicyId(0);
 
         assertEq(controller.seizureWalletPolicyId(), 0);

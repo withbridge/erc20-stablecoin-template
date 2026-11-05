@@ -355,21 +355,6 @@ contract TIP20Controller is
         emit MintIntentVersionSet(msg.sender, mintIntentVersion);
     }
 
-    /**
-     * @notice Sets or clears the TIP-403 policy listing the approved Seizure Wallets
-     * @dev 0 disables seize, mirroring a zero seize handler on the TokenAuthority.
-     * @param policyId The Seizure Wallet policy ID
-     */
-    function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (policyId != 0) {
-            _requireValidSeizureWalletList(address(StdPrecompiles.TIP403_REGISTRY), policyId);
-        }
-
-        seizureWalletPolicyId = policyId;
-
-        emit SeizureWalletPolicyIdSet(msg.sender, policyId);
-    }
-
     /*//////////////////////////////////////////////////////////////////////////
                                 Getters
     //////////////////////////////////////////////////////////////////////////*/
@@ -536,7 +521,18 @@ contract TIP20Controller is
 
         // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
         // forge-lint: disable-next-line(unsafe-typecast)
-        return (address(StdPrecompiles.TIP403_REGISTRY), uint64(seizureWalletPolicyId));
+        return (_seizureWalletRegistry(), uint64(seizureWalletPolicyId));
+    }
+
+    /// @inheritdoc Seize
+    /// @dev TIP-20 coins check transfers against TIP-403, so the Seizure Wallet list lives there.
+    function _seizureWalletRegistry() internal pure override returns (address) {
+        return address(StdPrecompiles.TIP403_REGISTRY);
+    }
+
+    /// @inheritdoc Seize
+    function _setSeizureWalletPolicyId(uint64 policyId) internal override {
+        seizureWalletPolicyId = policyId;
     }
 
     /// @inheritdoc Seize

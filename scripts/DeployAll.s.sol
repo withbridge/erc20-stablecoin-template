@@ -175,7 +175,10 @@ contract DeployAll is Common {
         internal
         returns (address taProxy)
     {
-        TokenAuthority taImpl = new TokenAuthority(rlProxy, true);
+        // The TokenAuthority's AuthRegistry must be the reserve ledger's own, which the
+        // constructor enforces.
+        address authRegistry = address(ReserveLedger(rlProxy).AUTH_REGISTRY());
+        TokenAuthority taImpl = new TokenAuthority(rlProxy, authRegistry, true);
 
         taProxy = address(
             new ERC1967Proxy(
@@ -271,7 +274,10 @@ contract DeployAll is Common {
         IAccessControl(scProxy).grantRole(MINTER_ROLE, handler);
 
         IAccessControl(taProxy).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, deployer);
-        TokenAuthority(taProxy).registerStablecoin(scProxy, handler, handover.txnMintLimit);
+        // This script deploys no seize handler, so the stablecoin is registered unseizable. The
+        // admin sets one later with setSeizeHandler.
+        TokenAuthority(taProxy)
+            .registerStablecoin(scProxy, handler, address(0), handover.txnMintLimit);
         console.log("Registered stablecoin with handler on TA");
     }
 

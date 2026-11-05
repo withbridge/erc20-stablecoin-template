@@ -92,7 +92,7 @@ contract TokenAuthorityTest is Test {
     address seizer;
     address seizureWallet;
     address frozenHolder;
-    uint64 seizureWalletListId;
+    uint64 seizureWalletPolicyId;
 
     function setUp() public {
         bridgeAdmin = makeAddr("bridgeAdmin");
@@ -207,7 +207,8 @@ contract TokenAuthorityTest is Test {
         ////////////////////////////////////////////////////////////////////////////////////////////
         idempotencyKeyRegistry = _deployIdempotencyKeyRegistry(tokenAuthorityAdmin);
 
-        tokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
+        tokenAuthority =
+            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), false);
         tokenAuthority.initialize(tokenAuthorityAdmin, address(idempotencyKeyRegistry));
 
         // Authorize the TokenAuthority to use keys in the shared registry
@@ -284,13 +285,16 @@ contract TokenAuthorityTest is Test {
         ////////////////////////////////////////////////////////////////////////////////////////////
         vm.startPrank(tokenAuthorityAdmin);
         tokenAuthority.registerStablecoin(
-            address(reserveLedgerToken), address(singleTokenHandler), 1_000_000e6
+            address(reserveLedgerToken), address(singleTokenHandler), address(0), 1_000_000e6
         );
         tokenAuthority.registerStablecoin(
-            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), 1_000_000e6
+            address(wrappedStablecoin),
+            address(reserveLedgerWrappedHandler),
+            address(0),
+            1_000_000e6
         );
         tokenAuthority.registerStablecoin(
-            address(backedStablecoin), address(reserveLedgerBackedHandler), 1_000_000e6
+            address(backedStablecoin), address(reserveLedgerBackedHandler), address(0), 1_000_000e6
         );
         vm.stopPrank();
     }
@@ -797,7 +801,8 @@ contract TokenAuthorityTest is Test {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     function test_tokenAuthorityInitialize() public {
-        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
+        TokenAuthority newTokenAuthority =
+            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), false);
         newTokenAuthority.initialize(bridgeAdmin, address(idempotencyKeyRegistry));
         bool adminHasRole = newTokenAuthority.hasRole(DEFAULT_ADMIN_ROLE, bridgeAdmin);
 
@@ -808,13 +813,15 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_tokenAuthorityInitialize_revertWhenDisabled() public {
-        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
+        TokenAuthority newTokenAuthority =
+            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), true);
         vm.expectRevert(InvalidInitialization.selector);
         newTokenAuthority.initialize(bridgeAdmin, address(idempotencyKeyRegistry));
     }
 
     function test_tokenAuthorityInitialize_revertWhenRegistryIsZero() public {
-        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
+        TokenAuthority newTokenAuthority =
+            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), false);
         vm.expectRevert(IIdempotencyKeyErrors.InvalidRegistry.selector);
         newTokenAuthority.initialize(bridgeAdmin, address(0));
     }
@@ -1286,10 +1293,11 @@ contract TokenAuthorityTest is Test {
             handlerSetter, newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
         );
         tokenAuthority.registerStablecoin(
-            newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
+            newStablecoin, address(reserveLedgerWrappedHandler), address(0), 1_000_000e6
         );
 
         assertEq(tokenAuthority.getStablecoinTxnMintLimit(newStablecoin), 1_000_000e6);
+        assertEq(tokenAuthority.getSeizeHandler(newStablecoin), address(0));
     }
 
     function test_registerStablecoin_revertWhenNotTokenAuthorityHandlerSetterRole() public {
@@ -1307,7 +1315,7 @@ contract TokenAuthorityTest is Test {
             )
         );
         tokenAuthority.registerStablecoin(
-            makeAddr("newStablecoin"), address(reserveLedgerWrappedHandler), 1_000_000e6
+            makeAddr("newStablecoin"), address(reserveLedgerWrappedHandler), address(0), 1_000_000e6
         );
     }
 
@@ -1331,7 +1339,7 @@ contract TokenAuthorityTest is Test {
             abi.encodeWithSelector(ITokenAuthority.PrecisionMismatch.selector, uint256(6), 18)
         );
         tokenAuthority.registerStablecoin(
-            newStablecoin, address(reserveLedgerWrappedHandler), 1_000_000e6
+            newStablecoin, address(reserveLedgerWrappedHandler), address(0), 1_000_000e6
         );
     }
 
@@ -1339,7 +1347,10 @@ contract TokenAuthorityTest is Test {
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.StablecoinAlreadyRegistered.selector);
         tokenAuthority.registerStablecoin(
-            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), 1_000_000e6
+            address(wrappedStablecoin),
+            address(reserveLedgerWrappedHandler),
+            address(0),
+            1_000_000e6
         );
     }
 
@@ -1348,7 +1359,9 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
 
         vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
-        tokenAuthority.registerStablecoin(address(wrappedStablecoin), address(0), 1_000_000e6);
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin), address(0), address(0), 1_000_000e6
+        );
         vm.stopPrank();
     }
 
@@ -1360,7 +1373,7 @@ contract TokenAuthorityTest is Test {
 
         vm.expectRevert(ITokenAuthority.AmountExceedsAbsoluteMax.selector);
         tokenAuthority.registerStablecoin(
-            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), exceedsMax
+            address(wrappedStablecoin), address(reserveLedgerWrappedHandler), address(0), exceedsMax
         );
         vm.stopPrank();
     }
@@ -1372,7 +1385,9 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
 
         vm.expectRevert(ITokenAuthority.InvalidTokenHandler.selector);
-        tokenAuthority.registerStablecoin(address(wrappedStablecoin), invalidHandler, 1_000_000e6);
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin), invalidHandler, address(0), 1_000_000e6
+        );
         vm.stopPrank();
     }
 
@@ -1712,9 +1727,9 @@ contract TokenAuthorityTest is Test {
         burnAndRemintSeizeHandler = new BurnAndRemintSeizeHandler(address(tokenAuthority));
 
         vm.startPrank(bridgeAdmin);
-        seizureWalletListId =
+        seizureWalletPolicyId =
             authRegistry.createPolicy(bridgeAdmin, IAuthRegistry.PolicyType.WHITELIST);
-        authRegistry.modifyPolicyWhitelist(seizureWalletListId, seizureWallet, true);
+        authRegistry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
         vm.stopPrank();
 
         // V3: the force-transfer seize handler holds FORCE_TRANSFER_ROLE; the holder is funded
@@ -1753,9 +1768,10 @@ contract TokenAuthorityTest is Test {
         v2Stablecoin.addMintRecipient(burnAndRemint);
         vm.stopPrank();
 
+        // Registered with its seize handler in the same call, the way new stablecoins are.
         vm.startPrank(tokenAuthorityAdmin);
         tokenAuthority.registerStablecoin(
-            address(v2Stablecoin), address(reserveLedgerBackedHandler), 1_000_000e6
+            address(v2Stablecoin), address(reserveLedgerBackedHandler), burnAndRemint, 1_000_000e6
         );
         tokenAuthority.setMinterAllowance(address(v2Stablecoin), minter, SEIZE_HOLDER_BALANCE);
         vm.stopPrank();
@@ -1766,14 +1782,10 @@ contract TokenAuthorityTest is Test {
 
         vm.startPrank(tokenAuthorityAdmin);
         tokenAuthority.grantRole(SEIZER_ROLE, seizer);
-        tokenAuthority.setSeizeConfig(
-            address(wrappedStablecoin),
-            address(forceTransferSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
-        );
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin), burnAndRemint, address(authRegistry), seizureWalletListId
+        tokenAuthority.setSeizureWalletPolicyId(seizureWalletPolicyId);
+        // Registered in setUp without one, like the stablecoins live before this upgrade.
+        tokenAuthority.setSeizeHandler(
+            address(wrappedStablecoin), address(forceTransferSeizeHandler)
         );
         vm.stopPrank();
     }
@@ -1871,12 +1883,7 @@ contract TokenAuthorityTest is Test {
         // A V2 coin wrongly given the force-transfer seize handler has no forceTransfer, so the
         // seize reverts and nothing moves.
         vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin),
-            address(forceTransferSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
-        );
+        tokenAuthority.setSeizeHandler(address(v2Stablecoin), address(forceTransferSeizeHandler));
 
         vm.prank(seizer);
         vm.expectRevert();
@@ -2045,11 +2052,8 @@ contract TokenAuthorityTest is Test {
         );
         vm.stopPrank();
         vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setSeizeConfig(
-            address(wrappedStablecoin),
-            address(burnAndRemintSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
+        tokenAuthority.setSeizeHandler(
+            address(wrappedStablecoin), address(burnAndRemintSeizeHandler)
         );
 
         vm.prank(seizer);
@@ -2117,7 +2121,7 @@ contract TokenAuthorityTest is Test {
     function test_seize_revertWhenDestinationRemovedFromList() public {
         _setUpSeize();
         vm.prank(bridgeAdmin);
-        authRegistry.modifyPolicyWhitelist(seizureWalletListId, seizureWallet, false);
+        authRegistry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, false);
 
         vm.startPrank(seizer);
         vm.expectRevert(
@@ -2209,7 +2213,7 @@ contract TokenAuthorityTest is Test {
         // Even if the handler were wrongly added to the list, coins sent to it would be stuck.
         vm.startPrank(bridgeAdmin);
         authRegistry.modifyPolicyWhitelist(
-            seizureWalletListId, address(forceTransferSeizeHandler), true
+            seizureWalletPolicyId, address(forceTransferSeizeHandler), true
         );
         vm.stopPrank();
 
@@ -2371,48 +2375,76 @@ contract TokenAuthorityTest is Test {
                                 Seize Settings
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_setSeizeConfig_storesAndEmits() public {
-        _setUpSeize();
-
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit ITokenAuthority.SeizeConfigSet(
-            tokenAuthorityAdmin,
-            address(backedStablecoin),
-            address(forceTransferSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
-        );
-        vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setSeizeConfig(
-            address(backedStablecoin),
-            address(forceTransferSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
-        );
-
-        ITokenAuthority.SeizeConfig memory seizeConfig =
-            tokenAuthority.getSeizeConfig(address(backedStablecoin));
-        assertEq(seizeConfig.seizeHandler, address(forceTransferSeizeHandler));
-        assertEq(seizeConfig.seizureWalletRegistry, address(authRegistry));
-        assertEq(seizeConfig.seizureWalletListId, seizureWalletListId);
+    function test_constructor_setsAuthRegistry() public view {
+        assertEq(address(tokenAuthority.AUTH_REGISTRY()), address(authRegistry));
     }
 
-    function test_setSeizeConfig_zeroHandlerClearsSettings() public {
+    function test_constructor_revertWhenAuthRegistryIsZero() public {
+        vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
+        new TokenAuthority(address(reserveLedgerToken), address(0), true);
+    }
+
+    function test_constructor_revertWhenAuthRegistryIsNotTheReserveLedgers() public {
+        address otherAuthRegistry = makeAddr("otherAuthRegistry");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITokenAuthority.AuthRegistryMismatch.selector,
+                address(authRegistry),
+                otherAuthRegistry
+            )
+        );
+        new TokenAuthority(address(reserveLedgerToken), otherAuthRegistry, true);
+    }
+
+    function test_registerStablecoin_setsSeizeHandler() public {
+        _setUpSeize();
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+
+        vm.recordLogs();
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin),
+            address(reserveLedgerWrappedHandler),
+            address(forceTransferSeizeHandler),
+            1_000_000e6
+        );
+        vm.stopPrank();
+
+        assertEq(
+            tokenAuthority.getSeizeHandler(address(wrappedStablecoin)),
+            address(forceTransferSeizeHandler)
+        );
+        _assertSeizeHandlerSetNotLogged();
+    }
+
+    function test_registerStablecoin_revertWhenSeizeHandlerIsInvalid() public {
+        _setUpSeize();
+        address[3] memory invalidSeizeHandlers = _invalidSeizeHandlers();
+
+        vm.startPrank(tokenAuthorityAdmin);
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+        for (uint256 i = 0; i < invalidSeizeHandlers.length; i++) {
+            vm.expectRevert(ITokenAuthority.InvalidSeizeHandler.selector);
+            tokenAuthority.registerStablecoin(
+                address(wrappedStablecoin),
+                address(reserveLedgerWrappedHandler),
+                invalidSeizeHandlers[i],
+                1_000_000e6
+            );
+        }
+        vm.stopPrank();
+    }
+
+    function test_unregisterStablecoin_clearsSeizeHandler() public {
         _setUpSeize();
 
-        vm.expectEmit(true, true, true, true, address(tokenAuthority));
-        emit ITokenAuthority.SeizeConfigSet(
-            tokenAuthorityAdmin, address(v2Stablecoin), address(0), address(0), 0
-        );
+        vm.recordLogs();
         vm.prank(tokenAuthorityAdmin);
-        tokenAuthority.setSeizeConfig(address(v2Stablecoin), address(0), address(0), 0);
+        tokenAuthority.unregisterStablecoin(address(v2Stablecoin));
 
-        ITokenAuthority.SeizeConfig memory seizeConfig =
-            tokenAuthority.getSeizeConfig(address(v2Stablecoin));
-        assertEq(seizeConfig.seizeHandler, address(0));
-        assertEq(seizeConfig.seizureWalletRegistry, address(0));
-        assertEq(seizeConfig.seizureWalletListId, 0);
-
+        assertEq(tokenAuthority.getSeizeHandler(address(v2Stablecoin)), address(0));
+        _assertSeizeHandlerSetNotLogged();
         vm.prank(seizer);
         vm.expectRevert(
             abi.encodeWithSelector(ISeize.SeizeNotConfigured.selector, address(v2Stablecoin))
@@ -2420,38 +2452,68 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
     }
 
-    function test_setSeizeConfig_revertWhenClearingWithLeftoverArguments() public {
+    function test_unregisterStablecoin_reregisteringStartsWithoutSeizeHandler() public {
         _setUpSeize();
-
         vm.startPrank(tokenAuthorityAdmin);
-        vm.expectRevert(ITokenAuthority.InvalidSeizeConfig.selector);
-        tokenAuthority.setSeizeConfig(address(v2Stablecoin), address(0), address(authRegistry), 0);
-        vm.expectRevert(ITokenAuthority.InvalidSeizeConfig.selector);
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin), address(0), address(0), seizureWalletListId
+        tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
+        tokenAuthority.registerStablecoin(
+            address(wrappedStablecoin),
+            address(reserveLedgerWrappedHandler),
+            address(0),
+            1_000_000e6
         );
         vm.stopPrank();
+
+        assertEq(tokenAuthority.getSeizeHandler(address(wrappedStablecoin)), address(0));
     }
 
-    function test_setSeizeConfig_revertWhenSeizeHandlerIsInvalid() public {
+    function test_setSeizeHandler_storesAndEmits() public {
         _setUpSeize();
 
-        // An address without code, and a token handler, which is not a seize handler.
-        address[2] memory invalidSeizeHandlers = [alice, address(reserveLedgerBackedHandler)];
+        vm.expectEmit(true, true, true, true, address(tokenAuthority));
+        emit ITokenAuthority.SeizeHandlerSet(
+            tokenAuthorityAdmin, address(backedStablecoin), address(forceTransferSeizeHandler)
+        );
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizeHandler(
+            address(backedStablecoin), address(forceTransferSeizeHandler)
+        );
+
+        assertEq(
+            tokenAuthority.getSeizeHandler(address(backedStablecoin)),
+            address(forceTransferSeizeHandler)
+        );
+    }
+
+    function test_setSeizeHandler_zeroClearsHandler() public {
+        _setUpSeize();
+
+        vm.expectEmit(true, true, true, true, address(tokenAuthority));
+        emit ITokenAuthority.SeizeHandlerSet(tokenAuthorityAdmin, address(v2Stablecoin), address(0));
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizeHandler(address(v2Stablecoin), address(0));
+
+        assertEq(tokenAuthority.getSeizeHandler(address(v2Stablecoin)), address(0));
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.SeizeNotConfigured.selector, address(v2Stablecoin))
+        );
+        tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_setSeizeHandler_revertWhenSeizeHandlerIsInvalid() public {
+        _setUpSeize();
+        address[3] memory invalidSeizeHandlers = _invalidSeizeHandlers();
+
         vm.startPrank(tokenAuthorityAdmin);
         for (uint256 i = 0; i < invalidSeizeHandlers.length; i++) {
             vm.expectRevert(ITokenAuthority.InvalidSeizeHandler.selector);
-            tokenAuthority.setSeizeConfig(
-                address(v2Stablecoin),
-                invalidSeizeHandlers[i],
-                address(authRegistry),
-                seizureWalletListId
-            );
+            tokenAuthority.setSeizeHandler(address(v2Stablecoin), invalidSeizeHandlers[i]);
         }
         vm.stopPrank();
     }
 
-    function test_setSeizeConfig_revertWhenNotAdmin() public {
+    function test_setSeizeHandler_revertWhenNotAdmin() public {
         _setUpSeize();
 
         vm.prank(seizer);
@@ -2460,28 +2522,103 @@ contract TokenAuthorityTest is Test {
                 IAccessControl.AccessControlUnauthorizedAccount.selector, seizer, DEFAULT_ADMIN_ROLE
             )
         );
-        tokenAuthority.setSeizeConfig(
-            address(v2Stablecoin),
-            address(burnAndRemintSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
-        );
+        tokenAuthority.setSeizeHandler(address(v2Stablecoin), address(burnAndRemintSeizeHandler));
     }
 
-    function test_setSeizeConfig_revertWhenStablecoinIsZero() public {
+    function test_setSeizeHandler_revertWhenStablecoinIsZero() public {
         _setUpSeize();
 
         vm.prank(tokenAuthorityAdmin);
         vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
-        tokenAuthority.setSeizeConfig(
-            address(0),
-            address(burnAndRemintSeizeHandler),
-            address(authRegistry),
-            seizureWalletListId
+        tokenAuthority.setSeizeHandler(address(0), address(burnAndRemintSeizeHandler));
+    }
+
+    function test_setSeizeHandler_revertWhenStablecoinNotRegistered() public {
+        _setUpSeize();
+
+        vm.prank(tokenAuthorityAdmin);
+        vm.expectRevert(ITokenAuthority.StablecoinNotRegistered.selector);
+        tokenAuthority.setSeizeHandler(
+            makeAddr("unregisteredStablecoin"), address(burnAndRemintSeizeHandler)
         );
     }
 
-    function test_setSeizeConfig_revertWhenListUnusable() public {
+    function test_setSeizeHandler_worksWhileStablecoinIsNotPaused() public {
+        _setUpSeize();
+        // Unlike setTokenHandler, swapping the seize handler never touches issuance, so it needs
+        // no issuance pause first.
+        assertFalse(tokenAuthority.stablecoinIsPaused(address(v2Stablecoin)));
+
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizeHandler(address(v2Stablecoin), address(burnAndRemintSeizeHandler));
+    }
+
+    function test_setSeizureWalletPolicyId_storesAndEmits() public {
+        _setUpSeize();
+        vm.prank(bridgeAdmin);
+        uint64 otherPolicyId =
+            authRegistry.createPolicy(bridgeAdmin, IAuthRegistry.PolicyType.WHITELIST);
+
+        vm.expectEmit(true, true, true, true, address(tokenAuthority));
+        emit ISeize.SeizureWalletPolicyIdSet(tokenAuthorityAdmin, otherPolicyId);
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizureWalletPolicyId(otherPolicyId);
+
+        assertEq(tokenAuthority.seizureWalletPolicyId(), otherPolicyId);
+    }
+
+    function test_setSeizureWalletPolicyId_appliesToEveryStablecoin() public {
+        _setUpSeize();
+        // One list serves every stablecoin: removing the wallet from it blocks seizes on both.
+        vm.prank(bridgeAdmin);
+        authRegistry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, false);
+
+        vm.startPrank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.DestinationNotSeizureWallet.selector, seizureWallet)
+        );
+        tokenAuthority.seize(address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.DestinationNotSeizureWallet.selector, seizureWallet)
+        );
+        tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
+        vm.stopPrank();
+    }
+
+    function test_setSeizureWalletPolicyId_zeroDisablesSeize() public {
+        _setUpSeize();
+
+        vm.expectEmit(true, true, true, true, address(tokenAuthority));
+        emit ISeize.SeizureWalletPolicyIdSet(tokenAuthorityAdmin, 0);
+        vm.prank(tokenAuthorityAdmin);
+        tokenAuthority.setSeizureWalletPolicyId(0);
+
+        assertEq(tokenAuthority.seizureWalletPolicyId(), 0);
+        vm.startPrank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.SeizeNotConfigured.selector, address(wrappedStablecoin))
+        );
+        tokenAuthority.seize(address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.SeizeNotConfigured.selector, address(v2Stablecoin))
+        );
+        tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
+        vm.stopPrank();
+    }
+
+    function test_setSeizureWalletPolicyId_revertWhenNotAdmin() public {
+        _setUpSeize();
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, seizer, DEFAULT_ADMIN_ROLE
+            )
+        );
+        tokenAuthority.setSeizureWalletPolicyId(seizureWalletPolicyId);
+    }
+
+    function test_setSeizureWalletPolicyId_revertWhenPolicyUnusable() public {
         _setUpSeize();
         vm.startPrank(bridgeAdmin);
         uint64 blacklistId =
@@ -2493,52 +2630,63 @@ contract TokenAuthorityTest is Test {
         );
         vm.stopPrank();
 
-        // Zero registry, the two built-in policies, a blacklist (authorizes everyone unlisted),
-        // and a whitelist that names the TokenAuthority itself.
-        address[5] memory registries = [
-            address(0),
-            address(authRegistry),
-            address(authRegistry),
-            address(authRegistry),
-            address(authRegistry)
-        ];
-        uint64[5] memory listIds =
-            [seizureWalletListId, 0, 1, blacklistId, listContainingTokenAuthority];
+        // 0 is reserved for disabling seize, so only the always-allow built-in is checked here,
+        // with a blacklist (authorizes everyone unlisted) and a whitelist naming the
+        // TokenAuthority itself.
+        uint64[3] memory policyIds = [uint64(1), blacklistId, listContainingTokenAuthority];
 
         vm.startPrank(tokenAuthorityAdmin);
-        for (uint256 i = 0; i < registries.length; i++) {
+        for (uint256 i = 0; i < policyIds.length; i++) {
             vm.expectRevert(
                 abi.encodeWithSelector(
-                    ISeize.InvalidSeizureWalletList.selector, registries[i], listIds[i]
+                    ISeize.InvalidSeizureWalletList.selector, address(authRegistry), policyIds[i]
                 )
             );
-            tokenAuthority.setSeizeConfig(
-                address(v2Stablecoin), address(burnAndRemintSeizeHandler), registries[i], listIds[i]
-            );
+            tokenAuthority.setSeizureWalletPolicyId(policyIds[i]);
         }
         vm.stopPrank();
+    }
+
+    /// @dev Like the token handler, only the dedicated setter emits its event: registration and
+    /// unregistration are covered by StablecoinRegistered and StablecoinUnregistered.
+    function _assertSeizeHandlerSetNotLogged() internal {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != ITokenAuthority.SeizeHandlerSet.selector,
+                "SeizeHandlerSet emitted outside setSeizeHandler"
+            );
+        }
+    }
+
+    /// @dev An address without code, a token handler (not a seize handler), and a seize handler
+    /// built for a different TokenAuthority.
+    function _invalidSeizeHandlers() internal returns (address[3] memory) {
+        return [
+            alice,
+            address(reserveLedgerBackedHandler),
+            address(new ForceTransferSeizeHandler(makeAddr("otherTokenAuthority")))
+        ];
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Storage Layout
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_seizeConfigs_storageSlotIsAppended() public {
+    function test_seizeState_storageSlotsAreAppended() public {
         _setUpSeize();
 
-        // seizeConfigs is slot 6: minterAllowances 0, mintTxnLimits 1, tokenHandlers 2,
-        // idempotencyKeysVersion 3, stablecoinIsPaused 4, idempotencyKeyRegistry 5. Each
-        // SeizeConfig takes two words: the seize handler alone (two addresses don't fit one word),
-        // then the registry
-        // packed with the list ID.
-        uint256 seizeConfigSlot = uint256(keccak256(abi.encode(address(v2Stablecoin), uint256(6))));
+        // minterAllowances 0, mintTxnLimits 1, tokenHandlers 2, idempotencyKeysVersion 3,
+        // stablecoinIsPaused 4, idempotencyKeyRegistry 5. Seize state is appended: seizeHandlers
+        // is slot 6 and seizureWalletPolicyId is slot 7, each in its own slot.
+        uint256 seizeHandlerSlot = uint256(keccak256(abi.encode(address(v2Stablecoin), uint256(6))));
         assertEq(
-            uint256(vm.load(address(tokenAuthority), bytes32(seizeConfigSlot))),
+            uint256(vm.load(address(tokenAuthority), bytes32(seizeHandlerSlot))),
             uint256(uint160(address(burnAndRemintSeizeHandler)))
         );
         assertEq(
-            uint256(vm.load(address(tokenAuthority), bytes32(seizeConfigSlot + 1))),
-            uint256(uint160(address(authRegistry))) | (uint256(seizureWalletListId) << 160)
+            uint256(vm.load(address(tokenAuthority), bytes32(uint256(7)))),
+            uint256(seizureWalletPolicyId)
         );
         assertEq(
             address(uint160(uint256(vm.load(address(tokenAuthority), bytes32(uint256(5)))))),

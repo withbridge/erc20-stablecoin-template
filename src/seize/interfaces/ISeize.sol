@@ -69,12 +69,33 @@ interface ISeize {
         address caller
     );
 
+    /// @notice Emitted when the Seizure Wallet list is set or cleared
+    /// @param sender The address that set the list (must have DEFAULT_ADMIN_ROLE)
+    /// @param policyId The new Seizure Wallet policy ID; 0 disables seize
+    event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
 
     /// @notice Role that may seize. Granted only to the entity's Seize Authority vault.
     function SEIZER_ROLE() external view returns (bytes32);
+
+    /**
+     * @notice The policy listing the approved Seizure Wallets for every stablecoin this controller
+     * seizes; 0 when seize is disabled
+     * @dev Read from the controller's fixed policy registry: the TokenAuthority's AuthRegistry, or
+     * TIP-403 on the TIP20Controller.
+     */
+    function seizureWalletPolicyId() external view returns (uint256);
+
+    /**
+     * @notice Sets or clears the policy listing the approved Seizure Wallets
+     * @dev Pass 0 to disable seize. Any other policy must be usable (see
+     * {InvalidSeizureWalletList}).
+     * @param policyId The Seizure Wallet policy ID
+     */
+    function setSeizureWalletPolicyId(uint64 policyId) external;
 
     /**
      * @notice Moves `amount` of a frozen holder's coins to an approved Seizure Wallet

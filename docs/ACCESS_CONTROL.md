@@ -120,7 +120,7 @@ Full administrative control over TokenAuthority.
 
 | Permission | Function |
 |------------|----------|
-| Register stablecoins | `registerStablecoin(address, address, uint256)` |
+| Register stablecoins | `registerStablecoin(address, address, address, uint256)` |
 | Set whether keys are required on `mint` | `setMintIntentVersion(MintIntentVersion)` |
 | Migrate idempotency-key registry | `setIdempotencyKeyRegistry(address)` |
 | Manage roles | `grantRole()`, `revokeRole()` |
@@ -185,7 +185,7 @@ Configure token handlers.
 |------------|----------|
 | Seize from a frozen holder to a listed Seizure Wallet | `seize(address, address, address, uint256)` |
 
-Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizeConfig(address, address, address, uint64)` (stablecoin, seize handler, registry, list ID) on `TokenAuthority`, and `setSeizureWalletPolicyId(uint64)` on `TIP20Controller`.
+Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizureWalletPolicyId(uint64)` on both controllers (one list for the whole controller, read from its fixed registry), and on `TokenAuthority` `setSeizeHandler(address, address)` for stablecoins registered without a seize handler. New stablecoins get their seize handler from `registerStablecoin`.
 
 ### Roles stablecoins grant for seize
 

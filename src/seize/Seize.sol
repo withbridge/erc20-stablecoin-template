@@ -17,7 +17,7 @@ import {
 /// @dev Holds no state. Declaring storage here would insert slots ahead of the inheriting
 /// controller's existing sequential variables and shift its layout (the same constraint as
 /// {IdempotencyKeys}). Implementers store their own seize settings and expose them through
-/// {_seizureWalletList}.
+/// {_seizureWalletList}, {_seizureWalletRegistry}, and {_setSeizureWalletPolicyId}.
 /// @dev No reentrancy guard: {seize} calls only the admin-configured stablecoin and its list
 /// registry, and none of the supported stablecoins call out during mint, burn, or transfer. The
 /// post-conditions would revert any balance drift a reentrant path could cause.
@@ -84,6 +84,21 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
         emit Seized(stablecoinContract, from, to, amount, msg.sender);
     }
 
+    /**
+     * @inheritdoc ISeize
+     * @dev Shared by every controller, like {IdempotencyKeys-setIdempotencyKeyRegistry}. Only the
+     * policy ID is configurable: each controller reads it from one fixed registry.
+     */
+    function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (policyId != 0) {
+            _requireValidSeizureWalletList(_seizureWalletRegistry(), policyId);
+        }
+
+        _setSeizureWalletPolicyId(policyId);
+
+        emit SeizureWalletPolicyIdSet(msg.sender, policyId);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Internal Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -148,6 +163,12 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
         view
         virtual
         returns (address registry, uint64 listId);
+
+    /// @dev Returns the fixed registry the Seizure Wallet policy ID is read from.
+    function _seizureWalletRegistry() internal view virtual returns (address);
+
+    /// @dev Persists the Seizure Wallet policy ID in the implementer's own storage.
+    function _setSeizureWalletPolicyId(uint64 policyId) internal virtual;
 
     /// @dev Returns whether `holder` is frozen on the stablecoin.
     function _isHolderBlocked(address stablecoinContract, address holder)
