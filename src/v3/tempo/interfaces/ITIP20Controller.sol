@@ -2,13 +2,14 @@
 pragma solidity ^0.8.24;
 
 import { IIdempotencyKeys } from "../../../idempotency/interfaces/IIdempotencyKeys.sol";
+import { ISeize } from "../../../seize/interfaces/ISeize.sol";
 
 /// @title ITIP20Controller
 /// @notice Interface for the TIP20Controller contract which manages minting rate limits and
 /// allowances for stablecoins backed by a reserve ledger token
 /// @dev Enforces per-transaction mint limits and per-minter allowances for `mint`.
 /// Both `mint` and `mintBridgeEcosystem` are capped by ABSOLUTE_MAX.
-interface ITIP20Controller is IIdempotencyKeys {
+interface ITIP20Controller is IIdempotencyKeys, ISeize {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums

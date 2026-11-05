@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { IIdempotencyKeys } from "../idempotency/interfaces/IIdempotencyKeys.sol";
+import { ISeize } from "../seize/interfaces/ISeize.sol";
+import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 
 /// @title ITokenAuthority
 /// @author Bridge
@@ -9,7 +11,7 @@ import { IIdempotencyKeys } from "../idempotency/interfaces/IIdempotencyKeys.sol
 /// allowances for stablecoins
 /// @dev Enforces per-transaction mint limits and per-minter allowances for `mint`.
 /// Both `mint` and `mintBridgeEcosystem` are capped by ABSOLUTE_MAX.
-interface ITokenAuthority is IIdempotencyKeys {
+interface ITokenAuthority is IIdempotencyKeys, ISeize {
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Enums
@@ -72,6 +74,15 @@ interface ITokenAuthority is IIdempotencyKeys {
 
     /// @notice Thrown when the stablecoin is not paused
     error StablecoinNotPaused();
+
+    /// @notice Thrown when the seize handler does not implement {ISeizeHandler}, or was built for
+    /// a different TokenAuthority
+    error InvalidSeizeHandler();
+
+    /// @notice Thrown at construction when the AuthRegistry differs from the reserve ledger's
+    /// @param reserveLedgerAuthRegistry The AuthRegistry the reserve ledger token checks against
+    /// @param authRegistry The AuthRegistry passed to the constructor
+    error AuthRegistryMismatch(address reserveLedgerAuthRegistry, address authRegistry);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -174,6 +185,14 @@ interface ITokenAuthority is IIdempotencyKeys {
         address indexed sender, address indexed stablecoinContract, bool isPaused
     );
 
+    /// @notice Emitted when a seize handler is set or cleared for a stablecoin contract
+    /// @param sender The address that set the seize handler (must have DEFAULT_ADMIN_ROLE)
+    /// @param stablecoinContract The address of the stablecoin contract
+    /// @param seizeHandler The seize handler; zero when cleared
+    event SeizeHandlerSet(
+        address indexed sender, address indexed stablecoinContract, address indexed seizeHandler
+    );
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -190,6 +209,12 @@ interface ITokenAuthority is IIdempotencyKeys {
      * @notice Query the address of the reserve ledger token
      */
     function RESERVE_LEDGER_TOKEN() external view returns (address);
+
+    /**
+     * @notice The AuthRegistry holding this TokenAuthority's Seizure Wallet list
+     * @dev Fixed at deployment to the reserve ledger token's own AuthRegistry
+     */
+    function AUTH_REGISTRY() external view returns (IAuthRegistry);
 
     /**
      * @notice The hard cap applied to any single mint amount, allowance, or transaction limit
@@ -343,11 +368,14 @@ interface ITokenAuthority is IIdempotencyKeys {
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      * @param tokenHandler The address of the token handler
+     * @param seizeHandler The seize handler that moves this stablecoin's coins; zero leaves the
+     * stablecoin unseizable until {setSeizeHandler} is called
      * @param mintTxnLimit The mint transaction limit
      */
     function registerStablecoin(
         address stablecoinContract,
         address tokenHandler,
+        address seizeHandler,
         uint256 mintTxnLimit
     ) external;
 
@@ -356,6 +384,7 @@ interface ITokenAuthority is IIdempotencyKeys {
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
      * @param stablecoinContract The address of the stablecoin contract
      */
+    /// @dev Also clears the stablecoin's seize handler
     function unregisterStablecoin(address stablecoinContract) external;
 
     /**
@@ -363,6 +392,27 @@ interface ITokenAuthority is IIdempotencyKeys {
      * @param idempotencyKeysVersion The new mint idempotency-key policy
      */
     function setIdempotencyKeysVersion(IdempotencyKeysVersion idempotencyKeysVersion) external;
+
+    /**
+     * @notice Sets or clears the seize handler for a registered stablecoin contract
+     * @dev Only callable by DEFAULT_ADMIN_ROLE. Sets the handler for stablecoins registered before
+     * {registerStablecoin} took one, and replaces or clears it later. A non-zero seize handler
+     * must implement {ISeizeHandler} and belong to this TokenAuthority. Pass the zero address to
+     * clear, which makes the stablecoin unseizable.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param seizeHandler The seize handler that moves this stablecoin's coins
+     */
+    function setSeizeHandler(address stablecoinContract, address seizeHandler) external;
+
+    /**
+     * @notice Gets the seize handler for a stablecoin contract
+     * @param stablecoinContract The address of the stablecoin contract
+     * @return seizeHandler The seize handler; zero when the stablecoin cannot be seized
+     */
+    function getSeizeHandler(address stablecoinContract)
+        external
+        view
+        returns (address seizeHandler);
 
     /**
      * @notice Gets the token handler for a specific stablecoin contract

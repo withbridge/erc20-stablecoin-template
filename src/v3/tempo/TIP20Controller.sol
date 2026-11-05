@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Version } from "../../Version.sol";
 import { IdempotencyKeys } from "../../idempotency/IdempotencyKeys.sol";
 import { IIdempotencyKeyRegistry } from "../../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
+import { Seize } from "../../seize/Seize.sol";
 import { ReserveStore } from "./ReserveStore.sol";
 import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { StdPrecompiles } from "tempo-std/StdPrecompiles.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 
 /// @title TIP20Controller
@@ -25,6 +27,7 @@ contract TIP20Controller is
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
     IdempotencyKeys,
+    Seize,
     ITIP20Controller,
     Version
 {
@@ -79,6 +82,14 @@ contract TIP20Controller is
     /// of them. Declared here rather than in {IdempotencyKeys} so the slot is appended after this
     /// contract's existing variables instead of shifting them.
     IIdempotencyKeyRegistry public idempotencyKeyRegistry;
+
+    /// @notice The TIP-403 policy listing the approved Seizure Wallets; 0 when seize is disabled
+    /// @dev One list serves every stablecoin on this controller. Stored as a full word, not the
+    /// `uint64` TIP-403 uses, so it takes a fresh slot (6) after {idempotencyKeyRegistry} instead
+    /// of packing into that slot's unused bytes. Every new variable then sits in its own slot, the
+    /// same append-only layout earlier upgrades used. {setSeizureWalletPolicyId} only accepts a
+    /// `uint64`, so the value always fits one.
+    uint256 public seizureWalletPolicyId;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -497,6 +508,77 @@ contract TIP20Controller is
 
     function _requireStablecoinPaused(address stablecoinContract) internal view {
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
+    }
+
+    /// @inheritdoc Seize
+    function _seizureWalletList(address stablecoinContract)
+        internal
+        view
+        override
+        returns (address registry, uint64 listId)
+    {
+        require(seizureWalletPolicyId != 0, SeizeNotConfigured(stablecoinContract));
+
+        // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return (_seizureWalletRegistry(), uint64(seizureWalletPolicyId));
+    }
+
+    /// @inheritdoc Seize
+    /// @dev TIP-20 coins check transfers against TIP-403, so the Seizure Wallet list lives there.
+    function _seizureWalletRegistry() internal pure override returns (address) {
+        return address(StdPrecompiles.TIP403_REGISTRY);
+    }
+
+    /// @inheritdoc Seize
+    function _setSeizureWalletPolicyId(uint64 policyId) internal override {
+        seizureWalletPolicyId = policyId;
+    }
+
+    /// @inheritdoc Seize
+    /// @dev TIP-20 has no `isBlocked`; a holder is frozen when the coin's own TIP-403 transfer
+    /// policy does not authorize it.
+    function _isHolderBlocked(address stablecoinContract, address holder)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        uint64 transferPolicyId = ITIP20(stablecoinContract).transferPolicyId();
+        return !StdPrecompiles.TIP403_REGISTRY.isAuthorized(transferPolicyId, holder);
+    }
+
+    /**
+     * @inheritdoc Seize
+     * @dev Burns from the holder with `burnAt` and re-mints with the coin's own `mint`. Never uses
+     * {_mint}: that path also mints reserve ledger tokens into the reserve store, which would add
+     * backing that does not exist. Burning first means the re-mint can never exceed the coin's
+     * supply cap, which TIP-20 does not allow below current supply.
+     *
+     * `burnAt` requires an unpaused coin, so a paused coin is unpaused for the duration and
+     * re-paused before returning. `burnAt` does not check the transfer policy, which is why
+     * {seize} checks the freeze itself.
+     */
+    function _executeSeize(
+        address stablecoinContract,
+        address from,
+        address to,
+        uint256 amount,
+        uint256 /* holderBalance */
+    ) internal override {
+        ITIP20 stablecoin = ITIP20(stablecoinContract);
+
+        bool wasPaused = stablecoin.paused();
+        if (wasPaused) {
+            stablecoin.unpause();
+        }
+
+        stablecoin.burnAt(from, amount);
+        stablecoin.mint(to, amount);
+
+        if (wasPaused) {
+            stablecoin.pause();
+        }
     }
 
     /// @inheritdoc IdempotencyKeys
