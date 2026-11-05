@@ -356,7 +356,11 @@ The seize counterpart of token handlers, in `src/tokenAuthority/seizeHandler/`. 
 
 Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`.
 
-**Deployment:** `scripts/07_DeploySeizeHandlers.s.sol` deploys both handlers for one TokenAuthority (`run(address tokenAuthority)`) and checks they were built for it. It only deploys: the role grants on each stablecoin, `setSeizeHandler`, `setSeizureWalletPolicyId` and the `SEIZER_ROLE` grant are signed afterwards by the TokenAuthority and stablecoin admins. `DeployAllE2ETest.test_seizeHandlersDeployment_seizeEndToEnd` runs it against a `DeployAll` deployment and seizes end to end.
+**Deployment:** `scripts/07_DeploySeizeHandlers.s.sol` deploys both handlers for one TokenAuthority (`run(address tokenAuthority)`) and checks they were built for it.
+- New chains: `deploy-new-chain.sh` runs 07 right after 03, and `05_ConfigureAndHandover` (via `deploy-new-stablecoin.sh`, which now takes `FORCE_TRANSFER_SEIZE_HANDLER`) grants the new V3 stablecoin's `FORCE_TRANSFER_ROLE` to the force-transfer handler and registers the stablecoin with it. `DeployAll` does the same. `06_Verify` checks the seize handler, that it was built for the TokenAuthority, and that it is the only `FORCE_TRANSFER_ROLE` holder.
+- Existing TokenAuthorities: run 07 on its own, then each stablecoin's admin grants the roles and the TokenAuthority admin calls `setSeizeHandler`.
+- Never scripted: `setSeizureWalletPolicyId` and the `SEIZER_ROLE` grant, which belong to the entity's Seizure List Authority and Seize Authority setup.
+- Tested by `DeployAllE2ETest` (`test_seizeEndToEnd_stablecoinRegisteredWithSeizeHandler`, `test_deploySeizeHandlersScript_existingStablecoin`, and `Verify` in `test_fullDeployment`).
 
 ### ReserveStore
 

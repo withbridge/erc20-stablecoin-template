@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # deploy-new-stablecoin.sh — deploys and configures a new stablecoin on an
 # existing chain that already has AuthRegistry, ReserveLedger,
-# IdempotencyKeyRegistry, and TokenAuthority deployed.
+# IdempotencyKeyRegistry, TokenAuthority, and its seize handlers deployed.
 #
 # Usage:
 #   source .env   # fill in stablecoin config vars (see .env.example)
 #   bash scripts/deploy-new-stablecoin.sh \
 #     <AUTH_REGISTRY> <RESERVE_LEDGER> <IDEMPOTENCY_KEY_REGISTRY> \
-#     <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> [extra forge flags]
+#     <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> <FORCE_TRANSFER_SEIZE_HANDLER> \
+#     [extra forge flags]
 #
-# The first five positional arguments are the chain infrastructure addresses
-# output by deploy-new-chain.sh.
+# The first six positional arguments are the chain infrastructure addresses
+# output by deploy-new-chain.sh. The stablecoin is registered with the
+# FORCE_TRANSFER_SEIZE_HANDLER as its seize handler.
 #
 # Requires: forge
 
 set -euo pipefail
 
-if [[ $# -lt 5 ]]; then
-    echo "Usage: $0 <AUTH_REGISTRY> <RESERVE_LEDGER> <IDEMPOTENCY_KEY_REGISTRY> <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> [forge flags]"
+if [[ $# -lt 6 ]]; then
+    echo "Usage: $0 <AUTH_REGISTRY> <RESERVE_LEDGER> <IDEMPOTENCY_KEY_REGISTRY> <TOKEN_AUTHORITY> <TRANSFER_POLICY_ID> <FORCE_TRANSFER_SEIZE_HANDLER> [forge flags]"
     exit 1
 fi
 
@@ -26,7 +28,8 @@ RESERVE_LEDGER="$2"
 IDEMPOTENCY_KEY_REGISTRY="$3"
 TOKEN_AUTHORITY="$4"
 TRANSFER_POLICY_ID="$5"
-shift 5
+FORCE_TRANSFER_SEIZE_HANDLER="$6"
+shift 6
 
 FORGE_EXTRA_FLAGS=("$@")
 
@@ -81,9 +84,9 @@ HANDOVER_CONFIG="(${TXN_MINT_LIMIT},${MINTER_ADDRESS},${MINTER_ALLOWANCE},${RL_M
 
 run_script "05: Configure and Handover" \
     scripts/05_ConfigureAndHandover.s.sol \
-    --sig "run(address,address,address,address,(uint256,address,uint256,uint256,uint256,address,address,address,address,address,address))" \
+    --sig "run(address,address,address,address,address,(uint256,address,uint256,uint256,uint256,address,address,address,address,address,address))" \
     "${RESERVE_LEDGER}" "${IDEMPOTENCY_KEY_REGISTRY}" "${TOKEN_AUTHORITY}" "${STABLECOIN}" \
-    "${HANDOVER_CONFIG}"
+    "${FORCE_TRANSFER_SEIZE_HANDLER}" "${HANDOVER_CONFIG}"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

@@ -23,12 +23,12 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  *         2. Deployer == admin: renunciation skipped
  *         3. Mint→burn round-trip through the TokenAuthority
  *         4. Adding a second stablecoin to existing infrastructure
- *         5. Seize handlers deployed by 07_DeploySeizeHandlers, then a seize end to end
+ *         5. Seize end to end: the stablecoin DeployAll registered with its seize handler, and
+ *            a TokenAuthority given new handlers by 07_DeploySeizeHandlers
  */
 contract DeployAllE2ETest is Test, DeployAll {
 
     bytes32 constant BURNER_ROLE = keccak256("BURNER_ROLE");
-    bytes32 constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
     bytes32 constant SEIZER_ROLE = keccak256("SEIZER_ROLE");
 
     function test_fullDeployment() public {
@@ -92,6 +92,7 @@ contract DeployAllE2ETest is Test, DeployAll {
             r2.idempotencyKeyRegistry,
             r2.tokenAuthority,
             secondHandler,
+            r2.seizeHandlers.forceTransferSeizeHandler,
             secondSc,
             address(this),
             handover2
@@ -211,52 +212,84 @@ contract DeployAllE2ETest is Test, DeployAll {
                             Seize Handlers Deployment
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @dev Runs 07_DeploySeizeHandlers against a DeployAll deployment, then sets seize up the way
-    ///      a stablecoin registered before seize existed gets it (DeployAll registers it with no
-    ///      seize handler), and seizes from a frozen holder.
-    function test_seizeHandlersDeployment_seizeEndToEnd() public {
+    /// @dev DeployAll deploys the seize handlers and registers the stablecoin with the
+    ///      ForceTransferSeizeHandler, so only the Seizure Wallet list and SEIZER_ROLE remain.
+    function test_seizeEndToEnd_stablecoinRegisteredWithSeizeHandler() public {
         // deployer == admin, so this contract can act as every admin below
+        DeployResult memory result =
+            _execute(address(this), _defaultRlConfig(), _defaultScConfig(), _handoverConfig(true));
+        address forceTransferSeizeHandler = result.seizeHandlers.forceTransferSeizeHandler;
+
+        assertEq(
+            TokenAuthority(result.tokenAuthority).getSeizeHandler(result.stablecoin),
+            forceTransferSeizeHandler,
+            "stablecoin registered with the force-transfer seize handler"
+        );
+        _assertBuiltFor(result.seizeHandlers, result.tokenAuthority);
+
+        _seizeFromFrozenHolder(result);
+    }
+
+    /// @dev Runs 07_DeploySeizeHandlers on its own, as for a TokenAuthority that predates seize,
+    ///      and moves an already-registered stablecoin onto the new handler with setSeizeHandler.
+    function test_deploySeizeHandlersScript_existingStablecoin() public {
         DeployResult memory result =
             _execute(address(this), _defaultRlConfig(), _defaultScConfig(), _handoverConfig(true));
         TokenAuthority ta = TokenAuthority(result.tokenAuthority);
         StablecoinTemplateV3 sc = StablecoinTemplateV3(result.stablecoin);
-        AuthRegistry registry = AuthRegistry(result.authRegistry);
 
-        // --- Deploy the seize handlers with the script ---
-        DeploySeizeHandlers.SeizeHandlers memory seizeHandlers =
-            (new DeploySeizeHandlers()).run(result.tokenAuthority);
+        // --- Deploy the seize handlers with the script's real entry point ---
+        SeizeHandlers memory seizeHandlers = (new DeploySeizeHandlers()).run(result.tokenAuthority);
+        _assertBuiltFor(seizeHandlers, result.tokenAuthority);
 
-        assertEq(
-            ISeizeHandler(seizeHandlers.forceTransferSeizeHandler).TOKEN_AUTHORITY(),
-            result.tokenAuthority,
-            "force-transfer handler built for this TA"
-        );
-        assertEq(
-            ISeizeHandler(seizeHandlers.burnAndRemintSeizeHandler).TOKEN_AUTHORITY(),
-            result.tokenAuthority,
-            "burn-and-re-mint handler built for this TA"
-        );
-
-        // --- Admin setup, as each admin would sign it ---
-        address seizer = makeAddr("seizer");
-        address seizureWallet = makeAddr("seizureWallet");
-        address holder = makeAddr("holder");
-
-        uint64 seizureWalletPolicyId =
-            registry.createPolicy(address(this), IAuthRegistry.PolicyType.WHITELIST);
-        registry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
-
+        // --- Move the stablecoin onto them, as its admin and the TokenAuthority admin would ---
+        // FORCE_TRANSFER_ROLE must keep exactly one holder, so the old handler loses it.
+        sc.revokeRole(FORCE_TRANSFER_ROLE, result.seizeHandlers.forceTransferSeizeHandler);
         sc.grantRole(FORCE_TRANSFER_ROLE, seizeHandlers.forceTransferSeizeHandler);
         ta.setSeizeHandler(result.stablecoin, seizeHandlers.forceTransferSeizeHandler);
-        ta.setSeizureWalletPolicyId(seizureWalletPolicyId);
-        ta.grantRole(SEIZER_ROLE, seizer);
 
         assertEq(
             ta.getSeizeHandler(result.stablecoin),
             seizeHandlers.forceTransferSeizeHandler,
-            "seize handler set"
+            "seize handler moved"
         );
-        assertEq(ta.seizureWalletPolicyId(), seizureWalletPolicyId, "seizure wallet policy set");
+        assertEq(sc.getRoleMemberCount(FORCE_TRANSFER_ROLE), 1, "one force-transfer holder");
+
+        _seizeFromFrozenHolder(result);
+    }
+
+    function _assertBuiltFor(SeizeHandlers memory seizeHandlers, address tokenAuthority)
+        internal
+        view
+    {
+        assertEq(
+            ISeizeHandler(seizeHandlers.forceTransferSeizeHandler).TOKEN_AUTHORITY(),
+            tokenAuthority,
+            "force-transfer handler built for this TA"
+        );
+        assertEq(
+            ISeizeHandler(seizeHandlers.burnAndRemintSeizeHandler).TOKEN_AUTHORITY(),
+            tokenAuthority,
+            "burn-and-re-mint handler built for this TA"
+        );
+    }
+
+    /// @dev Sets the Seizure Wallet list and SEIZER_ROLE (the steps no script does), funds and
+    ///      freezes a holder, then seizes part of its balance through the TokenAuthority.
+    function _seizeFromFrozenHolder(DeployResult memory result) internal {
+        TokenAuthority ta = TokenAuthority(result.tokenAuthority);
+        StablecoinTemplateV3 sc = StablecoinTemplateV3(result.stablecoin);
+        AuthRegistry registry = AuthRegistry(result.authRegistry);
+        address seizer = makeAddr("seizer");
+        address seizureWallet = makeAddr("seizureWallet");
+        address holder = makeAddr("holder");
+
+        // --- Seizure List Authority and TokenAuthority admin setup ---
+        uint64 seizureWalletPolicyId =
+            registry.createPolicy(address(this), IAuthRegistry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
+        ta.setSeizureWalletPolicyId(seizureWalletPolicyId);
+        ta.grantRole(SEIZER_ROLE, seizer);
 
         // --- Fund the holder, then freeze it ---
         _allowMintTo(result, holder);

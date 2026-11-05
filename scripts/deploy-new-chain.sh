@@ -4,6 +4,7 @@
 #   02.  ReserveLedger  (+ transfer and mint-recipient policies)
 #   03a. IdempotencyKeyRegistry  (shared by every controller on this chain)
 #   03.  TokenAuthority
+#   07.  Seize handlers  (one pair per TokenAuthority)
 #
 # Run this once per chain. After this, use deploy-new-stablecoin.sh for each
 # stablecoin you want to deploy on this chain.
@@ -87,6 +88,19 @@ out=$(run_script "03: Deploy TokenAuthority" \
 
 TOKEN_AUTHORITY=$(extract "TOKEN_AUTHORITY" "$out")
 
+# ── Step 07: Deploy Seize Handlers ───────────────────────────────────────────
+#
+# One pair per TokenAuthority. deploy-new-stablecoin.sh registers each new
+# StablecoinTemplateV3 with the ForceTransferSeizeHandler.
+#
+out=$(run_script "07: Deploy Seize Handlers" \
+    scripts/07_DeploySeizeHandlers.s.sol \
+    --sig "run(address)" \
+    "${TOKEN_AUTHORITY}" 2>&1 | tee /dev/stderr)
+
+FORCE_TRANSFER_SEIZE_HANDLER=$(extract "FORCE_TRANSFER_SEIZE_HANDLER" "$out")
+BURN_AND_REMINT_SEIZE_HANDLER=$(extract "BURN_AND_REMINT_SEIZE_HANDLER" "$out")
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
@@ -96,8 +110,10 @@ echo "RESERVE_LEDGER=${RESERVE_LEDGER}"
 echo "IDEMPOTENCY_KEY_REGISTRY=${IDEMPOTENCY_KEY_REGISTRY}"
 echo "TOKEN_AUTHORITY=${TOKEN_AUTHORITY}"
 echo "TRANSFER_POLICY_ID=${TRANSFER_POLICY_ID}"
+echo "FORCE_TRANSFER_SEIZE_HANDLER=${FORCE_TRANSFER_SEIZE_HANDLER}"
+echo "BURN_AND_REMINT_SEIZE_HANDLER=${BURN_AND_REMINT_SEIZE_HANDLER}"
 echo ""
 echo "Deploy a stablecoin on this chain:"
 echo "  bash scripts/deploy-new-stablecoin.sh \\"
 echo "    ${AUTH_REGISTRY} ${RESERVE_LEDGER} ${IDEMPOTENCY_KEY_REGISTRY} \\"
-echo "    ${TOKEN_AUTHORITY} ${TRANSFER_POLICY_ID}"
+echo "    ${TOKEN_AUTHORITY} ${TRANSFER_POLICY_ID} ${FORCE_TRANSFER_SEIZE_HANDLER}"
