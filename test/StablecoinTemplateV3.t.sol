@@ -817,6 +817,7 @@ contract StablecoinTemplateV3EIP3009Test is Test, StablecoinTemplateV3ErrorsAndE
 
         // seed sender with token balance via wrap()
         reserveLedger.setMaxSupply(1000);
+        token.setMaxSupply(1000);
         reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), admin);
         reserveLedger.grantRole(reserveLedger.MINTER_ROLE(), address(token));
         reserveLedger.mint(minter, 1000);
