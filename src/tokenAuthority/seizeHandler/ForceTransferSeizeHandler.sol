@@ -2,7 +2,6 @@
 pragma solidity ^0.8.24;
 
 import { StablecoinTemplateV3 } from "../../v3/StablecoinTemplateV3.sol";
-import { ISeizeHandler } from "./ISeizeHandler.sol";
 import { SeizeHandler } from "./SeizeHandler.sol";
 
 /// @title ForceTransferSeizeHandler
@@ -19,25 +18,24 @@ contract ForceTransferSeizeHandler is SeizeHandler {
     /// @param _tokenAuthority The address of the token authority
     constructor(address _tokenAuthority) SeizeHandler(_tokenAuthority) { }
 
-    /// @notice Moves `amount` from frozen `from` to `to` with the stablecoin's force transfer
+    /// @inheritdoc SeizeHandler
     /// @dev The stablecoin bypasses its own pause and freeze for this one move, so no pause
-    /// handling is needed here
-    /// @param stablecoinContract The address of the stablecoin contract
-    /// @param from The frozen holder
-    /// @param to The Seizure Wallet
-    /// @param amount The amount to move
-    function seize(address stablecoinContract, address from, address to, uint256 amount, uint256)
-        external
-        onlyTokenAuthority
-    {
+    /// handling is needed here.
+    function _executeSeize(
+        address stablecoinContract,
+        address from,
+        address to,
+        uint256 amount,
+        uint256
+    ) internal override {
         StablecoinTemplateV3(stablecoinContract).forceTransfer(from, to, amount);
-        emit Seized(stablecoinContract, from, to, amount);
     }
 
-    /// @inheritdoc ISeizeHandler
-    function isHolderBlocked(address stablecoinContract, address holder)
-        external
+    /// @inheritdoc SeizeHandler
+    function _isHolderBlocked(address stablecoinContract, address holder)
+        internal
         view
+        override
         returns (bool)
     {
         return StablecoinTemplateV3(stablecoinContract).isBlocked(holder);

@@ -20,7 +20,7 @@ import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 
 import { IdempotencyKeys } from "../idempotency/IdempotencyKeys.sol";
 import { IIdempotencyKeyRegistry } from "../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
-import { Seize } from "../seize/Seize.sol";
+import { ISeize } from "../seize/interfaces/ISeize.sol";
 import { ISeizeHandler } from "./seizeHandler/ISeizeHandler.sol";
 
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -35,7 +35,6 @@ contract TokenAuthority is
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
     IdempotencyKeys,
-    Seize,
     ITokenAuthority,
     Version
 {
@@ -66,6 +65,7 @@ contract TokenAuthority is
     bytes32 public constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
     bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
+    bytes32 public constant SEIZER_ROLE = keccak256("SEIZER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -264,6 +264,25 @@ contract TokenAuthority is
         ITokenHandler(tokenHandler).wrap(stablecoinContract, to, amount);
 
         emit Wrap(msg.sender, stablecoinContract, to, amount);
+    }
+
+    /**
+     * @inheritdoc ISeize
+     * @dev A thin pass-through, like {mint}: the stablecoin's seize handler checks every seize rule
+     * and moves the coins ({ISeizeHandler-seize}). The rules live there because only the handler
+     * knows which kind of stablecoin it serves, and it holds the Seizure Wallet list. Not gated by
+     * {setStablecoinPaused}, which halts issuance, not compliance actions.
+     */
+    function seize(address stablecoinContract, address from, address to, uint256 amount)
+        external
+        onlyRole(SEIZER_ROLE)
+    {
+        address seizeHandler = seizeHandlers[stablecoinContract];
+        require(seizeHandler != address(0), SeizeNotConfigured(stablecoinContract));
+
+        ISeizeHandler(seizeHandler).seize(stablecoinContract, from, to, amount);
+
+        emit Seized(stablecoinContract, from, to, amount, msg.sender);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -559,41 +578,11 @@ contract TokenAuthority is
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
     }
 
-    /// @inheritdoc Seize
-    /// @dev The Seizure Wallet list lives in the stablecoin's seize handler, alongside the registry
-    /// it is checked against, so the TokenAuthority only routes. Its admin sets the list on each
-    /// handler directly ({ISeizeHandler-setSeizureWalletPolicyId}).
-    function _seizureWalletList(address stablecoinContract)
-        internal
-        view
-        override
-        returns (uint64 listId)
-    {
-        address seizeHandler = seizeHandlers[stablecoinContract];
-        require(seizeHandler != address(0), SeizeNotConfigured(stablecoinContract));
-
-        listId = ISeizeHandler(seizeHandler).seizureWalletPolicyId();
-        require(listId != 0, SeizeNotConfigured(stablecoinContract));
-    }
-
-    /// @inheritdoc Seize
-    /// @dev Routed to the stablecoin's seize handler, which checks its own list against its own
-    /// registry. {_seizureWalletList} has already required that handler and its list to be set.
-    function _isSeizureWallet(address stablecoinContract, uint64, address account)
-        internal
-        view
-        override
-        returns (bool)
-    {
-        return ISeizeHandler(seizeHandlers[stablecoinContract]).isSeizureWallet(account);
-    }
-
     /**
      * @dev The ERC165 check every handler gets when it is set: {_requireValidTokenHandler} for
-     * token
-     * handlers and {_requireValidSeizeHandler} for seize handlers. Each handler answers it through
-     * its base's `supportsInterface` ({TokenHandler} or {SeizeHandler}). The callers check that a
-     * token handler is non-zero first; a zero seize handler is allowed and means unseizable.
+     * token handlers and {_requireValidSeizeHandler} for seize handlers. Each handler answers it
+     * through its base's `supportsInterface` ({TokenHandler} or {SeizeHandler}). The callers check
+     * that a token handler is non-zero first; a zero seize handler is allowed and means unseizable.
      */
     function _requireValidTokenHandler(address tokenHandler) internal view {
         require(
@@ -610,39 +599,6 @@ contract TokenAuthority is
                 || ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId),
             InvalidSeizeHandler()
         );
-    }
-
-    /// @inheritdoc Seize
-    /// @dev Read through the stablecoin's seize handler, which knows which kind of stablecoin it
-    /// serves. {_seizureWalletList} has already required that handler to be set. Checked here even
-    /// though each stablecoin re-checks it, so every controller raises the same {HolderNotBlocked}.
-    function _isHolderBlocked(address stablecoinContract, address holder)
-        internal
-        view
-        override
-        returns (bool)
-    {
-        return ISeizeHandler(seizeHandlers[stablecoinContract])
-            .isHolderBlocked(stablecoinContract, holder);
-    }
-
-    /**
-     * @inheritdoc Seize
-     * @dev A thin pass-through, like {_mint}: the stablecoin's seize handler moves the coins, and
-     * {Seize} enforces every rule around it. The handler is refused as a destination because it has
-     * no way to move coins on, so they would be stuck there.
-     */
-    function _executeSeize(
-        address stablecoinContract,
-        address from,
-        address to,
-        uint256 amount,
-        uint256 holderBalance
-    ) internal override {
-        address seizeHandler = seizeHandlers[stablecoinContract];
-        require(to != seizeHandler, InvalidSeizeDestination(to));
-
-        ISeizeHandler(seizeHandler).seize(stablecoinContract, from, to, amount, holderBalance);
     }
 
     /// @inheritdoc IdempotencyKeys

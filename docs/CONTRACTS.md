@@ -156,14 +156,14 @@ event Seized(address indexed stablecoinContract, address indexed from, address i
 
 ### Seize (`TokenAuthority` and `TIP20Controller`)
 
-Moves a frozen holder's coins into an approved Seizure Wallet without changing supply or reserve backing. Both controllers inherit the abstract `Seize` base (`src/seize/Seize.sol`) and the `ISeize` interface, so the function, role, event and errors are byte-identical on each.
+Moves a frozen holder's coins into an approved Seizure Wallet without changing supply or reserve backing. Both controllers implement the `ISeize` interface (`src/seize/interfaces/ISeize.sol`), so the function, role, event and errors are byte-identical on each. `TokenAuthority` only checks `SEIZER_ROLE` and routes to the stablecoin's seize handler, like `mint`; the rules below are enforced by the `SeizeHandler` base on `TokenAuthority` and by `TIP20Controller` itself on Tempo, which has no seize handlers. The two copies of the rules raise the same `ISeize` errors.
 
 **Every seize** (`seize(stablecoin, from, to, amount)`, `SEIZER_ROLE`):
 1. Seize is configured: on `TokenAuthority`, the stablecoin has a seize handler and that handler has a non-zero `seizureWalletPolicyId`; on `TIP20Controller`, the controller's `seizureWalletPolicyId` is non-zero. Otherwise `SeizeNotConfigured`.
-2. `to` is neither `from` nor the controller, and is on the Seizure Wallet list. On `TokenAuthority` the stablecoin's seize handler checks its own list (`isSeizureWallet(to)`) against the AuthRegistry it read from the reserve ledger; `TIP20Controller` checks TIP-403 itself. Either reverts with `InvalidSeizureWalletList` if the list authorizes the controller itself.
-3. `from` is frozen on the stablecoin. On `TokenAuthority` this is read through the stablecoin's seize handler (`isHolderBlocked`), which knows the stablecoin's type.
+2. `to` is not `from`, the controller or (on `TokenAuthority`) the seize handler, and is on the Seizure Wallet list. The seize handler checks its own list against the AuthRegistry it read from the reserve ledger; `TIP20Controller` checks TIP-403. Either reverts with `InvalidSeizureWalletList` if the list authorizes the controller itself.
+3. `from` is frozen on the stablecoin. The seize handler reads this through the stablecoin's own type.
 4. `0 < amount <= balanceOf(from)`.
-5. After the move, the base asserts that `to` gained exactly `amount` (`SeizeBalanceMismatch`). Anything specific to a path is handled by that path; the `BurnAndRemintSeizeHandler`, for example, asserts its own balances are unchanged.
+5. After the move, `to` must have gained exactly `amount` (`SeizeBalanceMismatch`). Anything specific to a path is handled by that path; the `BurnAndRemintSeizeHandler`, for example, asserts its own balances are unchanged.
 
 It ignores the controller's own `setStablecoinPaused`, which halts issuance, not compliance actions. It never goes through a token handler or the reserve-minting path.
 
@@ -171,10 +171,8 @@ It ignores the controller's own `setStablecoinPaused`, which halts issuance, not
 
 | Controller | Moved by | Move |
 |---|---|---|
-| `TokenAuthority` | the stablecoin's **seize handler** (see below) | `TokenAuthority` stays a pass-through, like `mint`: it enforces the rules above and calls `seizeHandler.seize(...)` |
+| `TokenAuthority` | the stablecoin's **seize handler** (see below) | `TokenAuthority` stays a pass-through, like `mint`: it calls `seizeHandler.seize(stablecoin, from, to, amount)`, which enforces the rules above and moves the coins |
 | `TIP20Controller` | the controller itself | Unpause if paused → `burnAt(from, amount)` → the coin's own `mint(to, amount)` → re-pause |
-
-On `TokenAuthority`, the seize handler is also refused as a destination, because it can't move coins on.
 
 **Seizure Wallet list** (`setSeizureWalletPolicyId(uint64)`): on `TokenAuthority` it lives in each **seize handler**, next to the registry it is checked against (`AUTH_REGISTRY`, read from the reserve ledger at construction). The TokenAuthority holds no list state and only routes. The handler's setter is callable only by an account holding the **TokenAuthority's** `DEFAULT_ADMIN_ROLE` (`OnlyTokenAuthorityAdmin`), so handlers need no admin of their own; set it on both of a TokenAuthority's handlers (a TokenAuthority belongs to one entity, which seizes into the same wallets for all of its coins). On `TIP20Controller`, which has no seize handlers, the controller holds it and checks TIP-403. `0` disables seize. The list is validated on every seize rather than when it is set: it must not authorize the controller itself, which rejects the built-in allow-all policy (`1`) and blacklist-type lists.
 
@@ -206,15 +204,13 @@ On `TokenAuthority`, the seize handler is also refused as a destination, because
 | Function | `setSeizeHandler(address,address)` | `0x2eefdac6` |
 | Function | `getSeizeHandler(address)` | `0x8225b566` |
 | Function (seize handler) | `AUTH_REGISTRY()` | `0x91bd7738` |
-| Function (seize handler) | `isSeizureWallet(address)` | `0xa5967905` |
 | Function | `setSeizureWalletPolicyId(uint64)` | `0x798953e0` (seize handlers and `TIP20Controller`) |
 | Function | `seizureWalletPolicyId()` | `0xd51c6560` (seize handlers and `TIP20Controller`) |
 | Function | `forceTransfer(address,address,uint256)` | `0x33bebb77` |
 | Function | `FORCE_TRANSFER_ROLE()` | `0xede3fc8c` (value `0xf03e19c53afadaa67869d28def12770ead62d3b7112af11002e6f2f27cd92391`) |
 | Event | `Seized(address,address,address,uint256,address)` | `0x61cfce727addc1ab55f91beabbd27489a8558f075cf83922e12818b77b8aa704` |
 | Event | `SeizeHandlerSet(address,address,address)` | `0x76040d400821bc7dd795469e9154c8cb955a6e6a97dd3635e7b2d586e38841a1` |
-| Function (seize handler) | `seize(address,address,address,uint256,uint256)` | `0x17cde087` |
-| Function (seize handler) | `isHolderBlocked(address,address)` | `0x423f1647` |
+| Function (seize handler) | `seize(address,address,address,uint256)` | `0xacb82dec`, the same selector as the controllers' `seize`; callable only by the TokenAuthority |
 | Event (seize handler) | `Seized(address,address,address,uint256)` | `0xa9aec5d8b86e2fa2fd6ac3af62f2622e3dfdab1967d4cbbb56a5df7d74cb887c` |
 | Event | `SeizureWalletPolicyIdSet(address,uint64)` | `0xb881fe19b6eeadc37f4e78a1cb1ade5fc5d0bb4e3f634d539c0807d370c28f38` (seize handlers and `TIP20Controller`) |
 | Event | `ForceTransferred(uint256,address,address,address)` | `0x708057b4d5a5f38837968e955e789b952ce74d42c5eeeb4964b668fe6aaca057` |
@@ -351,7 +347,7 @@ The seize counterpart of token handlers, in `src/tokenAuthority/seizeHandler/`. 
 | `ForceTransferSeizeHandler` | Hold their own backing (`StablecoinTemplateV3`, issued through `ReserveLedgerWrappedHandler`) | `stablecoin.forceTransfer(from, to, amount)`. Backing stays inside the coin. |
 | `BurnAndRemintSeizeHandler` | Backing in a reserve store (`StablecoinTemplateV2`, issued through `ReserveLedgerBackedHandler`; driven through `IStablecoinTemplateV2` in `src/utils/`) | Unpause if paused → `burnFromBlockedAddress(from)` → `mint(to, amount)`. On a partial seize: `mint(handler, remainder)`, `unblockAddress(from)`, `transfer(from, remainder)`, `blockAddress(from)`. Then re-pause. Reverts if its own stablecoin or reserve ledger balance changes, which also refuses a V3 coin wrongly given this handler (its burn would pay out backing). |
 
-Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`. Each also answers `isHolderBlocked(stablecoin, holder)` through its stablecoin's own type (`StablecoinTemplateV3` or `IStablecoinTemplateV2`), which the TokenAuthority uses for its frozen-holder check. Both also fix `AUTH_REGISTRY` (read from the TokenAuthority's reserve ledger at construction), hold the Seizure Wallet list (`seizureWalletPolicyId`, set by the TokenAuthority's `DEFAULT_ADMIN_ROLE` through `setSeizureWalletPolicyId`, emitting `SeizureWalletPolicyIdSet`), and answer `isSeizureWallet(account)`, the TokenAuthority's Seizure Wallet list check.
+Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`. The `SeizeHandler` base holds the seize rules (see Seize above): its `seize` checks them, calls the handler's move, then checks the Seizure Wallet received exactly `amount`. Each handler only supplies the move and the frozen-holder read, through its stablecoin's own type (`StablecoinTemplateV3` or `IStablecoinTemplateV2`). Both also fix `AUTH_REGISTRY` (read from the TokenAuthority's reserve ledger at construction) and hold the Seizure Wallet list (`seizureWalletPolicyId`, set by the TokenAuthority's `DEFAULT_ADMIN_ROLE` through `setSeizureWalletPolicyId`, emitting `SeizureWalletPolicyIdSet`).
 
 **Deployment:** `scripts/07_DeploySeizeHandlers.s.sol` deploys both handlers for one TokenAuthority (`run(address tokenAuthority)`) and checks they were built for it.
 - New chains: `deploy-new-chain.sh` runs 07 right after 03, and `05_ConfigureAndHandover` (via `deploy-new-stablecoin.sh`, which now takes `FORCE_TRANSFER_SEIZE_HANDLER`) grants the new V3 stablecoin's `FORCE_TRANSFER_ROLE` to the force-transfer handler and registers the stablecoin with it. `DeployAll` does the same. `06_Verify` checks the seize handler, that it was built for the TokenAuthority, and that it is the only `FORCE_TRANSFER_ROLE` holder.
@@ -421,13 +417,13 @@ Defined in `src/tokenAuthority/ITokenAuthority.sol`.
 
 ### Seize (`ISeize`)
 
-Defined in `src/seize/interfaces/ISeize.sol`. Raised identically by `TokenAuthority` and `TIP20Controller`.
+Defined in `src/seize/interfaces/ISeize.sol`. Raised identically on both controllers: on `TokenAuthority` by the stablecoin's seize handler (except `SeizeNotConfigured` for a stablecoin with no handler, which the TokenAuthority raises), on `TIP20Controller` by the controller.
 
 | Selector | Error | Meaning |
 |----------|-------|---------|
 | `0x72caeba5` | `SeizeNotConfigured(address)` | The list's `seizureWalletPolicyId` is 0 (the stablecoin's seize handler on TokenAuthority, the controller on TIP20Controller), or (TokenAuthority) the stablecoin has no seize handler |
 | `0x9e3c18ba` | `InvalidSeizureWalletList(address,uint64)` | Raised on seize when the list authorizes the controller itself (true of policy 1 and of blacklists); args are the registry checked and the policy ID. On `TokenAuthority` it comes from the seize handler |
-| `0x14d41d67` | `InvalidSeizeDestination(address)` | `to` is the holder or the controller |
+| `0x14d41d67` | `InvalidSeizeDestination(address)` | `to` is the holder, the controller, or (TokenAuthority) the seize handler |
 | `0x181235d3` | `DestinationNotSeizureWallet(address)` | `to` is not on the Seizure Wallet list |
 | `0xa7d8a38f` | `HolderNotBlocked(address)` | `from` is not frozen before the move |
 | `0xf2125033` | `InvalidSeizeAmount(uint256,uint256)` | Amount is zero or above the holder's balance; args are `amount`, `holderBalance` |

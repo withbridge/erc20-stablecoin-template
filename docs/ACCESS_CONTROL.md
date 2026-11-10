@@ -107,7 +107,7 @@ Convert stablecoins back to reserve tokens.
 | Unwrap tokens | `unwrap(address, uint256)` |
 
 ### `FORCE_TRANSFER_ROLE`
-`StablecoinTemplateV3` only (not `ReserveLedger`). Grant it **only to the TokenAuthority's `ForceTransferSeizeHandler`**, which only the TokenAuthority can call, after it has checked the Seizure Wallet list. The coin cannot enforce who holds it, so the readiness check confirms `getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1`.
+`StablecoinTemplateV3` only (not `ReserveLedger`). Grant it **only to the TokenAuthority's `ForceTransferSeizeHandler`**, which only the TokenAuthority can call (after checking `SEIZER_ROLE`) and which checks the Seizure Wallet list and the freeze before every move. The coin cannot enforce who holds it, so the readiness check confirms `getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1`.
 
 | Permission | Function |
 |------------|----------|

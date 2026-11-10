@@ -2313,12 +2313,10 @@ contract TokenAuthorityTest is Test {
         vm.startPrank(seizer);
         vm.expectRevert(ISeizeHandler.OnlyTokenAuthority.selector);
         forceTransferSeizeHandler.seize(
-            address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6, SEIZE_HOLDER_BALANCE
+            address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6
         );
         vm.expectRevert(ISeizeHandler.OnlyTokenAuthority.selector);
-        burnAndRemintSeizeHandler.seize(
-            address(v2Stablecoin), frozenHolder, seizureWallet, 600e6, SEIZE_HOLDER_BALANCE
-        );
+        burnAndRemintSeizeHandler.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
         vm.stopPrank();
     }
 

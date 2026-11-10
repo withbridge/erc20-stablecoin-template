@@ -10,9 +10,11 @@ import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol
 /// a seize handler only moves a frozen holder's coins, using the functions that stablecoin already
 /// exposes. Seize handlers are separate from token handlers so that adding seize does not replace
 /// the deployed token handlers, which own the reserve stores of backed stablecoins. Seize never
-/// touches reserve ledger tokens, so a seize handler holds no state and can be swapped freely.
-/// @dev Every rule a seize must satisfy (role, frozen holder, listed destination, amount bounds,
-/// conservation) is enforced by the TokenAuthority before and after calling the handler.
+/// touches reserve ledger tokens, so a seize handler holds only its Seizure Wallet list and can be
+/// swapped freely.
+/// @dev The TokenAuthority only checks SEIZER_ROLE and routes, like `mint`. The handler enforces
+/// every rule a seize must satisfy (listed destination, frozen holder, amount bounds, the
+/// destination receiving exactly `amount`) and raises the shared {ISeize} errors.
 interface ISeizeHandler is IERC165 {
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -66,50 +68,20 @@ interface ISeizeHandler is IERC165 {
      * @notice Sets or clears this handler's Seizure Wallet list
      * @dev Only callable by an account holding the TokenAuthority's DEFAULT_ADMIN_ROLE, so the
      * handler needs no admin of its own. Pass 0 to disable seize. The list is validated on every
-     * seize ({isSeizureWallet}), not here.
+     * seize ({seize}), not here.
      * @param policyId The Seizure Wallet policy ID
      */
     function setSeizureWalletPolicyId(uint64 policyId) external;
 
     /**
-     * @notice Whether `account` is on this handler's Seizure Wallet list
-     * @dev Read from the TokenAuthority's reserve ledger's AuthRegistry, which the handler fixes
-     * at construction. Reverts with {ISeize-InvalidSeizureWalletList} if the list authorizes the
-     * TokenAuthority itself, as the allow-all policy and blacklist-type lists do.
-     * @param account The proposed destination
-     * @return True when `account` is an approved Seizure Wallet
-     */
-    function isSeizureWallet(address account) external view returns (bool);
-
-    /**
-     * @notice Whether `holder` is frozen on `stablecoinContract`
-     * @dev The TokenAuthority reads the freeze through the stablecoin's seize handler because only
-     * the handler knows which kind of stablecoin it serves, and so which interface to read it
-     * through.
-     * @param stablecoinContract The address of the stablecoin contract
-     * @param holder The address to check
-     * @return True when `holder` is frozen
-     */
-    function isHolderBlocked(address stablecoinContract, address holder)
-        external
-        view
-        returns (bool);
-
-    /**
-     * @notice Moves `amount` of `from`'s coins to `to`
-     * @dev Called by the TokenAuthority only after every seize pre-check passed
+     * @notice Moves `amount` of a frozen holder's coins to an approved Seizure Wallet
+     * @dev Called only by the TokenAuthority, after it has checked SEIZER_ROLE. Checks every rule
+     * itself, then asserts `to` received exactly `amount`. Reverts with the {ISeize} errors.
      * @param stablecoinContract The address of the stablecoin contract
      * @param from The frozen holder
      * @param to The Seizure Wallet
      * @param amount The amount to move
-     * @param holderBalance `from`'s balance read before the move
      */
-    function seize(
-        address stablecoinContract,
-        address from,
-        address to,
-        uint256 amount,
-        uint256 holderBalance
-    ) external;
+    function seize(address stablecoinContract, address from, address to, uint256 amount) external;
 
 }

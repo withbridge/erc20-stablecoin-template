@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import { IStablecoinTemplateV2 } from "../../utils/IStablecoinTemplateV2.sol";
 import { ITokenAuthority } from "../ITokenAuthority.sol";
-import { ISeizeHandler } from "./ISeizeHandler.sol";
 import { SeizeHandler } from "./SeizeHandler.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -37,8 +36,9 @@ contract BurnAndRemintSeizeHandler is SeizeHandler {
     }
 
     /**
-     * @notice Seizes from a stablecoin that can only burn a blocked holder's whole balance
-     * @dev Burns all of `holderBalance`, mints `amount` to `to`, then returns the unseized
+     * @inheritdoc SeizeHandler
+     * @dev For a stablecoin that can only burn a blocked holder's whole balance. Burns all of
+     * `holderBalance`, mints `amount` to `to`, then returns the unseized
      * remainder by minting it to this handler and transferring it to `from`. A transfer is used
      * instead of a mint to `from` because `from` is not a mint recipient, and only the coin's
      * admin can make it one. `from` is unblocked only for that transfer, and only on the partial
@@ -49,19 +49,14 @@ contract BurnAndRemintSeizeHandler is SeizeHandler {
      *
      * The coin must be unpaused for its burn, mint, and transfer, so a paused coin is unpaused
      * for the duration and re-paused before returning.
-     * @param stablecoinContract The address of the stablecoin contract
-     * @param from The frozen holder
-     * @param to The Seizure Wallet
-     * @param amount The amount to seize
-     * @param holderBalance `from`'s balance read before the burn
      */
-    function seize(
+    function _executeSeize(
         address stablecoinContract,
         address from,
         address to,
         uint256 amount,
         uint256 holderBalance
-    ) external onlyTokenAuthority {
+    ) internal override {
         IStablecoinTemplateV2 stablecoin = IStablecoinTemplateV2(stablecoinContract);
         uint256 stablecoinBalanceBefore = stablecoin.balanceOf(address(this));
         uint256 reserveBalanceBefore = IERC20(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
@@ -90,14 +85,13 @@ contract BurnAndRemintSeizeHandler is SeizeHandler {
         // coin that holds its own reserve can never be released through here.
         _requireBalanceUnchanged(stablecoinContract, stablecoinBalanceBefore);
         _requireBalanceUnchanged(RESERVE_LEDGER_TOKEN, reserveBalanceBefore);
-
-        emit Seized(stablecoinContract, from, to, amount);
     }
 
-    /// @inheritdoc ISeizeHandler
-    function isHolderBlocked(address stablecoinContract, address holder)
-        external
+    /// @inheritdoc SeizeHandler
+    function _isHolderBlocked(address stablecoinContract, address holder)
+        internal
         view
+        override
         returns (bool)
     {
         return IStablecoinTemplateV2(stablecoinContract).isBlocked(holder);

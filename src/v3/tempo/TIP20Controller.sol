@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import { Version } from "../../Version.sol";
 import { IdempotencyKeys } from "../../idempotency/IdempotencyKeys.sol";
 import { IIdempotencyKeyRegistry } from "../../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
-import { Seize } from "../../seize/Seize.sol";
+import { ISeize } from "../../seize/interfaces/ISeize.sol";
 import { ReserveStore } from "./ReserveStore.sol";
 import { ITIP20Controller } from "./interfaces/ITIP20Controller.sol";
 import {
@@ -27,7 +27,6 @@ contract TIP20Controller is
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
     IdempotencyKeys,
-    Seize,
     ITIP20Controller,
     Version
 {
@@ -53,6 +52,7 @@ contract TIP20Controller is
     bytes32 public constant BRIDGE_ECOSYSTEM_CONTRACT_ROLE =
         keccak256("BRIDGE_ECOSYSTEM_CONTRACT_ROLE");
     bytes32 public constant STABLECOIN_PAUSER_ROLE = keccak256("STABLECOIN_PAUSER_ROLE");
+    bytes32 public constant SEIZER_ROLE = keccak256("SEIZER_ROLE");
 
     /*//////////////////////////////////////////////////////////////////////////
                                 State Variables
@@ -255,6 +255,43 @@ contract TIP20Controller is
         emit Wrap(msg.sender, stablecoinContract, to, amount);
     }
 
+    /**
+     * @inheritdoc ISeize
+     * @dev This controller has no seize handlers, so it checks the seize rules itself. They match
+     * the TokenAuthority's seize handlers ({SeizeHandler-seize}) and raise the same {ISeize}
+     * errors. Not gated by {setStablecoinPaused}, which halts issuance, not compliance actions.
+     * @dev No reentrancy guard: it calls only the admin-configured stablecoin and the TIP-403
+     * precompile, and TIP-20 coins do not call out during mint, burn, or transfer.
+     */
+    function seize(address stablecoinContract, address from, address to, uint256 amount)
+        external
+        onlyRole(SEIZER_ROLE)
+    {
+        require(seizureWalletPolicyId != 0, SeizeNotConfigured(stablecoinContract));
+
+        // Seizing to the holder would be a no-op, and seizing to this controller would leave coins
+        // only a seize could move again.
+        require(to != from && to != address(this), InvalidSeizeDestination(to));
+        require(_isSeizureWallet(to), DestinationNotSeizureWallet(to));
+        require(_isHolderBlocked(stablecoinContract, from), HolderNotBlocked(from));
+
+        IERC20 stablecoin = IERC20(stablecoinContract);
+        uint256 holderBalance = stablecoin.balanceOf(from);
+        require(amount > 0 && amount <= holderBalance, InvalidSeizeAmount(amount, holderBalance));
+        uint256 destinationBalanceBefore = stablecoin.balanceOf(to);
+
+        _executeSeize(stablecoinContract, from, to, amount);
+
+        // The one outcome the move must produce.
+        uint256 destinationBalanceAfter = stablecoin.balanceOf(to);
+        require(
+            destinationBalanceAfter == destinationBalanceBefore + amount,
+            SeizeBalanceMismatch(to, destinationBalanceBefore + amount, destinationBalanceAfter)
+        );
+
+        emit Seized(stablecoinContract, from, to, amount, msg.sender);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                             Permissioned Setters
     //////////////////////////////////////////////////////////////////////////*/
@@ -357,8 +394,8 @@ contract TIP20Controller is
 
     /**
      * @notice Sets or clears the TIP-403 policy listing the approved Seizure Wallets
-     * @dev 0 disables seize. The list is validated on every seize (see {_isSeizureWallet}), the
-     * same way the TokenAuthority's seize handlers validate theirs.
+     * @dev 0 disables seize. The list is validated on every seize ({seize}), the same way the
+     * TokenAuthority's seize handlers validate theirs.
      * @param policyId The Seizure Wallet policy ID
      */
     function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -522,29 +559,17 @@ contract TIP20Controller is
         require(stablecoinIsPaused[stablecoinContract], StablecoinNotPaused());
     }
 
-    /// @inheritdoc Seize
-    function _seizureWalletList(address stablecoinContract)
-        internal
-        view
-        override
-        returns (uint64 listId)
-    {
-        require(seizureWalletPolicyId != 0, SeizeNotConfigured(stablecoinContract));
-
+    /**
+     * @dev Whether `account` is on the Seizure Wallet list. TIP-20 coins check transfers against
+     * TIP-403, so the list lives there. Reverts with {ISeize-InvalidSeizureWalletList} if the list
+     * authorizes this controller itself: a whitelist of Bridge-held Seizure Wallets never contains
+     * it, while the built-in allow-all policy (1) and every blacklist-type list authorize it by
+     * default. Runs on every seize, so it also catches a list edited later.
+     */
+    function _isSeizureWallet(address account) internal view returns (bool) {
         // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
         // forge-lint: disable-next-line(unsafe-typecast)
-        return uint64(seizureWalletPolicyId);
-    }
-
-    /// @inheritdoc Seize
-    /// @dev TIP-20 coins check transfers against TIP-403, so the Seizure Wallet list lives there.
-    /// This controller has no seize handlers, so it does the check itself.
-    function _isSeizureWallet(address, uint64 listId, address account)
-        internal
-        view
-        override
-        returns (bool)
-    {
+        uint64 listId = uint64(seizureWalletPolicyId);
         require(
             !StdPrecompiles.TIP403_REGISTRY.isAuthorized(listId, address(this)),
             InvalidSeizureWalletList(address(StdPrecompiles.TIP403_REGISTRY), listId)
@@ -553,13 +578,11 @@ contract TIP20Controller is
         return StdPrecompiles.TIP403_REGISTRY.isAuthorized(listId, account);
     }
 
-    /// @inheritdoc Seize
-    /// @dev TIP-20 has no `isBlocked`; a holder is frozen when the coin's own TIP-403 transfer
-    /// policy does not authorize it.
+    /// @dev Whether `holder` is frozen. TIP-20 has no `isBlocked`; a holder is frozen when the
+    /// coin's own TIP-403 transfer policy does not authorize it.
     function _isHolderBlocked(address stablecoinContract, address holder)
         internal
         view
-        override
         returns (bool)
     {
         uint64 transferPolicyId = ITIP20(stablecoinContract).transferPolicyId();
@@ -567,23 +590,18 @@ contract TIP20Controller is
     }
 
     /**
-     * @inheritdoc Seize
-     * @dev Burns from the holder with `burnAt` and re-mints with the coin's own `mint`. Never uses
-     * {_mint}: that path also mints reserve ledger tokens into the reserve store, which would add
-     * backing that does not exist. Burning first means the re-mint can never exceed the coin's
-     * supply cap, which TIP-20 does not allow below current supply.
+     * @dev Moves the coins for {seize}. Burns from the holder with `burnAt` and re-mints with the
+     * coin's own `mint`. Never uses {_mint}: that path also mints reserve ledger tokens into the
+     * reserve store, which would add backing that does not exist. Burning first means the re-mint
+     * can never exceed the coin's supply cap, which TIP-20 does not allow below current supply.
      *
      * `burnAt` requires an unpaused coin, so a paused coin is unpaused for the duration and
      * re-paused before returning. `burnAt` does not check the transfer policy, which is why
      * {seize} checks the freeze itself.
      */
-    function _executeSeize(
-        address stablecoinContract,
-        address from,
-        address to,
-        uint256 amount,
-        uint256 /* holderBalance */
-    ) internal override {
+    function _executeSeize(address stablecoinContract, address from, address to, uint256 amount)
+        internal
+    {
         ITIP20 stablecoin = ITIP20(stablecoinContract);
 
         bool wasPaused = stablecoin.paused();
