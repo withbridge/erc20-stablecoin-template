@@ -94,8 +94,7 @@ interface ISeize {
      * @notice Moves `amount` of a frozen holder's coins to an approved Seizure Wallet
      * @dev Requires SEIZER_ROLE, seize settings for the stablecoin, a frozen `from`, a listed `to`,
      * and `0 < amount <= balanceOf(from)`. Ignores this controller's own per-stablecoin pause,
-     * which
-     * halts issuance rather than compliance actions.
+     * which halts issuance rather than compliance actions.
      * @param stablecoinContract The stablecoin to seize
      * @param from The frozen holder
      * @param to The Seizure Wallet

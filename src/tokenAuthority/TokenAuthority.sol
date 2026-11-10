@@ -381,9 +381,9 @@ contract TokenAuthority is
     /**
      * @notice Registers a stablecoin contract with the TokenAuthority
      * @dev Only callable by TOKEN_AUTHORITY_HANDLER_SETTER_ROLE
-     * @param stablecoinContract The address of the stablecoin contract
      * @dev Sets the seize handler in the same call, so a newly registered stablecoin needs no
      * separate seize setup.
+     * @param stablecoinContract The address of the stablecoin contract
      * @param tokenHandler The address of the token handler
      * @param seizeHandler The seize handler that moves this stablecoin's coins; zero leaves the
      * stablecoin unseizable until {setSeizeHandler} is called

@@ -120,8 +120,7 @@ Full administrative control over TokenAuthority.
 
 | Permission | Function |
 |------------|----------|
-| Register stablecoins | `registerStablecoin(address, address, address, uint256)` |
-| Set whether keys are required on `mint` | `setMintIntentVersion(MintIntentVersion)` |
+| Set whether keys are required on `mint` | `setIdempotencyKeysVersion(IdempotencyKeysVersion)` |
 | Migrate idempotency-key registry | `setIdempotencyKeyRegistry(address)` |
 | Manage roles | `grantRole()`, `revokeRole()` |
 | Upgrade implementation | `upgradeToAndCall(address, bytes)` |
@@ -176,6 +175,7 @@ Configure token handlers.
 | Permission | Function |
 |------------|----------|
 | Set handler | `setTokenHandler(address, address)` |
+| Register stablecoins | `registerStablecoin(address, address, address, uint256)` |
 | Unregister stablecoins | `unregisterStablecoin(address)` |
 
 ### `SEIZER_ROLE`

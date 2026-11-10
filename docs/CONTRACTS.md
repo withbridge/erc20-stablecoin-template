@@ -105,7 +105,7 @@ TokenAuthority
 mapping(address stablecoin => mapping(address minter => uint256)) minterAllowances; // slot 0
 mapping(address stablecoin => uint256) mintTxnLimits;                              // slot 1
 mapping(address stablecoin => address handler) tokenHandlers;                      // slot 2
-MintIntentVersion public mintIntentVersion;                                        // slot 3
+IdempotencyKeysVersion public idempotencyKeysVersion;                              // slot 3
 mapping(address stablecoin => bool) public stablecoinIsPaused;                     // slot 4
 IIdempotencyKeyRegistry public idempotencyKeyRegistry;                             // slot 5
 mapping(address stablecoin => address seizeHandler) seizeHandlers;                 // slot 6
@@ -117,19 +117,19 @@ Idempotency-key state is *not* stored here — it lives in the shared [`Idempote
 **Key Functions:**
 | Function | Access | Description |
 |----------|--------|-------------|
-| `mint(stablecoin, to, amount, keys)` | Allowance holder | Rate-limited mint. Empty `keys` only when `mintIntentVersion == Optional`; non-empty keys are marked used first |
+| `mint(stablecoin, to, amount, keys)` | Allowance holder | Rate-limited mint. Empty `keys` only when `idempotencyKeysVersion == Optional`; non-empty keys are marked used first |
 | `mintBridgeEcosystem(stablecoin, to, amount)` | `BRIDGE_ECOSYSTEM_CONTRACT_ROLE` | Mint without limits |
 | `burn(stablecoin, amount)` | `BURNER_ROLE` | Burn tokens |
 | `burn(stablecoin, amount, keys)` | `BURNER_ROLE` | Burn, marking the given keys used |
 | `wrap(stablecoin, to, amount)` | Public | Wrap reserve into stablecoin |
 | `unwrap(stablecoin, amount)` | `UNWRAPPER_ROLE` | Unwrap stablecoin to reserve |
-| `registerStablecoin(stablecoin, handler, seizeHandler, mintTxnLimit)` | `DEFAULT_ADMIN_ROLE` | Add stablecoin with its token handler and seize handler (zero seize handler = not seizable yet) |
+| `registerStablecoin(stablecoin, handler, seizeHandler, mintTxnLimit)` | `TOKEN_AUTHORITY_HANDLER_SETTER_ROLE` | Add stablecoin with its token handler and seize handler (zero seize handler = not seizable yet) |
 | `unregisterStablecoin(stablecoin)` | `TOKEN_AUTHORITY_HANDLER_SETTER_ROLE` | Remove stablecoin. Also clears its seize handler |
 | `setTokenHandler(stablecoin, handler)` | `TOKEN_AUTHORITY_HANDLER_SETTER_ROLE` | Swap handler (stablecoin must be paused) |
 | `setMinterAllowance(stablecoin, minter, amount)` | `MINT_RATE_LIMIT_SETTER_ROLE` | Set minter's allowance |
 | `setTxnMintLimit(stablecoin, limit)` | `MINT_RATE_LIMIT_SETTER_ROLE` | Set per-tx limit |
 | `setStablecoinPaused(stablecoin, pause)` | `STABLECOIN_PAUSER_ROLE` | Pause/unpause a stablecoin |
-| `setMintIntentVersion(version)` | `DEFAULT_ADMIN_ROLE` | Allow (`Optional`) or require (`Required`) keys on `mint` |
+| `setIdempotencyKeysVersion(version)` | `DEFAULT_ADMIN_ROLE` | Allow (`Optional`) or require (`Required`) keys on `mint` |
 | `setIdempotencyKeyRegistry(registry)` | `DEFAULT_ADMIN_ROLE` | Migrate to a different shared registry |
 | `seize(stablecoin, from, to, amount)` | `SEIZER_ROLE` | Seize from a frozen holder (see Seize below) |
 | `setSeizeHandler(stablecoin, seizeHandler)` | `DEFAULT_ADMIN_ROLE` | Set, replace or clear (zero) a registered stablecoin's seize handler. For stablecoins registered before `registerStablecoin` took one; no pause needed |
@@ -151,7 +151,7 @@ event MinterAllowanceSet(address indexed sender, address indexed stablecoinContr
 event TxnMintLimitSet(address indexed sender, address indexed stablecoinContract, uint256 mintTxnLimit);
 event TokenHandlerSet(address indexed sender, address indexed stablecoinContract, address indexed tokenHandler);
 event StablecoinPauseSet(address indexed sender, address indexed stablecoinContract, bool isPaused);
-event MintIntentVersionSet(address indexed sender, MintIntentVersion mintIntentVersion);
+event IdempotencyKeysVersionSet(address indexed sender, IdempotencyKeysVersion idempotencyKeysVersion);
 event SeizeHandlerSet(address indexed sender, address indexed stablecoinContract, address indexed seizeHandler);
 event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId);
 event Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount, address caller);
