@@ -49,6 +49,20 @@ interface ISeizeHandler is IERC165 {
     function TOKEN_AUTHORITY() external view returns (address);
 
     /**
+     * @notice Whether `holder` is frozen on `stablecoinContract`
+     * @dev The TokenAuthority reads the freeze through the stablecoin's seize handler because only
+     * the handler knows which kind of stablecoin it serves, and so which interface to read it
+     * through.
+     * @param stablecoinContract The address of the stablecoin contract
+     * @param holder The address to check
+     * @return True when `holder` is frozen
+     */
+    function isHolderBlocked(address stablecoinContract, address holder)
+        external
+        view
+        returns (bool);
+
+    /**
      * @notice Moves `amount` of `from`'s coins to `to`
      * @dev Called by the TokenAuthority only after every seize pre-check passed
      * @param stablecoinContract The address of the stablecoin contract

@@ -12,7 +12,6 @@ import { Vm } from "forge-std/Vm.sol";
 import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
 import { IIdempotencyKeyErrors } from "src/idempotency/interfaces/IIdempotencyKeyErrors.sol";
 import { IIdempotencyKeys } from "src/idempotency/interfaces/IIdempotencyKeys.sol";
-import { IBurnAndRemintStablecoin } from "src/seize/interfaces/IBurnAndRemintStablecoin.sol";
 import { ISeize } from "src/seize/interfaces/ISeize.sol";
 import { ITokenAuthority } from "src/tokenAuthority/ITokenAuthority.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
@@ -23,6 +22,7 @@ import {
     ForceTransferSeizeHandler
 } from "src/tokenAuthority/seizeHandler/ForceTransferSeizeHandler.sol";
 import { ISeizeHandler } from "src/tokenAuthority/seizeHandler/ISeizeHandler.sol";
+import { IStablecoinTemplateV2 } from "src/utils/IStablecoinTemplateV2.sol";
 
 import { AuthRegistry, IAuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 
@@ -1900,17 +1900,17 @@ contract TokenAuthorityTest is Test {
         // The exact on-chain sequence: whole-balance burn, seized mint, remainder mint to the
         // handler, unblock, transfer back, re-block, then the handler and TokenAuthority events.
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.BurnedFromBlockedAddress(1000e6, frozenHolder, handler);
+        emit IStablecoinTemplateV2.BurnedFromBlockedAddress(1000e6, frozenHolder, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.Minted(600e6, seizureWallet, handler);
+        emit IStablecoinTemplateV2.Minted(600e6, seizureWallet, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.Minted(400e6, handler, handler);
+        emit IStablecoinTemplateV2.Minted(400e6, handler, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.UnblockedAddress(frozenHolder, handler);
+        emit IStablecoinTemplateV2.UnblockedAddress(frozenHolder, handler);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
         emit IERC20.Transfer(handler, frozenHolder, 400e6);
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.BlockedAddress(frozenHolder, handler);
+        emit IStablecoinTemplateV2.BlockedAddress(frozenHolder, handler);
         vm.expectEmit(true, true, true, true, handler);
         emit ISeizeHandler.Seized(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
         vm.expectEmit(true, true, true, true, address(tokenAuthority));
@@ -1933,17 +1933,17 @@ contract TokenAuthorityTest is Test {
 
         vm.expectCall(
             address(v2Stablecoin),
-            abi.encodeWithSelector(IBurnAndRemintStablecoin.unblockAddress.selector),
+            abi.encodeWithSelector(IStablecoinTemplateV2.unblockAddress.selector),
             0
         );
         vm.expectCall(
             address(v2Stablecoin),
-            abi.encodeWithSelector(IBurnAndRemintStablecoin.blockAddress.selector),
+            abi.encodeWithSelector(IStablecoinTemplateV2.blockAddress.selector),
             0
         );
         vm.expectCall(
             address(v2Stablecoin),
-            abi.encodeCall(IBurnAndRemintStablecoin.mint, (seizureWallet, SEIZE_HOLDER_BALANCE)),
+            abi.encodeCall(IStablecoinTemplateV2.mint, (seizureWallet, SEIZE_HOLDER_BALANCE)),
             1
         );
         vm.expectCall(address(v2Stablecoin), abi.encodeWithSelector(IERC20.transfer.selector), 0);
@@ -1964,10 +1964,8 @@ contract TokenAuthorityTest is Test {
         vm.prank(v2StablecoinAdmin);
         v2Stablecoin.pause();
 
-        vm.expectCall(
-            address(v2Stablecoin), abi.encodeCall(IBurnAndRemintStablecoin.unpause, ()), 1
-        );
-        vm.expectCall(address(v2Stablecoin), abi.encodeCall(IBurnAndRemintStablecoin.pause, ()), 1);
+        vm.expectCall(address(v2Stablecoin), abi.encodeCall(IStablecoinTemplateV2.unpause, ()), 1);
+        vm.expectCall(address(v2Stablecoin), abi.encodeCall(IStablecoinTemplateV2.pause, ()), 1);
         vm.prank(seizer);
         tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
 
@@ -1980,10 +1978,8 @@ contract TokenAuthorityTest is Test {
     function test_seize_burnAndRemint_unpausedCoinIsNeverPaused() public {
         _setUpSeize();
 
-        vm.expectCall(
-            address(v2Stablecoin), abi.encodeCall(IBurnAndRemintStablecoin.unpause, ()), 0
-        );
-        vm.expectCall(address(v2Stablecoin), abi.encodeCall(IBurnAndRemintStablecoin.pause, ()), 0);
+        vm.expectCall(address(v2Stablecoin), abi.encodeCall(IStablecoinTemplateV2.unpause, ()), 0);
+        vm.expectCall(address(v2Stablecoin), abi.encodeCall(IStablecoinTemplateV2.pause, ()), 0);
         vm.prank(seizer);
         tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
 
@@ -2021,12 +2017,12 @@ contract TokenAuthorityTest is Test {
 
         vm.expectCall(
             address(v2Stablecoin),
-            abi.encodeCall(IBurnAndRemintStablecoin.unblockAddress, (frozenHolder)),
+            abi.encodeCall(IStablecoinTemplateV2.unblockAddress, (frozenHolder)),
             1
         );
         vm.expectCall(
             address(v2Stablecoin),
-            abi.encodeCall(IBurnAndRemintStablecoin.unblockAddress, (otherFrozenHolder)),
+            abi.encodeCall(IStablecoinTemplateV2.unblockAddress, (otherFrozenHolder)),
             0
         );
         vm.prank(seizer);
@@ -2228,31 +2224,6 @@ contract TokenAuthorityTest is Test {
         );
     }
 
-    function test_seize_revertWhenHolderLeftUnblocked() public {
-        _setUpSeize();
-        // A coin whose re-block silently does nothing must not leave the holder free.
-        vm.mockCall(
-            address(v2Stablecoin),
-            abi.encodeWithSelector(IBurnAndRemintStablecoin.blockAddress.selector),
-            ""
-        );
-
-        vm.prank(seizer);
-        vm.expectRevert(abi.encodeWithSelector(ISeize.HolderNotBlocked.selector, frozenHolder));
-        tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
-    }
-
-    function test_seize_revertWhenPauseNotRestored() public {
-        _setUpSeize();
-        vm.prank(v2StablecoinAdmin);
-        v2Stablecoin.pause();
-        vm.mockCall(address(v2Stablecoin), abi.encodeCall(IBurnAndRemintStablecoin.pause, ()), "");
-
-        vm.prank(seizer);
-        vm.expectRevert(abi.encodeWithSelector(ISeize.PauseStateNotRestored.selector, true));
-        tokenAuthority.seize(address(v2Stablecoin), frozenHolder, seizureWallet, 600e6);
-    }
-
     function test_seize_revertWhenCoinDoesNotMoveCoins() public {
         _setUpSeize();
         vm.mockCall(
@@ -2261,11 +2232,10 @@ contract TokenAuthorityTest is Test {
             ""
         );
 
+        // The Seizure Wallet received nothing, which is the one outcome every seize asserts.
         vm.prank(seizer);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ISeize.SeizeBalanceMismatch.selector, frozenHolder, 400e6, SEIZE_HOLDER_BALANCE
-            )
+            abi.encodeWithSelector(ISeize.SeizeBalanceMismatch.selector, seizureWallet, 600e6, 0)
         );
         tokenAuthority.seize(address(wrappedStablecoin), frozenHolder, seizureWallet, 600e6);
     }
@@ -2280,11 +2250,11 @@ contract TokenAuthorityTest is Test {
         v2Stablecoin.addMintRecipient(alice);
 
         bytes4[6] memory seizeOnlySelectors = [
-            IBurnAndRemintStablecoin.pause.selector,
-            IBurnAndRemintStablecoin.unpause.selector,
-            IBurnAndRemintStablecoin.blockAddress.selector,
-            IBurnAndRemintStablecoin.unblockAddress.selector,
-            IBurnAndRemintStablecoin.burnFromBlockedAddress.selector,
+            IStablecoinTemplateV2.pause.selector,
+            IStablecoinTemplateV2.unpause.selector,
+            IStablecoinTemplateV2.blockAddress.selector,
+            IStablecoinTemplateV2.unblockAddress.selector,
+            IStablecoinTemplateV2.burnFromBlockedAddress.selector,
             IERC20.transfer.selector
         ];
         for (uint256 i = 0; i < seizeOnlySelectors.length; i++) {
@@ -2308,7 +2278,7 @@ contract TokenAuthorityTest is Test {
 
         // V2 issuance still goes through the token handler, never a seize handler.
         vm.expectEmit(true, true, true, true, address(v2Stablecoin));
-        emit MockStablecoinTemplateV2.Minted(100e6, alice, address(reserveLedgerBackedHandler));
+        emit IStablecoinTemplateV2.Minted(100e6, alice, address(reserveLedgerBackedHandler));
         vm.prank(minter);
         tokenAuthority.mint(address(v2Stablecoin), alice, 100e6);
         vm.prank(minter);

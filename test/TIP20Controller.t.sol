@@ -1394,16 +1394,6 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
-    function test_seize_revertWhenPauseNotRestored() public {
-        _setUpSeize();
-        seizableStablecoin.pause();
-        vm.mockCall(address(seizableStablecoin), abi.encodeCall(ITIP20.pause, ()), "");
-
-        vm.prank(seizer);
-        vm.expectRevert(abi.encodeWithSelector(ISeize.PauseStateNotRestored.selector, true));
-        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
-    }
-
     function test_seize_revertWhenSeizureWalletNotAuthorizedByCoinPolicy() public {
         _setUpSeize();
         // The Seizure Wallet must also be allowed by the coin's own transfer policy, or the

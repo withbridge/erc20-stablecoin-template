@@ -31,22 +31,15 @@ interface ISeize {
     /// @notice Thrown when the destination is not on the stablecoin's Seizure Wallet list
     error DestinationNotSeizureWallet(address to);
 
-    /// @notice Thrown when the holder is not frozen, before or after the seize
+    /// @notice Thrown when the holder is not frozen
     error HolderNotBlocked(address holder);
 
     /// @notice Thrown when the amount is zero or above the holder's balance
     error InvalidSeizeAmount(uint256 amount, uint256 holderBalance);
 
-    /// @notice Thrown when a seize leaves an account with an unexpected balance
-    /// @dev Checked for the holder, the destination, and this controller. Should never happen.
+    /// @notice Thrown when the Seizure Wallet did not receive exactly the seized amount
+    /// @dev Checked after every move. Should never happen.
     error SeizeBalanceMismatch(address account, uint256 expectedBalance, uint256 actualBalance);
-
-    /// @notice Thrown when a seize changes the stablecoin's total supply. Should never happen.
-    error SeizeTotalSupplyChanged(uint256 totalSupplyBefore, uint256 totalSupplyAfter);
-
-    /// @notice Thrown when a seize leaves the stablecoin in a different pause state than it
-    /// started in. Should never happen.
-    error PauseStateNotRestored(bool pausedBefore);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events

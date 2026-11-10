@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IBurnAndRemintStablecoin } from "../../seize/interfaces/IBurnAndRemintStablecoin.sol";
+import { IStablecoinTemplateV2 } from "../../utils/IStablecoinTemplateV2.sol";
 import { ITokenAuthority } from "../ITokenAuthority.sol";
+import { ISeizeHandler } from "./ISeizeHandler.sol";
 import { SeizeHandler } from "./SeizeHandler.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -18,7 +19,7 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 /// this handler on the stablecoin's mint-recipient list.
 contract BurnAndRemintSeizeHandler is SeizeHandler {
 
-    using SafeERC20 for IBurnAndRemintStablecoin;
+    using SafeERC20 for IStablecoinTemplateV2;
 
     /// @notice The address of the reserve ledger token backing the TokenAuthority's stablecoins
     address public immutable RESERVE_LEDGER_TOKEN;
@@ -61,7 +62,7 @@ contract BurnAndRemintSeizeHandler is SeizeHandler {
         uint256 amount,
         uint256 holderBalance
     ) external onlyTokenAuthority {
-        IBurnAndRemintStablecoin stablecoin = IBurnAndRemintStablecoin(stablecoinContract);
+        IStablecoinTemplateV2 stablecoin = IStablecoinTemplateV2(stablecoinContract);
         uint256 stablecoinBalanceBefore = stablecoin.balanceOf(address(this));
         uint256 reserveBalanceBefore = IERC20(RESERVE_LEDGER_TOKEN).balanceOf(address(this));
 
@@ -91,6 +92,15 @@ contract BurnAndRemintSeizeHandler is SeizeHandler {
         _requireBalanceUnchanged(RESERVE_LEDGER_TOKEN, reserveBalanceBefore);
 
         emit Seized(stablecoinContract, from, to, amount);
+    }
+
+    /// @inheritdoc ISeizeHandler
+    function isHolderBlocked(address stablecoinContract, address holder)
+        external
+        view
+        returns (bool)
+    {
+        return IStablecoinTemplateV2(stablecoinContract).isBlocked(holder);
     }
 
     function _requireBalanceUnchanged(address token, uint256 balanceBefore) internal view {

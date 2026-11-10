@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IForceTransferStablecoin } from "../../seize/interfaces/IForceTransferStablecoin.sol";
+import { StablecoinTemplateV3 } from "../../v3/StablecoinTemplateV3.sol";
+import { ISeizeHandler } from "./ISeizeHandler.sol";
 import { SeizeHandler } from "./SeizeHandler.sol";
 
 /// @title ForceTransferSeizeHandler
@@ -29,8 +30,17 @@ contract ForceTransferSeizeHandler is SeizeHandler {
         external
         onlyTokenAuthority
     {
-        IForceTransferStablecoin(stablecoinContract).forceTransfer(from, to, amount);
+        StablecoinTemplateV3(stablecoinContract).forceTransfer(from, to, amount);
         emit Seized(stablecoinContract, from, to, amount);
+    }
+
+    /// @inheritdoc ISeizeHandler
+    function isHolderBlocked(address stablecoinContract, address holder)
+        external
+        view
+        returns (bool)
+    {
+        return StablecoinTemplateV3(stablecoinContract).isBlocked(holder);
     }
 
 }

@@ -166,9 +166,9 @@ Moves a frozen holder's coins into an approved Seizure Wallet without changing s
 **Every seize** (`seize(stablecoin, from, to, amount)`, `SEIZER_ROLE`):
 1. Seize is configured: a non-zero `seizureWalletPolicyId`, and on `TokenAuthority` a seize handler for the stablecoin. Otherwise `SeizeNotConfigured`.
 2. `to` is neither `from` nor the controller, and is authorized on the Seizure Wallet list (`isAuthorized(seizureWalletPolicyId, to)` on the controller's fixed registry).
-3. `from` is frozen on the stablecoin.
+3. `from` is frozen on the stablecoin. On `TokenAuthority` this is read through the stablecoin's seize handler (`isHolderBlocked`), which knows the stablecoin's type.
 4. `0 < amount <= balanceOf(from)`.
-5. After the move, the base asserts: `from` lost exactly `amount`, `to` gained exactly `amount`, the controller's own balance and the stablecoin's `totalSupply` are unchanged, the pause state is restored, and `from` is still frozen.
+5. After the move, the base asserts that `to` gained exactly `amount` (`SeizeBalanceMismatch`). Anything specific to a path is handled by that path; the `BurnAndRemintSeizeHandler`, for example, asserts its own balances are unchanged.
 
 It ignores the controller's own `setStablecoinPaused`, which halts issuance, not compliance actions. It never goes through a token handler or the reserve-minting path.
 
@@ -218,6 +218,7 @@ On `TokenAuthority`, the seize handler is also refused as a destination, because
 | Event | `Seized(address,address,address,uint256,address)` | `0x61cfce727addc1ab55f91beabbd27489a8558f075cf83922e12818b77b8aa704` |
 | Event | `SeizeHandlerSet(address,address,address)` | `0x76040d400821bc7dd795469e9154c8cb955a6e6a97dd3635e7b2d586e38841a1` |
 | Function (seize handler) | `seize(address,address,address,uint256,uint256)` | `0x17cde087` |
+| Function (seize handler) | `isHolderBlocked(address,address)` | `0x423f1647` |
 | Event (seize handler) | `Seized(address,address,address,uint256)` | `0xa9aec5d8b86e2fa2fd6ac3af62f2622e3dfdab1967d4cbbb56a5df7d74cb887c` |
 | Event | `SeizureWalletPolicyIdSet(address,uint64)` | `0xb881fe19b6eeadc37f4e78a1cb1ade5fc5d0bb4e3f634d539c0807d370c28f38` (both controllers) |
 | Event | `ForceTransferred(uint256,address,address,address)` | `0x708057b4d5a5f38837968e955e789b952ce74d42c5eeeb4964b668fe6aaca057` |
@@ -352,9 +353,9 @@ The seize counterpart of token handlers, in `src/tokenAuthority/seizeHandler/`. 
 | Contract | Stablecoins | Move |
 |---|---|---|
 | `ForceTransferSeizeHandler` | Hold their own backing (`StablecoinTemplateV3`, issued through `ReserveLedgerWrappedHandler`) | `stablecoin.forceTransfer(from, to, amount)`. Backing stays inside the coin. |
-| `BurnAndRemintSeizeHandler` | Backing in a reserve store (`StablecoinTemplateV2`, issued through `ReserveLedgerBackedHandler`) | Unpause if paused → `burnFromBlockedAddress(from)` → `mint(to, amount)`. On a partial seize: `mint(handler, remainder)`, `unblockAddress(from)`, `transfer(from, remainder)`, `blockAddress(from)`. Then re-pause. Reverts if its own stablecoin or reserve ledger balance changes, which also refuses a V3 coin wrongly given this handler (its burn would pay out backing). |
+| `BurnAndRemintSeizeHandler` | Backing in a reserve store (`StablecoinTemplateV2`, issued through `ReserveLedgerBackedHandler`; driven through `IStablecoinTemplateV2` in `src/utils/`) | Unpause if paused → `burnFromBlockedAddress(from)` → `mint(to, amount)`. On a partial seize: `mint(handler, remainder)`, `unblockAddress(from)`, `transfer(from, remainder)`, `blockAddress(from)`. Then re-pause. Reverts if its own stablecoin or reserve ledger balance changes, which also refuses a V3 coin wrongly given this handler (its burn would pay out backing). |
 
-Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`.
+Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`. Each also answers `isHolderBlocked(stablecoin, holder)` through its stablecoin's own type (`StablecoinTemplateV3` or `IStablecoinTemplateV2`), which the TokenAuthority uses for its frozen-holder check.
 
 **Deployment:** `scripts/07_DeploySeizeHandlers.s.sol` deploys both handlers for one TokenAuthority (`run(address tokenAuthority)`) and checks they were built for it.
 - New chains: `deploy-new-chain.sh` runs 07 right after 03, and `05_ConfigureAndHandover` (via `deploy-new-stablecoin.sh`, which now takes `FORCE_TRANSFER_SEIZE_HANDLER`) grants the new V3 stablecoin's `FORCE_TRANSFER_ROLE` to the force-transfer handler and registers the stablecoin with it. `DeployAll` does the same. `06_Verify` checks the seize handler, that it was built for the TokenAuthority, and that it is the only `FORCE_TRANSFER_ROLE` holder.
@@ -433,11 +434,9 @@ Defined in `src/seize/interfaces/ISeize.sol`. Raised identically by `TokenAuthor
 | `0x9e3c18ba` | `InvalidSeizureWalletList(address,uint64)` | Built-in policy ID 1, or a list that authorizes the controller itself; args are the controller's fixed registry and the policy ID |
 | `0x14d41d67` | `InvalidSeizeDestination(address)` | `to` is the holder or the controller |
 | `0x181235d3` | `DestinationNotSeizureWallet(address)` | `to` is not on the Seizure Wallet list |
-| `0xa7d8a38f` | `HolderNotBlocked(address)` | `from` is not frozen, before or (should never happen) after the move |
+| `0xa7d8a38f` | `HolderNotBlocked(address)` | `from` is not frozen before the move |
 | `0xf2125033` | `InvalidSeizeAmount(uint256,uint256)` | Amount is zero or above the holder's balance; args are `amount`, `holderBalance` |
-| `0xe66e11d4` | `SeizeBalanceMismatch(address,uint256,uint256)` | Post-condition: an account's balance is not what the move should leave. Should never happen |
-| `0x34a74a33` | `SeizeTotalSupplyChanged(uint256,uint256)` | Post-condition: total supply changed. Should never happen |
-| `0xec43e08a` | `PauseStateNotRestored(bool)` | Post-condition: the stablecoin's pause state differs from its starting state. Should never happen |
+| `0xe66e11d4` | `SeizeBalanceMismatch(address,uint256,uint256)` | Post-condition: the Seizure Wallet did not receive exactly `amount`; args are the wallet, the expected balance, the actual balance. Should never happen |
 
 ### Idempotency keys (`IIdempotencyKeyErrors`)
 

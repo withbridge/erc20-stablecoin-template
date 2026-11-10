@@ -2,8 +2,13 @@
 pragma solidity ^0.8.24;
 
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { ERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { IERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { IStablecoinTemplateV2 } from "src/utils/IStablecoinTemplateV2.sol";
 
 /// @notice Test double for the live StablecoinTemplateV2 coins
 /// @dev Ports the behaviour of `withbridge/stablecoin-template`
@@ -12,14 +17,16 @@ import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 /// blocklist, the mint-recipient list, the max supply, pause gating, and revert strings match the
 /// original. `_update` stands in for v4's `_beforeTokenTransfer` and is gated identically. It is
 /// not upgradeable because the tests never upgrade it.
-contract MockStablecoinTemplateV2 is ERC20, Pausable, AccessControl {
-
-    event Minted(uint256 amount, address indexed to, address indexed sender);
-    event BurnedFromBlockedAddress(uint256 amount, address indexed account, address indexed sender);
-    event BlockedAddress(address indexed account, address indexed sender);
-    event UnblockedAddress(address indexed account, address indexed sender);
-    event AddedMintRecipient(address indexed account, address indexed sender);
-    event RemovedMintRecipient(address indexed account, address indexed sender);
+/// @dev Implements {IStablecoinTemplateV2}, so the compiler keeps this port and the interface the
+/// seize handler drives in sync. The events come from the interface.
+contract MockStablecoinTemplateV2 is
+    ERC20,
+    ERC20Permit,
+    Pausable,
+    Ownable,
+    AccessControl,
+    IStablecoinTemplateV2
+{
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -36,6 +43,8 @@ contract MockStablecoinTemplateV2 is ERC20, Pausable, AccessControl {
 
     constructor(string memory name, string memory symbol, uint8 decimals_, address admin)
         ERC20(name, symbol)
+        ERC20Permit(name)
+        Ownable(admin)
     {
         require(admin != address(0), "admin cannot be the zero address");
         _decimals = decimals_;
@@ -53,6 +62,8 @@ contract MockStablecoinTemplateV2 is ERC20, Pausable, AccessControl {
 
     function burn(uint256 amount) public onlyRole(MINTER_ROLE) {
         _burn(_msgSender(), amount);
+
+        emit Burned(amount, _msgSender());
     }
 
     function burnFromBlockedAddress(address account) public onlyRole(BLOCKED_ADDRESS_BURNER_ROLE) {
@@ -94,6 +105,17 @@ contract MockStablecoinTemplateV2 is ERC20, Pausable, AccessControl {
 
     function increaseMaxSupply(uint256 amount) public onlyRole(DEFAULT_ADMIN_ROLE) {
         _maxSupply += amount;
+
+        emit IncreasedMaxSupply(amount, _msgSender());
+    }
+
+    function decreaseMaxSupply(uint256 amount) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(
+            _maxSupply - amount >= totalSupply(), "Resulting max supply is lower than total supply"
+        );
+        _maxSupply -= amount;
+
+        emit DecreasedMaxSupply(amount, _msgSender());
     }
 
     function addMintRecipient(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -118,8 +140,37 @@ contract MockStablecoinTemplateV2 is ERC20, Pausable, AccessControl {
         return _maxSupply;
     }
 
-    function decimals() public view override returns (uint8) {
+    function decimals() public view override(ERC20, IERC20Metadata) returns (uint8) {
         return _decimals;
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+        Inherited from both an OpenZeppelin base and IStablecoinTemplateV2
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function paused() public view override(Pausable, IStablecoinTemplateV2) returns (bool) {
+        return super.paused();
+    }
+
+    function owner() public view override(Ownable, IStablecoinTemplateV2) returns (address) {
+        return super.owner();
+    }
+
+    function transferOwnership(address newOwner) public override(Ownable, IStablecoinTemplateV2) {
+        super.transferOwnership(newOwner);
+    }
+
+    function renounceOwnership() public override(Ownable, IStablecoinTemplateV2) {
+        super.renounceOwnership();
+    }
+
+    function nonces(address account)
+        public
+        view
+        override(ERC20Permit, IERC20Permit)
+        returns (uint256)
+    {
+        return super.nonces(account);
     }
 
     /// @dev V2's `_beforeTokenTransfer` gate: not paused, and neither side blocked. Applies to

@@ -21,7 +21,6 @@ import { ITokenHandler } from "./tokenHandler/ITokenHandler.sol";
 import { IdempotencyKeys } from "../idempotency/IdempotencyKeys.sol";
 import { IIdempotencyKeyRegistry } from "../idempotency/interfaces/IIdempotencyKeyRegistry.sol";
 import { Seize } from "../seize/Seize.sol";
-import { ISeizableStablecoin } from "../seize/interfaces/ISeizableStablecoin.sol";
 import { ISeizeHandler } from "./seizeHandler/ISeizeHandler.sol";
 
 import { ReserveLedger } from "../v3/ReserveLedger.sol";
@@ -643,15 +642,17 @@ contract TokenAuthority is
     }
 
     /// @inheritdoc Seize
-    /// @dev Checked here for every seize handler even though each coin re-checks it, so the rule
-    /// holds regardless of the handler or the coin's own implementation.
+    /// @dev Read through the stablecoin's seize handler, which knows which kind of stablecoin it
+    /// serves. {_seizureWalletList} has already required that handler to be set. Checked here even
+    /// though each stablecoin re-checks it, so every controller raises the same {HolderNotBlocked}.
     function _isHolderBlocked(address stablecoinContract, address holder)
         internal
         view
         override
         returns (bool)
     {
-        return ISeizableStablecoin(stablecoinContract).isBlocked(holder);
+        return ISeizeHandler(seizeHandlers[stablecoinContract])
+            .isHolderBlocked(stablecoinContract, holder);
     }
 
     /**
