@@ -84,12 +84,12 @@ contract TIP20Controller is
     IIdempotencyKeyRegistry public idempotencyKeyRegistry;
 
     /// @notice The TIP-403 policy listing the approved Seizure Wallets; 0 when seize is disabled
-    /// @dev One list serves every stablecoin on this controller. Stored as a full word, not the
-    /// `uint64` TIP-403 uses, so it takes a fresh slot (6) after {idempotencyKeyRegistry} instead
-    /// of packing into that slot's unused bytes. Every new variable then sits in its own slot, the
-    /// same append-only layout earlier upgrades used. {setSeizureWalletPolicyId} only accepts a
-    /// `uint64`, so the value always fits one.
-    uint256 public seizureWalletPolicyId;
+    /// @dev One list serves every stablecoin on this controller. A `uint64`, the TIP-403 ID type,
+    /// so it packs into slot 5 beside {idempotencyKeyRegistry} (bytes 20 to 27). Those bytes were
+    /// never written by any earlier version: v3.2.0 declared nothing past slot 2, and v3.3.0 kept
+    /// only an address (`mintIntentRegistry`) in slot 5. So it reads 0, seize disabled, on every
+    /// upgraded proxy.
+    uint64 public seizureWalletPolicyId;
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
@@ -567,9 +567,7 @@ contract TIP20Controller is
      * default. Runs on every seize, so it also catches a list edited later.
      */
     function _isSeizureWallet(address account) internal view returns (bool) {
-        // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint64 listId = uint64(seizureWalletPolicyId);
+        uint64 listId = seizureWalletPolicyId;
         require(
             !StdPrecompiles.TIP403_REGISTRY.isAuthorized(listId, address(this)),
             InvalidSeizureWalletList(address(StdPrecompiles.TIP403_REGISTRY), listId)

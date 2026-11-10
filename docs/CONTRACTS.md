@@ -190,7 +190,7 @@ It ignores the controller's own `setStablecoinPaused`, which halts issuance, not
 
 | Item | Detail |
 |---|---|
-| `seizureWalletPolicyId()` | TIP-403 policy listing the Seizure Wallets for every coin on this controller. `0` means seize is disabled. Returns `uint256` (always fits a `uint64` TIP-403 ID). Storage slot 6, after `idempotencyKeyRegistry`. |
+| `seizureWalletPolicyId()` | TIP-403 policy listing the Seizure Wallets for every coin on this controller. `0` means seize is disabled. A `uint64` (the TIP-403 ID type), packed into slot 5 beside `idempotencyKeyRegistry`; those bytes were never written by an earlier version, so it reads 0 after the upgrade. |
 | `setSeizureWalletPolicyId(policyId)` | `DEFAULT_ADMIN_ROLE`. `0` disables seize; the list is validated on every seize, as above, against TIP-403. |
 | `event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId)` | |
 

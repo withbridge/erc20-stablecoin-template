@@ -213,7 +213,7 @@ interface ITIP20Controller is IIdempotencyKeys, ISeize {
      * @notice The TIP-403 policy listing the approved Seizure Wallets for every stablecoin this
      * controller seizes; 0 when seize is disabled
      */
-    function seizureWalletPolicyId() external view returns (uint256);
+    function seizureWalletPolicyId() external view returns (uint64);
 
     /**
      * @notice Whether minting/burning/wrapping/unwrapping is paused for a stablecoin

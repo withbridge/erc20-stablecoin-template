@@ -1470,20 +1470,34 @@ contract TIP20ControllerTest is Test {
                                 Storage Layout
     //////////////////////////////////////////////////////////////////////////*/
 
-    function test_seizureWalletPolicyId_storageSlotIsAppended() public {
+    function test_seizureWalletPolicyId_storageSlotIsPackedBesideRegistry() public {
         uint64 policyId = StdPrecompiles.TIP403_REGISTRY
         .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
         controller.setSeizureWalletPolicyId(policyId);
 
-        // seizureWalletPolicyId is slot 6: minterAllowances 0, mintTxnLimits 1, reserveStores 2,
-        // mintIntentVersion 3, stablecoinIsPaused 4, idempotencyKeyRegistry 5. Slot 5 still holds
-        // only the registry address, with nothing packed beside it.
-        assertEq(uint256(vm.load(address(controller), bytes32(uint256(6)))), policyId);
+        // minterAllowances 0, mintTxnLimits 1, reserveStores 2, mintIntentVersion 3,
+        // stablecoinIsPaused 4, then slot 5 packs idempotencyKeyRegistry (bytes 0 to 19) with
+        // seizureWalletPolicyId (bytes 20 to 27). Slot 6 stays unused.
+        assertEq(
+            uint256(vm.load(address(controller), bytes32(uint256(5)))),
+            (uint256(policyId) << 160) | uint256(uint160(address(idempotencyKeyRegistry))),
+            "registry and policy ID packed in slot 5"
+        );
+        assertEq(uint256(vm.load(address(controller), bytes32(uint256(6)))), 0, "slot 6 unused");
+
+        // Each setter leaves the other half of the slot alone.
+        controller.setSeizureWalletPolicyId(0);
         assertEq(
             uint256(vm.load(address(controller), bytes32(uint256(5)))),
             uint256(uint160(address(idempotencyKeyRegistry))),
-            "idempotencyKeyRegistry alone in slot 5"
+            "clearing the policy ID keeps the registry"
         );
+        controller.setSeizureWalletPolicyId(policyId);
+        IdempotencyKeyRegistry newRegistry = _deployIdempotencyKeyRegistry(admin);
+        newRegistry.grantRole(newRegistry.CONTROLLER_ROLE(), address(controller));
+        controller.setIdempotencyKeyRegistry(address(newRegistry));
+        assertEq(controller.seizureWalletPolicyId(), policyId, "registry change keeps the ID");
+        assertEq(address(controller.idempotencyKeyRegistry()), address(newRegistry));
     }
 
 }
