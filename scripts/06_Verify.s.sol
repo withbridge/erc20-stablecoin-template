@@ -7,6 +7,7 @@ import { console } from "forge-std/console.sol";
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
 import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ISeizeHandler } from "src/tokenAuthority/seizeHandler/ISeizeHandler.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
@@ -19,8 +20,9 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  *         Checks: contract existence, token metadata (name, symbol, decimals),
  *         policy IDs, immutables, role grants (minter, pauser, unpauser,
  *         blocked-address burner, mint rate limit setter), TokenAuthority
- *         config (txn mint limit, minter allowance), max supply, admin
- *         handover (ownership + DEFAULT_ADMIN_ROLE), and deployer renunciation.
+ *         config (txn mint limit, minter allowance), the stablecoin's seize handler
+ *         and its FORCE_TRANSFER_ROLE, max supply, admin handover (ownership +
+ *         DEFAULT_ADMIN_ROLE), and deployer renunciation.
  */
 contract Verify is Common {
 
@@ -30,6 +32,7 @@ contract Verify is Common {
     bytes32 constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
+    bytes32 constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
     bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
@@ -47,6 +50,7 @@ contract Verify is Common {
         _verifyReserveLedger(ReserveLedger(reserveLedger), tokenAuthority);
         _verifyStablecoin(StablecoinTemplateV3(stablecoin), reserveLedger, tokenAuthority);
         _verifyTokenAuthority(TokenAuthority(tokenAuthority), reserveLedger, stablecoin);
+        _verifySeizeHandler(TokenAuthority(tokenAuthority), StablecoinTemplateV3(stablecoin));
         _verifyIdempotencyKeyRegistry(
             IdempotencyKeyRegistry(idempotencyKeyRegistry), tokenAuthority
         );
@@ -186,6 +190,31 @@ contract Verify is Common {
             ta.getMinterAllowance(stablecoin, vm.envAddress("MINTER_ADDRESS"))
                 == vm.envUint("MINTER_ALLOWANCE"),
             "TA: minterAllowance matches"
+        );
+    }
+
+    function _verifySeizeHandler(TokenAuthority ta, StablecoinTemplateV3 sc) internal {
+        address seizeHandler = ta.getSeizeHandler(address(sc));
+        _check(seizeHandler != address(0), "TA: seizeHandler registered for stablecoin");
+        // Guarded so a missing handler is reported as a failed check, not a revert.
+        if (seizeHandler.code.length == 0) {
+            _check(false, "TA: seizeHandler has code");
+            return;
+        }
+
+        _check(
+            ISeizeHandler(seizeHandler).TOKEN_AUTHORITY() == address(ta),
+            "TA: seizeHandler built for this TokenAuthority"
+        );
+        // The stablecoin can't tell who calls forceTransfer, so the role must have exactly one
+        // holder: the seize handler, which only the TokenAuthority can call.
+        _check(
+            sc.hasRole(FORCE_TRANSFER_ROLE, seizeHandler),
+            "SC: seizeHandler has FORCE_TRANSFER_ROLE"
+        );
+        _check(
+            sc.getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1,
+            "SC: FORCE_TRANSFER_ROLE has exactly one holder"
         );
     }
 

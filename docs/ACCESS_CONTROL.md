@@ -11,6 +11,7 @@ graph TB
         UP[UNPAUSER_ROLE]
         BAB[BLOCKED_ADDRESS_BURNER_ROLE]
         UW[UNWRAPPER_ROLE]
+        FT[FORCE_TRANSFER_ROLE]
     end
 
     subgraph "TokenAuthority Roles"
@@ -22,6 +23,7 @@ graph TB
         THS[TOKEN_AUTHORITY_HANDLER_SETTER_ROLE]
         SP[STABLECOIN_PAUSER_ROLE]
         PUB[PUBLISHER_ROLE]
+        SZ[SEIZER_ROLE]
     end
 
     subgraph "IdempotencyKeyRegistry Roles"
@@ -34,6 +36,7 @@ graph TB
     DA --> UP
     DA --> BAB
     DA --> UW
+    DA --> FT
 
     TA_DA --> MRLS
     TA_DA --> B
@@ -42,6 +45,7 @@ graph TB
     TA_DA --> THS
     TA_DA --> SP
     TA_DA --> PUB
+    TA_DA --> SZ
 
     MIR_DA --> CR
     CR -.granted to.-> TA_DA
@@ -102,6 +106,13 @@ Convert stablecoins back to reserve tokens.
 |------------|----------|
 | Unwrap tokens | `unwrap(address, uint256)` |
 
+### `FORCE_TRANSFER_ROLE`
+`StablecoinTemplateV3` only (not `ReserveLedger`). Grant it **only to the TokenAuthority's `ForceTransferSeizeHandler`**, which only the TokenAuthority can call (after checking `SEIZER_ROLE`) and which checks the Seizure Wallet list and the freeze before every move. The coin cannot enforce who holds it, so the readiness check confirms `getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1`.
+
+| Permission | Function |
+|------------|----------|
+| Move coins out of a blocked address | `forceTransfer(address, address, uint256)` |
+
 ## TokenAuthority Roles
 
 ### `DEFAULT_ADMIN_ROLE`
@@ -109,8 +120,7 @@ Full administrative control over TokenAuthority.
 
 | Permission | Function |
 |------------|----------|
-| Register stablecoins | `registerStablecoin(address, address, uint256)` |
-| Set whether keys are required on `mint` | `setMintIntentVersion(MintIntentVersion)` |
+| Set whether keys are required on `mint` | `setIdempotencyKeysVersion(IdempotencyKeysVersion)` |
 | Migrate idempotency-key registry | `setIdempotencyKeyRegistry(address)` |
 | Manage roles | `grantRole()`, `revokeRole()` |
 | Upgrade implementation | `upgradeToAndCall(address, bytes)` |
@@ -165,7 +175,27 @@ Configure token handlers.
 | Permission | Function |
 |------------|----------|
 | Set handler | `setTokenHandler(address, address)` |
+| Register stablecoins | `registerStablecoin(address, address, address, uint256)` |
 | Unregister stablecoins | `unregisterStablecoin(address)` |
+
+### `SEIZER_ROLE`
+`keccak256("SEIZER_ROLE")`, on both `TokenAuthority` and `TIP20Controller`. Grant it only to the entity's Seize Authority vault. The readiness check confirms it is the sole member via `getRoleMemberCount` / `getRoleMember`.
+
+| Permission | Function |
+|------------|----------|
+| Seize from a frozen holder to a listed Seizure Wallet | `seize(address, address, address, uint256)` |
+
+Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizeHandler(address, address)` on `TokenAuthority`, for stablecoins registered without a seize handler; `setSeizureWalletPolicyId(uint64)` on each **seize handler**, which checks the caller holds the **TokenAuthority's** `DEFAULT_ADMIN_ROLE` (seize handlers have no admin of their own); and `setSeizureWalletPolicyId(uint64)` on `TIP20Controller`, against TIP-403. New stablecoins get their seize handler from `registerStablecoin`.
+
+### Roles stablecoins grant for seize
+
+Granted by the stablecoin's admin during setup. Seize handlers are called only by the TokenAuthority's `seize`; token handlers and the TokenAuthority never use these roles.
+
+| Stablecoin | Held by | Roles |
+|---|---|---|
+| `StablecoinTemplateV3` | `ForceTransferSeizeHandler` | `FORCE_TRANSFER_ROLE` |
+| `StablecoinTemplateV2` | `BurnAndRemintSeizeHandler` | `BLOCKED_ADDRESS_BURNER_ROLE`, `MINTER_ROLE`, `UNBLOCKER_ROLE`, `BLOCKER_ROLE`, `PAUSER_ROLE`, `UNPAUSER_ROLE`; mint recipient: the Seizure Wallet and the seize handler |
+| TIP-20 | TIP20Controller | `BURN_AT_ROLE`, `PAUSE_ROLE`, `UNPAUSE_ROLE` (plus the existing `ISSUER_ROLE`) |
 
 ## IdempotencyKeyRegistry Roles
 

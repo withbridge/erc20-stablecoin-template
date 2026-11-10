@@ -33,6 +33,13 @@ abstract contract Common is Script {
         address tokenAuthorityAdmin;
     }
 
+    /// @dev The two seize handlers deployed per TokenAuthority (step 07). Named so callers never
+    ///      mix them up.
+    struct SeizeHandlers {
+        address forceTransferSeizeHandler;
+        address burnAndRemintSeizeHandler;
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Prerequisite Checks
     //////////////////////////////////////////////////////////////////////////*/

@@ -8,6 +8,9 @@ import {
 import { Test } from "forge-std/Test.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 
+import {
+    PausableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
@@ -661,6 +664,152 @@ contract StablecoinTemplateV3Test is Test, StablecoinTemplateV3ErrorsAndEvents {
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(MigrationToWrappedCompleted.selector));
         token.burn(50);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Force Transfer Tests
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @dev Wraps 100 to user1, freezes user1, and grants FORCE_TRANSFER_ROLE to a fresh account.
+    function _setUpFrozenHolder() internal returns (address forceTransferer) {
+        forceTransferer = makeAddr("forceTransferer");
+        token.grantRole(token.FORCE_TRANSFER_ROLE(), forceTransferer);
+
+        vm.prank(minter);
+        token.wrap(user1, 100);
+
+        authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, true);
+    }
+
+    function test_forceTransfer_roleConstant() public view {
+        // Frozen literal: monorail grants this role ID to the TokenAuthority.
+        assertEq(
+            token.FORCE_TRANSFER_ROLE(),
+            0xf03e19c53afadaa67869d28def12770ead62d3b7112af11002e6f2f27cd92391
+        );
+        assertEq(token.FORCE_TRANSFER_ROLE(), keccak256("FORCE_TRANSFER_ROLE"));
+    }
+
+    function test_forceTransfer_movesPartOfBlockedBalance() public {
+        address forceTransferer = _setUpFrozenHolder();
+
+        vm.prank(forceTransferer);
+        vm.expectEmit(true, true, true, true, address(token));
+        emit ForceTransferred(60, user1, user2, forceTransferer);
+        token.forceTransfer(user1, user2, 60);
+
+        assertEq(token.balanceOf(user1), 40);
+        assertEq(token.balanceOf(user2), 60);
+        assertEq(token.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+        assertEq(reserveLedger.totalSupply(), 100);
+        assertTrue(token.isBlocked(user1));
+    }
+
+    function test_forceTransfer_movesWholeBlockedBalance() public {
+        address forceTransferer = _setUpFrozenHolder();
+
+        vm.prank(forceTransferer);
+        token.forceTransfer(user1, user2, 100);
+
+        assertEq(token.balanceOf(user1), 0);
+        assertEq(token.balanceOf(user2), 100);
+        assertEq(token.totalSupply(), 100);
+        assertEq(reserveLedger.balanceOf(address(token)), 100);
+    }
+
+    function test_forceTransfer_succeedsWhilePausedAndCoinStaysPaused() public {
+        address forceTransferer = _setUpFrozenHolder();
+        vm.prank(pauser);
+        token.pause();
+
+        vm.prank(forceTransferer);
+        token.forceTransfer(user1, user2, 60);
+
+        assertTrue(token.paused());
+        assertEq(token.balanceOf(user2), 60);
+
+        // Same transaction: the pause bypass must already be cleared for ordinary transfers.
+        vm.prank(user2);
+        vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.EnforcedPause.selector));
+        token.transfer(user3, 1);
+    }
+
+    function test_forceTransfer_clearsUnblockFlagAfterMove() public {
+        address forceTransferer = _setUpFrozenHolder();
+
+        vm.prank(forceTransferer);
+        token.forceTransfer(user1, user2, 60);
+
+        // Same transaction: the frozen holder's own transfer must still be refused.
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
+        token.transfer(user3, 1);
+    }
+
+    function test_forceTransfer_revert_not_forceTransferer() public {
+        _setUpFrozenHolder();
+        bytes32 forceTransferRole = token.FORCE_TRANSFER_ROLE();
+
+        vm.prank(user2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user2, forceTransferRole
+            )
+        );
+        token.forceTransfer(user1, user2, 60);
+    }
+
+    function test_forceTransfer_revert_holder_not_blocked() public {
+        address forceTransferer = _setUpFrozenHolder();
+        authRegistry.modifyPolicyBlacklist(transferPolicyId, user1, false);
+
+        vm.prank(forceTransferer);
+        vm.expectRevert(abi.encodeWithSelector(AddressIsNotBlocked.selector));
+        token.forceTransfer(user1, user2, 60);
+    }
+
+    function test_forceTransfer_revert_destination_blocked() public {
+        address forceTransferer = _setUpFrozenHolder();
+        authRegistry.modifyPolicyBlacklist(transferPolicyId, user2, true);
+
+        vm.prank(forceTransferer);
+        vm.expectRevert(abi.encodeWithSelector(AddressBlocked.selector));
+        token.forceTransfer(user1, user2, 60);
+    }
+
+    function test_forceTransfer_revert_zero_amount() public {
+        address forceTransferer = _setUpFrozenHolder();
+
+        vm.prank(forceTransferer);
+        vm.expectRevert(abi.encodeWithSelector(AmountCannotBeZero.selector));
+        token.forceTransfer(user1, user2, 0);
+    }
+
+    function test_forceTransfer_revert_exceeds_balance() public {
+        address forceTransferer = _setUpFrozenHolder();
+
+        vm.prank(forceTransferer);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, user1, 100, 101)
+        );
+        token.forceTransfer(user1, user2, 101);
+    }
+
+    function test_forceTransfer_revert_zero_receiver() public {
+        address forceTransferer = _setUpFrozenHolder();
+
+        vm.prank(forceTransferer);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0))
+        );
+        token.forceTransfer(user1, address(0), 60);
+    }
+
+    function test_forceTransfer_notExposedByReserveLedger() public {
+        (bool success,) = address(reserveLedger)
+            .call(abi.encodeCall(StablecoinTemplateV3.forceTransfer, (user1, user2, 1)));
+        assertFalse(success);
     }
 
     /*//////////////////////////////////////////////////////////////////////////

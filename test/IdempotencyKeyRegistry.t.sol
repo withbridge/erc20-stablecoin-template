@@ -422,7 +422,7 @@ contract IdempotencyKeyRegistryTest is Test {
 
         vm.startPrank(admin);
         ta.grantRole(ta.TOKEN_AUTHORITY_HANDLER_SETTER_ROLE(), admin);
-        ta.registerStablecoin(address(token), address(handler), amount);
+        ta.registerStablecoin(address(token), address(handler), address(0), amount);
         ta.grantRole(ta.MINT_RATE_LIMIT_SETTER_ROLE(), admin);
         ta.setMinterAllowance(address(token), minter, 2 * amount);
         vm.stopPrank();
