@@ -6,7 +6,6 @@ import { console } from "forge-std/console.sol";
 
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
-import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 
 contract DeployTokenAuthority is Common {
 
@@ -16,10 +15,8 @@ contract DeployTokenAuthority is Common {
 
         vm.startBroadcast();
 
-        // Deploy TokenAuthority implementation with initializers disabled. Its AuthRegistry must
-        // be the reserve ledger's own, which the constructor enforces.
-        address authRegistry = address(ReserveLedger(reserveLedger).AUTH_REGISTRY());
-        TokenAuthority taImplementation = new TokenAuthority(reserveLedger, authRegistry, true);
+        // Deploy TokenAuthority implementation with initializers disabled
+        TokenAuthority taImplementation = new TokenAuthority(reserveLedger, true);
         console.log("TokenAuthority implementation:", address(taImplementation));
 
         // Deploy proxy via ERC1967Proxy (not DPF — TokenAuthority.initialize uses

@@ -23,9 +23,6 @@ import { IIdempotencyKeyRegistry } from "../idempotency/interfaces/IIdempotencyK
 import { Seize } from "../seize/Seize.sol";
 import { ISeizeHandler } from "./seizeHandler/ISeizeHandler.sol";
 
-import { ReserveLedger } from "../v3/ReserveLedger.sol";
-import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
-
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import { Version } from "../Version.sol";
@@ -56,12 +53,6 @@ contract TokenAuthority is
 
     /// @notice The absolute maximum amount of tokens that can be minted
     uint256 public immutable ABSOLUTE_MAX = 1_000_000_000 * 1e6;
-
-    /// @notice The AuthRegistry holding this TokenAuthority's Seizure Wallet list
-    /// @dev Immutable, like the TIP20Controller's fixed TIP-403 registry, so only the list ID is
-    /// ever configured. It must be the reserve ledger token's own AuthRegistry: a TokenAuthority
-    /// serves one entity on one chain, and that entity's lists all live in that registry.
-    IAuthRegistry public immutable AUTH_REGISTRY;
 
     /*//////////////////////////////////////////////////////////////////////////
                                 Constants
@@ -109,10 +100,11 @@ contract TokenAuthority is
     /// @dev Appended after {idempotencyKeyRegistry} so the upgrade keeps every existing slot.
     mapping(address stablecoinContract => address seizeHandler) seizeHandlers;
 
-    /// @notice The {AUTH_REGISTRY} policy listing the approved Seizure Wallets; 0 when seize is
-    /// disabled
+    /// @notice The policy listing the approved Seizure Wallets; 0 when seize is disabled
     /// @dev One list serves every stablecoin on this TokenAuthority, because a TokenAuthority
     /// belongs to one entity and that entity seizes into the same wallets for all of its coins.
+    /// Only the policy ID lives here: each seize handler fixes the registry it is checked against
+    /// (the reserve ledger's AuthRegistry) and does the check.
     /// Stored as a full word in its own fresh slot (7), the same as
     /// {TIP20Controller-seizureWalletPolicyId}. {setSeizureWalletPolicyId} only accepts a
     /// `uint64`, so the value always fits one.
@@ -125,24 +117,10 @@ contract TokenAuthority is
     /**
      * @notice Constructs the TokenAuthority contract
      * @param _reserveLedgerToken The address of the reserve ledger token
-     * @param _authRegistry The AuthRegistry holding the Seizure Wallet list; must be the reserve
-     * ledger token's own AuthRegistry
      * @param _disableInitializer Whether to disable the initializer (for proxy pattern)
      */
-    constructor(address _reserveLedgerToken, address _authRegistry, bool _disableInitializer) {
-        require(_authRegistry != address(0), ZeroAddress());
-
-        // A wrong registry would otherwise surface only later, as Seizure Wallet policy IDs being
-        // rejected or, worse, resolved against a registry the entity does not control.
-        address reserveLedgerAuthRegistry =
-            address(ReserveLedger(_reserveLedgerToken).AUTH_REGISTRY());
-        require(
-            reserveLedgerAuthRegistry == _authRegistry,
-            AuthRegistryMismatch(reserveLedgerAuthRegistry, _authRegistry)
-        );
-
+    constructor(address _reserveLedgerToken, bool _disableInitializer) {
         RESERVE_LEDGER_TOKEN = _reserveLedgerToken;
-        AUTH_REGISTRY = IAuthRegistry(_authRegistry);
 
         if (_disableInitializer) {
             _disableInitializers();
@@ -602,7 +580,7 @@ contract TokenAuthority is
         internal
         view
         override
-        returns (address registry, uint64 listId)
+        returns (uint64 listId)
     {
         require(
             seizeHandlers[stablecoinContract] != address(0) && seizureWalletPolicyId != 0,
@@ -611,12 +589,19 @@ contract TokenAuthority is
 
         // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
         // forge-lint: disable-next-line(unsafe-typecast)
-        return (_seizureWalletRegistry(), uint64(seizureWalletPolicyId));
+        return uint64(seizureWalletPolicyId);
     }
 
     /// @inheritdoc Seize
-    function _seizureWalletRegistry() internal view override returns (address) {
-        return address(AUTH_REGISTRY);
+    /// @dev Routed to the stablecoin's seize handler, which holds the registry and does the check.
+    /// {_seizureWalletList} has already required that handler to be set.
+    function _isSeizureWallet(address stablecoinContract, uint64 listId, address account)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        return ISeizeHandler(seizeHandlers[stablecoinContract]).isSeizureWallet(listId, account);
     }
 
     /// @inheritdoc Seize
@@ -625,18 +610,13 @@ contract TokenAuthority is
     }
 
     /**
-     * @dev Reverts unless `seizeHandler` is zero (unseizable) or a seize handler built for this
-     * TokenAuthority. A handler built for another TokenAuthority would accept calls only from that
-     * one, so every seize would revert; it is caught here instead.
+     * @dev Reverts unless `seizeHandler` is zero (unseizable) or implements {ISeizeHandler}: the
+     * same ERC165 check {setTokenHandler} and {registerStablecoin} apply to token handlers.
      */
     function _requireValidSeizeHandler(address seizeHandler) internal view {
-        if (seizeHandler == address(0)) {
-            return;
-        }
-
         require(
-            ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId)
-                && ISeizeHandler(seizeHandler).TOKEN_AUTHORITY() == address(this),
+            seizeHandler == address(0)
+                || ERC165Checker.supportsInterface(seizeHandler, type(ISeizeHandler).interfaceId),
             InvalidSeizeHandler()
         );
     }

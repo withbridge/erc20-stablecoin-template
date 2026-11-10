@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IPolicyRegistry } from "./interfaces/IPolicyRegistry.sol";
 import { ISeize } from "./interfaces/ISeize.sol";
 import {
     AccessControlEnumerableUpgradeable
@@ -17,7 +16,10 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// @dev Holds no state. Declaring storage here would insert slots ahead of the inheriting
 /// controller's existing sequential variables and shift its layout (the same constraint as
 /// {IdempotencyKeys}). Implementers store their own seize settings and expose them through
-/// {_seizureWalletList}, {_seizureWalletRegistry}, and {_setSeizureWalletPolicyId}.
+/// {_seizureWalletList} and {_setSeizureWalletPolicyId}.
+/// @dev Never reads a list registry itself: each implementer checks the Seizure Wallet list in
+/// {_isSeizureWallet} against its own fixed registry (the TokenAuthority through the stablecoin's
+/// seize handler, the TIP20Controller through TIP-403), so no shared registry interface is needed.
 /// @dev No reentrancy guard: {seize} calls only the admin-configured stablecoin, its seize handler,
 /// and its list registry, and none of the supported stablecoins call out during mint, burn, or
 /// transfer.
@@ -29,11 +31,6 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
 
     bytes32 public constant SEIZER_ROLE = keccak256("SEIZER_ROLE");
 
-    /// @dev Highest built-in policy ID shared by the AuthRegistry and TIP-403: 0 always rejects
-    /// and 1 always allows. Neither can be a Seizure Wallet list, and 1 would make every address
-    /// one.
-    uint64 internal constant ALWAYS_ALLOW_POLICY_ID = 1;
-
     /*//////////////////////////////////////////////////////////////////////////
                                 External Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -43,12 +40,12 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
         external
         onlyRole(SEIZER_ROLE)
     {
-        (address registry, uint64 listId) = _seizureWalletList(stablecoinContract);
+        uint64 listId = _seizureWalletList(stablecoinContract);
 
         // Seizing to the holder would be a no-op that still unblocks it on the partial V2 path, and
         // seizing to this controller would leave coins only a seize could move again.
         require(to != from && to != address(this), InvalidSeizeDestination(to));
-        require(IPolicyRegistry(registry).isAuthorized(listId, to), DestinationNotSeizureWallet(to));
+        require(_isSeizureWallet(stablecoinContract, listId, to), DestinationNotSeizureWallet(to));
         require(_isHolderBlocked(stablecoinContract, from), HolderNotBlocked(from));
 
         IERC20 stablecoin = IERC20(stablecoinContract);
@@ -70,13 +67,11 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
     /**
      * @inheritdoc ISeize
      * @dev Shared by every controller, like {IdempotencyKeys-setIdempotencyKeyRegistry}. Only the
-     * policy ID is configurable: each controller reads it from one fixed registry.
+     * policy ID is configurable: each controller checks it against one fixed registry. The list is
+     * validated on every seize instead of here (see {_isSeizureWallet}), because the
+     * TokenAuthority's registry lives in its seize handlers.
      */
     function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (policyId != 0) {
-            _requireValidSeizureWalletList(_seizureWalletRegistry(), policyId);
-        }
-
         _setSeizureWalletPolicyId(policyId);
 
         emit SeizureWalletPolicyIdSet(msg.sender, policyId);
@@ -87,34 +82,27 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
     //////////////////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Reverts unless `registry` and `listId` can safely hold Seizure Wallets
-     * @dev A whitelist of Bridge-held Seizure Wallets never contains this controller, while an
-     * allow-all or blacklist-type list authorizes it by default. Probing `address(this)` catches
-     * both misconfigurations through `isAuthorized` alone, which is all every supported registry
-     * is guaranteed to expose.
-     * @param registry The list registry
-     * @param listId The list ID within `registry`
-     */
-    function _requireValidSeizureWalletList(address registry, uint64 listId) internal view {
-        require(
-            registry != address(0) && listId > ALWAYS_ALLOW_POLICY_ID
-                && !IPolicyRegistry(registry).isAuthorized(listId, address(this)),
-            InvalidSeizureWalletList(registry, listId)
-        );
-    }
-
-    /**
-     * @dev Returns the registry and list ID holding the stablecoin's Seizure Wallets.
+     * @dev Returns the list ID holding the stablecoin's Seizure Wallets.
      * Must revert with {SeizeNotConfigured} when the stablecoin has no seize settings.
      */
     function _seizureWalletList(address stablecoinContract)
         internal
         view
         virtual
-        returns (address registry, uint64 listId);
+        returns (uint64 listId);
 
-    /// @dev Returns the fixed registry the Seizure Wallet policy ID is read from.
-    function _seizureWalletRegistry() internal view virtual returns (address);
+    /**
+     * @dev Returns whether `account` is on Seizure Wallet list `listId` in the implementer's fixed
+     * registry. Must revert with {InvalidSeizureWalletList} when the list authorizes the seizing
+     * controller itself: a whitelist of Bridge-held Seizure Wallets never contains it, while the
+     * built-in allow-all policy (1) and every blacklist-type list authorize it by default, so this
+     * one probe rejects all of them.
+     */
+    function _isSeizureWallet(address stablecoinContract, uint64 listId, address account)
+        internal
+        view
+        virtual
+        returns (bool);
 
     /// @dev Persists the Seizure Wallet policy ID in the implementer's own storage.
     function _setSeizureWalletPolicyId(uint64 policyId) internal virtual;

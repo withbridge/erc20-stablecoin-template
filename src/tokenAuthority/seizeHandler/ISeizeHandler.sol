@@ -49,6 +49,17 @@ interface ISeizeHandler is IERC165 {
     function TOKEN_AUTHORITY() external view returns (address);
 
     /**
+     * @notice Whether `account` is on Seizure Wallet list `policyId`
+     * @dev Read from the TokenAuthority's reserve ledger's AuthRegistry, which the handler fixes
+     * at construction. Reverts with {ISeize-InvalidSeizureWalletList} if the list authorizes the
+     * TokenAuthority itself, as the allow-all policy and blacklist-type lists do.
+     * @param policyId The TokenAuthority's Seizure Wallet policy ID
+     * @param account The proposed destination
+     * @return True when `account` is an approved Seizure Wallet
+     */
+    function isSeizureWallet(uint64 policyId, address account) external view returns (bool);
+
+    /**
      * @notice Whether `holder` is frozen on `stablecoinContract`
      * @dev The TokenAuthority reads the freeze through the stablecoin's seize handler because only
      * the handler knows which kind of stablecoin it serves, and so which interface to read it

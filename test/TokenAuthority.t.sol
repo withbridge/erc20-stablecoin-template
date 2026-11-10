@@ -207,8 +207,7 @@ contract TokenAuthorityTest is Test {
         ////////////////////////////////////////////////////////////////////////////////////////////
         idempotencyKeyRegistry = _deployIdempotencyKeyRegistry(tokenAuthorityAdmin);
 
-        tokenAuthority =
-            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), false);
+        tokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
         tokenAuthority.initialize(tokenAuthorityAdmin, address(idempotencyKeyRegistry));
 
         // Authorize the TokenAuthority to use keys in the shared registry
@@ -801,8 +800,7 @@ contract TokenAuthorityTest is Test {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     function test_tokenAuthorityInitialize() public {
-        TokenAuthority newTokenAuthority =
-            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), false);
+        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
         newTokenAuthority.initialize(bridgeAdmin, address(idempotencyKeyRegistry));
         bool adminHasRole = newTokenAuthority.hasRole(DEFAULT_ADMIN_ROLE, bridgeAdmin);
 
@@ -813,15 +811,13 @@ contract TokenAuthorityTest is Test {
     }
 
     function test_tokenAuthorityInitialize_revertWhenDisabled() public {
-        TokenAuthority newTokenAuthority =
-            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), true);
+        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), true);
         vm.expectRevert(InvalidInitialization.selector);
         newTokenAuthority.initialize(bridgeAdmin, address(idempotencyKeyRegistry));
     }
 
     function test_tokenAuthorityInitialize_revertWhenRegistryIsZero() public {
-        TokenAuthority newTokenAuthority =
-            new TokenAuthority(address(reserveLedgerToken), address(authRegistry), false);
+        TokenAuthority newTokenAuthority = new TokenAuthority(address(reserveLedgerToken), false);
         vm.expectRevert(IIdempotencyKeyErrors.InvalidRegistry.selector);
         newTokenAuthority.initialize(bridgeAdmin, address(0));
     }
@@ -2334,6 +2330,9 @@ contract TokenAuthorityTest is Test {
         assertEq(forceTransferSeizeHandler.TOKEN_AUTHORITY(), address(tokenAuthority));
         assertEq(burnAndRemintSeizeHandler.TOKEN_AUTHORITY(), address(tokenAuthority));
         assertEq(burnAndRemintSeizeHandler.RESERVE_LEDGER_TOKEN(), address(reserveLedgerToken));
+        // Both read the registry from the TokenAuthority's reserve ledger, not from an argument.
+        assertEq(address(forceTransferSeizeHandler.AUTH_REGISTRY()), address(authRegistry));
+        assertEq(address(burnAndRemintSeizeHandler.AUTH_REGISTRY()), address(authRegistry));
         assertTrue(forceTransferSeizeHandler.supportsInterface(type(ISeizeHandler).interfaceId));
         assertTrue(burnAndRemintSeizeHandler.supportsInterface(type(ISeizeHandler).interfaceId));
         // A seize handler is not a token handler, and the reverse.
@@ -2344,28 +2343,6 @@ contract TokenAuthorityTest is Test {
     /*//////////////////////////////////////////////////////////////////////////
                                 Seize Settings
     //////////////////////////////////////////////////////////////////////////*/
-
-    function test_constructor_setsAuthRegistry() public view {
-        assertEq(address(tokenAuthority.AUTH_REGISTRY()), address(authRegistry));
-    }
-
-    function test_constructor_revertWhenAuthRegistryIsZero() public {
-        vm.expectRevert(ITokenAuthority.ZeroAddress.selector);
-        new TokenAuthority(address(reserveLedgerToken), address(0), true);
-    }
-
-    function test_constructor_revertWhenAuthRegistryIsNotTheReserveLedgers() public {
-        address otherAuthRegistry = makeAddr("otherAuthRegistry");
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ITokenAuthority.AuthRegistryMismatch.selector,
-                address(authRegistry),
-                otherAuthRegistry
-            )
-        );
-        new TokenAuthority(address(reserveLedgerToken), otherAuthRegistry, true);
-    }
 
     function test_registerStablecoin_setsSeizeHandler() public {
         _setUpSeize();
@@ -2390,7 +2367,7 @@ contract TokenAuthorityTest is Test {
 
     function test_registerStablecoin_revertWhenSeizeHandlerIsInvalid() public {
         _setUpSeize();
-        address[3] memory invalidSeizeHandlers = _invalidSeizeHandlers();
+        address[2] memory invalidSeizeHandlers = _invalidSeizeHandlers();
 
         vm.startPrank(tokenAuthorityAdmin);
         tokenAuthority.unregisterStablecoin(address(wrappedStablecoin));
@@ -2473,7 +2450,7 @@ contract TokenAuthorityTest is Test {
 
     function test_setSeizeHandler_revertWhenSeizeHandlerIsInvalid() public {
         _setUpSeize();
-        address[3] memory invalidSeizeHandlers = _invalidSeizeHandlers();
+        address[2] memory invalidSeizeHandlers = _invalidSeizeHandlers();
 
         vm.startPrank(tokenAuthorityAdmin);
         for (uint256 i = 0; i < invalidSeizeHandlers.length; i++) {
@@ -2588,7 +2565,7 @@ contract TokenAuthorityTest is Test {
         tokenAuthority.setSeizureWalletPolicyId(seizureWalletPolicyId);
     }
 
-    function test_setSeizureWalletPolicyId_revertWhenPolicyUnusable() public {
+    function test_seize_revertWhenSeizureWalletListUnusable() public {
         _setUpSeize();
         vm.startPrank(bridgeAdmin);
         uint64 blacklistId =
@@ -2600,21 +2577,28 @@ contract TokenAuthorityTest is Test {
         );
         vm.stopPrank();
 
-        // 0 is reserved for disabling seize, so only the always-allow built-in is checked here,
-        // with a blacklist (authorizes everyone unlisted) and a whitelist naming the
-        // TokenAuthority itself.
+        // The always-allow built-in, a blacklist (authorizes everyone unlisted), and a whitelist
+        // naming the TokenAuthority itself. The setter accepts each; the seize handler refuses
+        // them on every seize, on both handler types.
         uint64[3] memory policyIds = [uint64(1), blacklistId, listContainingTokenAuthority];
+        address[2] memory stablecoins = [address(wrappedStablecoin), address(v2Stablecoin)];
 
-        vm.startPrank(tokenAuthorityAdmin);
         for (uint256 i = 0; i < policyIds.length; i++) {
-            vm.expectRevert(
-                abi.encodeWithSelector(
-                    ISeize.InvalidSeizureWalletList.selector, address(authRegistry), policyIds[i]
-                )
-            );
+            vm.prank(tokenAuthorityAdmin);
             tokenAuthority.setSeizureWalletPolicyId(policyIds[i]);
+
+            for (uint256 j = 0; j < stablecoins.length; j++) {
+                vm.prank(seizer);
+                vm.expectRevert(
+                    abi.encodeWithSelector(
+                        ISeize.InvalidSeizureWalletList.selector,
+                        address(authRegistry),
+                        policyIds[i]
+                    )
+                );
+                tokenAuthority.seize(stablecoins[j], frozenHolder, seizureWallet, 600e6);
+            }
         }
-        vm.stopPrank();
     }
 
     /// @dev Like the token handler, only the dedicated setter emits its event: registration and
@@ -2629,14 +2613,10 @@ contract TokenAuthorityTest is Test {
         }
     }
 
-    /// @dev An address without code, a token handler (not a seize handler), and a seize handler
-    /// built for a different TokenAuthority.
-    function _invalidSeizeHandlers() internal returns (address[3] memory) {
-        return [
-            alice,
-            address(reserveLedgerBackedHandler),
-            address(new ForceTransferSeizeHandler(makeAddr("otherTokenAuthority")))
-        ];
+    /// @dev An address without code and a token handler, neither of which reports
+    /// {ISeizeHandler} through ERC165.
+    function _invalidSeizeHandlers() internal view returns (address[2] memory) {
+        return [alice, address(reserveLedgerBackedHandler)];
     }
 
     /*//////////////////////////////////////////////////////////////////////////

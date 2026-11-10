@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import { IIdempotencyKeys } from "../idempotency/interfaces/IIdempotencyKeys.sol";
 import { ISeize } from "../seize/interfaces/ISeize.sol";
-import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 
 /// @title ITokenAuthority
 /// @author Bridge
@@ -75,14 +74,8 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
     /// @notice Thrown when the stablecoin is not paused
     error StablecoinNotPaused();
 
-    /// @notice Thrown when the seize handler does not implement {ISeizeHandler}, or was built for
-    /// a different TokenAuthority
+    /// @notice Thrown when the seize handler does not implement {ISeizeHandler}
     error InvalidSeizeHandler();
-
-    /// @notice Thrown at construction when the AuthRegistry differs from the reserve ledger's
-    /// @param reserveLedgerAuthRegistry The AuthRegistry the reserve ledger token checks against
-    /// @param authRegistry The AuthRegistry passed to the constructor
-    error AuthRegistryMismatch(address reserveLedgerAuthRegistry, address authRegistry);
 
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
@@ -209,12 +202,6 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
      * @notice Query the address of the reserve ledger token
      */
     function RESERVE_LEDGER_TOKEN() external view returns (address);
-
-    /**
-     * @notice The AuthRegistry holding this TokenAuthority's Seizure Wallet list
-     * @dev Fixed at deployment to the reserve ledger token's own AuthRegistry
-     */
-    function AUTH_REGISTRY() external view returns (IAuthRegistry);
 
     /**
      * @notice The hard cap applied to any single mint amount, allowance, or transaction limit
@@ -397,8 +384,8 @@ interface ITokenAuthority is IIdempotencyKeys, ISeize {
      * @notice Sets or clears the seize handler for a registered stablecoin contract
      * @dev Only callable by DEFAULT_ADMIN_ROLE. Sets the handler for stablecoins registered before
      * {registerStablecoin} took one, and replaces or clears it later. A non-zero seize handler
-     * must implement {ISeizeHandler} and belong to this TokenAuthority. Pass the zero address to
-     * clear, which makes the stablecoin unseizable.
+     * must implement {ISeizeHandler}. Pass the zero address to clear, which makes the stablecoin
+     * unseizable.
      * @param stablecoinContract The address of the stablecoin contract
      * @param seizeHandler The seize handler that moves this stablecoin's coins
      */

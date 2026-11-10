@@ -183,10 +183,7 @@ contract DeployAll is SeizeHandlersDeployer {
         internal
         returns (address taProxy)
     {
-        // The TokenAuthority's AuthRegistry must be the reserve ledger's own, which the
-        // constructor enforces.
-        address authRegistry = address(ReserveLedger(rlProxy).AUTH_REGISTRY());
-        TokenAuthority taImpl = new TokenAuthority(rlProxy, authRegistry, true);
+        TokenAuthority taImpl = new TokenAuthority(rlProxy, true);
 
         taProxy = address(
             new ERC1967Proxy(

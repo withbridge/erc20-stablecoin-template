@@ -432,7 +432,9 @@ contract IdempotencyKeyRegistryTest is Test {
         internal
         returns (TokenAuthority taA, TokenAuthority taB)
     {
-        TokenAuthority implementation = _newTokenAuthorityImplementation();
+        address reserveLedger = address(new MockERC20BurnMint());
+
+        TokenAuthority implementation = new TokenAuthority(reserveLedger, true);
 
         taA = TokenAuthority(
             address(
@@ -457,20 +459,8 @@ contract IdempotencyKeyRegistryTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev The TokenAuthority constructor requires the reserve ledger's own AuthRegistry. The mock
-    /// reserve ledger has none, so its getter is mocked; these tests never seize.
-    function _newTokenAuthorityImplementation() internal returns (TokenAuthority) {
-        address reserveLedger = address(new MockERC20BurnMint());
-        address authRegistry = makeAddr("authRegistry");
-        vm.mockCall(
-            reserveLedger, abi.encodeWithSignature("AUTH_REGISTRY()"), abi.encode(authRegistry)
-        );
-
-        return new TokenAuthority(reserveLedger, authRegistry, true);
-    }
-
     function _deployTokenAuthority(address registryAddress) internal returns (TokenAuthority ta) {
-        TokenAuthority implementation = _newTokenAuthorityImplementation();
+        TokenAuthority implementation = new TokenAuthority(address(new MockERC20BurnMint()), true);
 
         ta = TokenAuthority(
             address(

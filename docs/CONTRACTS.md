@@ -98,7 +98,6 @@ TokenAuthority
 |------|------|-------------|
 | `RESERVE_LEDGER_TOKEN` | `address` | The reserve asset |
 | `ABSOLUTE_MAX` | `uint256` | Hard cap on any single amount (`1_000_000_000 * 1e6`) |
-| `AUTH_REGISTRY` | `IAuthRegistry` | Registry holding the Seizure Wallet list. Set in the constructor, which requires it to equal `RESERVE_LEDGER_TOKEN`'s own `AUTH_REGISTRY` (`AuthRegistryMismatch` otherwise) |
 
 **Storage (sequential slots — append only):**
 ```solidity
@@ -134,7 +133,7 @@ Idempotency-key state is *not* stored here — it lives in the shared [`Idempote
 | `seize(stablecoin, from, to, amount)` | `SEIZER_ROLE` | Seize from a frozen holder (see Seize below) |
 | `setSeizeHandler(stablecoin, seizeHandler)` | `DEFAULT_ADMIN_ROLE` | Set, replace or clear (zero) a registered stablecoin's seize handler. For stablecoins registered before `registerStablecoin` took one; no pause needed |
 | `getSeizeHandler(stablecoin)` | Public | Read a stablecoin's seize handler |
-| `setSeizureWalletPolicyId(policyId)` | `DEFAULT_ADMIN_ROLE` | Set the one `AUTH_REGISTRY` policy listing the Seizure Wallets for every stablecoin on this TokenAuthority; `0` disables seize. Shared with `TIP20Controller` through `Seize` |
+| `setSeizureWalletPolicyId(policyId)` | `DEFAULT_ADMIN_ROLE` | Set the one policy listing the Seizure Wallets for every stablecoin on this TokenAuthority; `0` disables seize. The seize handlers check it against the reserve ledger's AuthRegistry. Shared with `TIP20Controller` through `Seize` |
 | `seizureWalletPolicyId()` | Public | Read the Seizure Wallet policy ID |
 
 Key functions inherited from `IdempotencyKeys` — `useKeys` (`PUBLISHER_ROLE`) — forward to the shared registry and emit `KeyUsed` per key.
@@ -165,7 +164,7 @@ Moves a frozen holder's coins into an approved Seizure Wallet without changing s
 
 **Every seize** (`seize(stablecoin, from, to, amount)`, `SEIZER_ROLE`):
 1. Seize is configured: a non-zero `seizureWalletPolicyId`, and on `TokenAuthority` a seize handler for the stablecoin. Otherwise `SeizeNotConfigured`.
-2. `to` is neither `from` nor the controller, and is authorized on the Seizure Wallet list (`isAuthorized(seizureWalletPolicyId, to)` on the controller's fixed registry).
+2. `to` is neither `from` nor the controller, and is on the Seizure Wallet list. On `TokenAuthority` the stablecoin's seize handler checks it (`isSeizureWallet(seizureWalletPolicyId, to)`) against the AuthRegistry it read from the reserve ledger; `TIP20Controller` checks TIP-403 itself. Either reverts with `InvalidSeizureWalletList` if the list authorizes the controller itself.
 3. `from` is frozen on the stablecoin. On `TokenAuthority` this is read through the stablecoin's seize handler (`isHolderBlocked`), which knows the stablecoin's type.
 4. `0 < amount <= balanceOf(from)`.
 5. After the move, the base asserts that `to` gained exactly `amount` (`SeizeBalanceMismatch`). Anything specific to a path is handled by that path; the `BurnAndRemintSeizeHandler`, for example, asserts its own balances are unchanged.
@@ -181,9 +180,9 @@ It ignores the controller's own `setStablecoinPaused`, which halts issuance, not
 
 On `TokenAuthority`, the seize handler is also refused as a destination, because it can't move coins on.
 
-**Seizure Wallet list** (`setSeizureWalletPolicyId`, implemented once in `Seize` like `setIdempotencyKeyRegistry` in `IdempotencyKeys`): each controller reads one policy ID from one fixed registry, `AUTH_REGISTRY` on `TokenAuthority` and TIP-403 on `TIP20Controller`. A TokenAuthority belongs to one entity, which seizes into the same wallets for all of its coins. `0` disables seize; any other ID must not be a built-in (`1` always-allow) and must not authorize the controller itself (this rejects allow-all and blacklist-type lists).
+**Seizure Wallet list** (`setSeizureWalletPolicyId`, implemented once in `Seize` like `setIdempotencyKeyRegistry` in `IdempotencyKeys`): each controller stores one policy ID, checked against one fixed registry. On `TokenAuthority` that registry lives in the seize handlers (`AUTH_REGISTRY`, read from the reserve ledger at construction); on `TIP20Controller` it is TIP-403. A TokenAuthority belongs to one entity, which seizes into the same wallets for all of its coins. `0` disables seize. The list is validated on every seize rather than when it is set: it must not authorize the controller itself, which rejects the built-in allow-all policy (`1`) and blacklist-type lists.
 
-**Seize handler** (`registerStablecoin` and `setSeizeHandler`): zero, or a contract that implements `ISeizeHandler` (ERC165, the same check token handlers get) and whose `TOKEN_AUTHORITY` is this TokenAuthority. Anything else reverts with `InvalidSeizeHandler`.
+**Seize handler** (`registerStablecoin` and `setSeizeHandler`): zero, or a contract that implements `ISeizeHandler` (ERC165, the same check token handlers get). Anything else reverts with `InvalidSeizeHandler`. A handler built for another TokenAuthority reverts every seize with `OnlyTokenAuthority`; `06_Verify` and `07_DeploySeizeHandlers` check `TOKEN_AUTHORITY` for scripted deploys.
 
 **Roles each stablecoin grants for seize** (granted by the stablecoin's admin during setup, not by the upgrade):
 
@@ -198,7 +197,7 @@ On `TokenAuthority`, the seize handler is also refused as a destination, because
 | Item | Detail |
 |---|---|
 | `seizureWalletPolicyId()` | TIP-403 policy listing the Seizure Wallets for every coin on this controller. `0` means seize is disabled. Returns `uint256` (always fits a `uint64` TIP-403 ID). Storage slot 6, after `idempotencyKeyRegistry`. |
-| `setSeizureWalletPolicyId(policyId)` | `DEFAULT_ADMIN_ROLE`, inherited from `Seize`. `0` disables seize; any other value is validated as above against the TIP-403 registry. |
+| `setSeizureWalletPolicyId(policyId)` | `DEFAULT_ADMIN_ROLE`, inherited from `Seize`. `0` disables seize; the list is validated on every seize, as above, against TIP-403. |
 | `event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId)` | Declared on `ISeize` |
 
 **Selectors and topics** (monorail, Fireblocks rules and monitoring key on these):
@@ -210,7 +209,8 @@ On `TokenAuthority`, the seize handler is also refused as a destination, because
 | Function | `registerStablecoin(address,address,address,uint256)` | `0x16c1e855` (replaces `0x3ccf985e`, the three-argument form) |
 | Function | `setSeizeHandler(address,address)` | `0x2eefdac6` |
 | Function | `getSeizeHandler(address)` | `0x8225b566` |
-| Function | `AUTH_REGISTRY()` (TokenAuthority) | `0x91bd7738` |
+| Function (seize handler) | `AUTH_REGISTRY()` | `0x91bd7738` |
+| Function (seize handler) | `isSeizureWallet(uint64,address)` | `0xd1cecc77` |
 | Function | `setSeizureWalletPolicyId(uint64)` | `0x798953e0` (both controllers) |
 | Function | `seizureWalletPolicyId()` | `0xd51c6560` (both controllers) |
 | Function | `forceTransfer(address,address,uint256)` | `0x33bebb77` |
@@ -355,7 +355,7 @@ The seize counterpart of token handlers, in `src/tokenAuthority/seizeHandler/`. 
 | `ForceTransferSeizeHandler` | Hold their own backing (`StablecoinTemplateV3`, issued through `ReserveLedgerWrappedHandler`) | `stablecoin.forceTransfer(from, to, amount)`. Backing stays inside the coin. |
 | `BurnAndRemintSeizeHandler` | Backing in a reserve store (`StablecoinTemplateV2`, issued through `ReserveLedgerBackedHandler`; driven through `IStablecoinTemplateV2` in `src/utils/`) | Unpause if paused → `burnFromBlockedAddress(from)` → `mint(to, amount)`. On a partial seize: `mint(handler, remainder)`, `unblockAddress(from)`, `transfer(from, remainder)`, `blockAddress(from)`. Then re-pause. Reverts if its own stablecoin or reserve ledger balance changes, which also refuses a V3 coin wrongly given this handler (its burn would pay out backing). |
 
-Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`. Each also answers `isHolderBlocked(stablecoin, holder)` through its stablecoin's own type (`StablecoinTemplateV3` or `IStablecoinTemplateV2`), which the TokenAuthority uses for its frozen-holder check.
+Both inherit `SeizeHandler` (only `TOKEN_AUTHORITY` may call; ERC165 for `ISeizeHandler`) and emit `Seized(address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount)`. Each also answers `isHolderBlocked(stablecoin, holder)` through its stablecoin's own type (`StablecoinTemplateV3` or `IStablecoinTemplateV2`), which the TokenAuthority uses for its frozen-holder check. Both also fix `AUTH_REGISTRY` (read from the TokenAuthority's reserve ledger at construction) and answer `isSeizureWallet(policyId, account)`, the TokenAuthority's Seizure Wallet list check.
 
 **Deployment:** `scripts/07_DeploySeizeHandlers.s.sol` deploys both handlers for one TokenAuthority (`run(address tokenAuthority)`) and checks they were built for it.
 - New chains: `deploy-new-chain.sh` runs 07 right after 03, and `05_ConfigureAndHandover` (via `deploy-new-stablecoin.sh`, which now takes `FORCE_TRANSFER_SEIZE_HANDLER`) grants the new V3 stablecoin's `FORCE_TRANSFER_ROLE` to the force-transfer handler and registers the stablecoin with it. `DeployAll` does the same. `06_Verify` checks the seize handler, that it was built for the TokenAuthority, and that it is the only `FORCE_TRANSFER_ROLE` holder.
@@ -421,8 +421,7 @@ Defined in `src/tokenAuthority/ITokenAuthority.sol`.
 | `0x37b3468f` | `PrecisionMismatch(uint256,uint256)` | Stablecoin decimals differ from the reserve ledger's |
 | `0xc41537d3` | `StablecoinPaused()` | Operation attempted on a paused stablecoin |
 | `0xc9fc8444` | `StablecoinNotPaused()` | Operation requires the stablecoin to be paused first |
-| `0xaea894e7` | `InvalidSeizeHandler()` | Provided seize handler does not implement `ISeizeHandler`, or its `TOKEN_AUTHORITY` is another TokenAuthority |
-| `0xa56ea4f8` | `AuthRegistryMismatch(address,address)` | Constructor: the AuthRegistry is not the reserve ledger's; args are the reserve ledger's, then the one passed |
+| `0xaea894e7` | `InvalidSeizeHandler()` | Provided seize handler does not implement `ISeizeHandler` |
 
 ### Seize (`ISeize`)
 
@@ -431,7 +430,7 @@ Defined in `src/seize/interfaces/ISeize.sol`. Raised identically by `TokenAuthor
 | Selector | Error | Meaning |
 |----------|-------|---------|
 | `0x72caeba5` | `SeizeNotConfigured(address)` | `seizureWalletPolicyId == 0`, or (TokenAuthority) the stablecoin has no seize handler |
-| `0x9e3c18ba` | `InvalidSeizureWalletList(address,uint64)` | Built-in policy ID 1, or a list that authorizes the controller itself; args are the controller's fixed registry and the policy ID |
+| `0x9e3c18ba` | `InvalidSeizureWalletList(address,uint64)` | Raised on seize when the list authorizes the controller itself (true of policy 1 and of blacklists); args are the registry checked and the policy ID. On `TokenAuthority` it comes from the seize handler |
 | `0x14d41d67` | `InvalidSeizeDestination(address)` | `to` is the holder or the controller |
 | `0x181235d3` | `DestinationNotSeizureWallet(address)` | `to` is not on the Seizure Wallet list |
 | `0xa7d8a38f` | `HolderNotBlocked(address)` | `from` is not frozen before the move |

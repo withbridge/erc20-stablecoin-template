@@ -20,9 +20,8 @@ interface ISeize {
     /// @notice Thrown when the stablecoin has no seize settings on this controller
     error SeizeNotConfigured(address stablecoinContract);
 
-    /// @notice Thrown when a Seizure Wallet list is unusable: the registry is the zero address, the
-    /// list ID is a registry built-in (0 = always-reject, 1 = always-allow), or the list
-    /// authorizes this controller itself (true of allow-all and blacklist-type lists)
+    /// @notice Thrown during a seize when the Seizure Wallet list authorizes the seizing controller
+    /// itself, which is true of the built-in allow-all policy (1) and of every blacklist-type list
     error InvalidSeizureWalletList(address registry, uint64 listId);
 
     /// @notice Thrown when the destination is the holder or this controller
@@ -77,15 +76,15 @@ interface ISeize {
     /**
      * @notice The policy listing the approved Seizure Wallets for every stablecoin this controller
      * seizes; 0 when seize is disabled
-     * @dev Read from the controller's fixed policy registry: the TokenAuthority's AuthRegistry, or
-     * TIP-403 on the TIP20Controller.
+     * @dev Checked against a fixed registry: the reserve ledger's AuthRegistry, through each
+     * TokenAuthority stablecoin's seize handler, or TIP-403 on the TIP20Controller.
      */
     function seizureWalletPolicyId() external view returns (uint256);
 
     /**
      * @notice Sets or clears the policy listing the approved Seizure Wallets
-     * @dev Pass 0 to disable seize. Any other policy must be usable (see
-     * {InvalidSeizureWalletList}).
+     * @dev Pass 0 to disable seize. The list is validated on every seize, which reverts with
+     * {InvalidSeizureWalletList} if it is unusable.
      * @param policyId The Seizure Wallet policy ID
      */
     function setSeizureWalletPolicyId(uint64 policyId) external;

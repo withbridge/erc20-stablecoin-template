@@ -515,19 +515,30 @@ contract TIP20Controller is
         internal
         view
         override
-        returns (address registry, uint64 listId)
+        returns (uint64 listId)
     {
         require(seizureWalletPolicyId != 0, SeizeNotConfigured(stablecoinContract));
 
         // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
         // forge-lint: disable-next-line(unsafe-typecast)
-        return (_seizureWalletRegistry(), uint64(seizureWalletPolicyId));
+        return uint64(seizureWalletPolicyId);
     }
 
     /// @inheritdoc Seize
     /// @dev TIP-20 coins check transfers against TIP-403, so the Seizure Wallet list lives there.
-    function _seizureWalletRegistry() internal pure override returns (address) {
-        return address(StdPrecompiles.TIP403_REGISTRY);
+    /// This controller has no seize handlers, so it does the check itself.
+    function _isSeizureWallet(address, uint64 listId, address account)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        require(
+            !StdPrecompiles.TIP403_REGISTRY.isAuthorized(listId, address(this)),
+            InvalidSeizureWalletList(address(StdPrecompiles.TIP403_REGISTRY), listId)
+        );
+
+        return StdPrecompiles.TIP403_REGISTRY.isAuthorized(listId, account);
     }
 
     /// @inheritdoc Seize

@@ -1098,15 +1098,7 @@ contract TIP20ControllerTest is Test {
     function test_sharedRegistryWithTokenAuthority_keyIsSingleUse() public {
         bytes32 key = keccak256("cross-type");
 
-        // The TokenAuthority constructor requires the reserve ledger's own AuthRegistry. A TIP-20
-        // reserve ledger has none, so its getter is mocked; this test never seizes.
-        address authRegistry = makeAddr("authRegistry");
-        vm.mockCall(
-            address(reserveLedgerToken),
-            abi.encodeWithSignature("AUTH_REGISTRY()"),
-            abi.encode(authRegistry)
-        );
-        TokenAuthority ta = new TokenAuthority(address(reserveLedgerToken), authRegistry, false);
+        TokenAuthority ta = new TokenAuthority(address(reserveLedgerToken), false);
         ta.initialize(admin, address(idempotencyKeyRegistry));
         idempotencyKeyRegistry.grantRole(idempotencyKeyRegistry.CONTROLLER_ROLE(), address(ta));
 
@@ -1450,7 +1442,8 @@ contract TIP20ControllerTest is Test {
         controller.setSeizureWalletPolicyId(2);
     }
 
-    function test_setSeizureWalletPolicyId_revertWhenPolicyUnusable() public {
+    function test_seize_revertWhenSeizureWalletListUnusable() public {
+        _setUpSeize();
         ITIP403Registry registry = StdPrecompiles.TIP403_REGISTRY;
         uint64 blacklistId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
         uint64 listContainingController =
@@ -1458,15 +1451,18 @@ contract TIP20ControllerTest is Test {
         registry.modifyPolicyWhitelist(listContainingController, address(controller), true);
 
         // The always-allow built-in, a blacklist (authorizes everyone unlisted), and a whitelist
-        // that names the controller itself.
+        // that names the controller itself. The setter accepts each; every seize refuses them.
         uint64[3] memory policyIds = [uint64(1), blacklistId, listContainingController];
         for (uint256 i = 0; i < policyIds.length; i++) {
+            controller.setSeizureWalletPolicyId(policyIds[i]);
+
+            vm.prank(seizer);
             vm.expectRevert(
                 abi.encodeWithSelector(
                     ISeize.InvalidSeizureWalletList.selector, address(registry), policyIds[i]
                 )
             );
-            controller.setSeizureWalletPolicyId(policyIds[i]);
+            controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
         }
     }
 
