@@ -346,10 +346,7 @@ contract TokenAuthority is
         require(tokenHandlers[stablecoinContract] != address(0), StablecoinNotRegistered());
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
-        require(
-            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
-            InvalidTokenHandler()
-        );
+        _requireValidTokenHandler(tokenHandler);
 
         tokenHandlers[stablecoinContract] = tokenHandler;
 
@@ -384,10 +381,7 @@ contract TokenAuthority is
         require(stablecoinContract != address(0), ZeroAddress());
         require(tokenHandler != address(0), ZeroAddress());
         require(mintTxnLimit <= ABSOLUTE_MAX, AmountExceedsAbsoluteMax());
-        require(
-            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
-            InvalidTokenHandler()
-        );
+        _requireValidTokenHandler(tokenHandler);
         _requireValidSeizeHandler(seizeHandler);
 
         tokenHandlers[stablecoinContract] = tokenHandler;
@@ -610,9 +604,21 @@ contract TokenAuthority is
     }
 
     /**
-     * @dev Reverts unless `seizeHandler` is zero (unseizable) or implements {ISeizeHandler}: the
-     * same ERC165 check {setTokenHandler} and {registerStablecoin} apply to token handlers.
+     * @dev The ERC165 check every handler gets when it is set: {_requireValidTokenHandler} for
+     * token
+     * handlers and {_requireValidSeizeHandler} for seize handlers. Each handler answers it through
+     * its base's `supportsInterface` ({TokenHandler} or {SeizeHandler}). The callers check that a
+     * token handler is non-zero first; a zero seize handler is allowed and means unseizable.
      */
+    function _requireValidTokenHandler(address tokenHandler) internal view {
+        require(
+            ERC165Checker.supportsInterface(tokenHandler, type(ITokenHandler).interfaceId),
+            InvalidTokenHandler()
+        );
+    }
+
+    /// @dev Reverts unless `seizeHandler` is zero (unseizable) or implements {ISeizeHandler}. See
+    /// {_requireValidTokenHandler}.
     function _requireValidSeizeHandler(address seizeHandler) internal view {
         require(
             seizeHandler == address(0)
