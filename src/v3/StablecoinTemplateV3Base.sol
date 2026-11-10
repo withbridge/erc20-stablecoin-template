@@ -301,6 +301,7 @@ abstract contract StablecoinTemplateV3Base is
      */
     function _update(address from, address to, uint256 amount)
         internal
+        virtual
         override
         whenNotPaused
         whenNotInBlockedList(to)
