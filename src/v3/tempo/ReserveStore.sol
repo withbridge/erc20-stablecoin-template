@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { Version } from "../../Version.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 
 /// @title ReserveStore
 /// @notice A minimal contract to hold reserve ledger tokens for a specific stablecoin
 /// @dev Deployed per stablecoin to keep ledger token reserves separate for reconciliation purposes.
 ///      Pre-approves the controller to transfer tokens on its behalf.
-contract ReserveStore {
+contract ReserveStore is Version {
 
     /// @notice Error thrown when zero address is used
     error ZeroAddress();

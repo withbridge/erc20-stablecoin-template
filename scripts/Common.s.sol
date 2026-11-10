@@ -33,6 +33,13 @@ abstract contract Common is Script {
         address tokenAuthorityAdmin;
     }
 
+    /// @dev The two seize handlers deployed per TokenAuthority (step 07). Named so callers never
+    ///      mix them up.
+    struct SeizeHandlers {
+        address forceTransferSeizeHandler;
+        address burnAndRemintSeizeHandler;
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Prerequisite Checks
     //////////////////////////////////////////////////////////////////////////*/
@@ -57,9 +64,9 @@ abstract contract Common is Script {
         return addr;
     }
 
-    function mintIntentRegistryAddress() internal view returns (address) {
-        address addr = vm.envAddress("MINT_INTENT_REGISTRY");
-        require(addr != address(0), "MINT_INTENT_REGISTRY not set");
+    function idempotencyKeyRegistryAddress() internal view returns (address) {
+        address addr = vm.envAddress("IDEMPOTENCY_KEY_REGISTRY");
+        require(addr != address(0), "IDEMPOTENCY_KEY_REGISTRY not set");
         return addr;
     }
 

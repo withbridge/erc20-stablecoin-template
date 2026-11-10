@@ -7,10 +7,9 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 
-import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
-import { Approval, OperationState } from "src/mintIntent/MintIntentStorage.sol";
-import { IMintIntent } from "src/mintIntent/interfaces/IMintIntent.sol";
-import { IMintIntentErrors } from "src/mintIntent/interfaces/IMintIntentErrors.sol";
+import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
+import { IIdempotencyKeyErrors } from "src/idempotency/interfaces/IIdempotencyKeyErrors.sol";
+import { IIdempotencyKeys } from "src/idempotency/interfaces/IIdempotencyKeys.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
 import { TIP20Controller } from "src/v3/tempo/TIP20Controller.sol";
 import { ITIP20Controller } from "src/v3/tempo/interfaces/ITIP20Controller.sol";
@@ -19,11 +18,15 @@ import { StdTokens } from "tempo-std/StdTokens.sol";
 import { ITIP20 } from "tempo-std/interfaces/ITIP20.sol";
 import { ITIP20Factory } from "tempo-std/interfaces/ITIP20Factory.sol";
 import { ITIP20RolesAuth } from "tempo-std/interfaces/ITIP20RolesAuth.sol";
+import { ITIP403Registry } from "tempo-std/interfaces/ITIP403Registry.sol";
+
+import { MockTIP20BurnAt } from "./utils/MockTIP20BurnAt.sol";
+import { ISeize } from "src/seize/interfaces/ISeize.sol";
 
 contract TIP20ControllerTest is Test {
 
     TIP20Controller controller;
-    MintIntentRegistry mintIntentRegistry;
+    IdempotencyKeyRegistry idempotencyKeyRegistry;
 
     ITIP20 reserveLedgerToken;
     ITIP20 stablecoin;
@@ -54,21 +57,22 @@ contract TIP20ControllerTest is Test {
         );
         stablecoin = ITIP20(stablecoinAddr);
 
-        // Deploy the shared mint intent registry
-        mintIntentRegistry = _deployMintIntentRegistry(admin);
+        // Deploy the shared idempotency-key registry
+        idempotencyKeyRegistry = _deployIdempotencyKeyRegistry(admin);
 
         // Deploy TIP20Controller implementation
         TIP20Controller implementation = new TIP20Controller(address(reserveLedgerToken), false);
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(
-            TIP20Controller.initialize, (admin, admin, address(mintIntentRegistry))
-        );
+        bytes memory initData =
+            abi.encodeCall(TIP20Controller.initialize, (admin, address(idempotencyKeyRegistry)));
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         controller = TIP20Controller(address(proxy));
 
-        // Authorize the controller to publish and consume intents in the shared registry
-        mintIntentRegistry.grantRole(mintIntentRegistry.CONTROLLER_ROLE(), address(controller));
+        // Authorize the controller to use keys in the shared registry
+        idempotencyKeyRegistry.grantRole(
+            idempotencyKeyRegistry.CONTROLLER_ROLE(), address(controller)
+        );
 
         // Grant MINT_RATE_LIMIT_SETTER_ROLE to admin
         controller.grantRole(controller.MINT_RATE_LIMIT_SETTER_ROLE(), admin);
@@ -89,16 +93,16 @@ contract TIP20ControllerTest is Test {
             .grantRole(reserveLedgerToken.ISSUER_ROLE(), address(controller));
     }
 
-    function _deployMintIntentRegistry(address registryAdmin)
+    function _deployIdempotencyKeyRegistry(address registryAdmin)
         internal
-        returns (MintIntentRegistry)
+        returns (IdempotencyKeyRegistry)
     {
-        MintIntentRegistry registryImplementation = new MintIntentRegistry(false);
-        return MintIntentRegistry(
+        IdempotencyKeyRegistry registryImplementation = new IdempotencyKeyRegistry(false);
+        return IdempotencyKeyRegistry(
             address(
                 new ERC1967Proxy(
                     address(registryImplementation),
-                    abi.encodeCall(MintIntentRegistry.initialize, (registryAdmin))
+                    abi.encodeCall(IdempotencyKeyRegistry.initialize, (registryAdmin))
                 )
             )
         );
@@ -112,18 +116,18 @@ contract TIP20ControllerTest is Test {
         TIP20Controller newController = new TIP20Controller(address(reserveLedgerToken), true);
 
         vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
-        newController.initialize(admin, admin, address(mintIntentRegistry));
+        newController.initialize(admin, address(idempotencyKeyRegistry));
     }
 
     function test_initialize_revertsWhenRegistryIsZero() public {
         TIP20Controller newController = new TIP20Controller(address(reserveLedgerToken), false);
 
-        vm.expectRevert(IMintIntentErrors.InvalidRegistry.selector);
-        newController.initialize(admin, admin, address(0));
+        vm.expectRevert(IIdempotencyKeyErrors.InvalidRegistry.selector);
+        newController.initialize(admin, address(0));
     }
 
-    function test_initialize_setsMintIntentRegistry() public view {
-        assertEq(address(controller.mintIntentRegistry()), address(mintIntentRegistry));
+    function test_initialize_setsIdempotencyKeyRegistry() public view {
+        assertEq(address(controller.idempotencyKeyRegistry()), address(idempotencyKeyRegistry));
     }
 
     function test_initialize_sets_admin() public view {
@@ -492,11 +496,8 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev burnWithOperationId is the only external path into consumeUnusedOperationId, which
-    /// retires an operation ID for every controller sharing the registry.
-    function test_burnWithOperationId_revert_not_burner() public {
-        uint256 operationId = 4242;
-        // Read the role BEFORE pranking: an intervening external call consumes the prank.
+    function test_burn_withKeys_revert_not_burner() public {
+        bytes32 key = keccak256("burn-role");
         bytes32 burnerRole = controller.BURNER_ROLE();
 
         vm.prank(user1);
@@ -505,17 +506,13 @@ contract TIP20ControllerTest is Test {
                 IAccessControl.AccessControlUnauthorizedAccount.selector, user1, burnerRole
             )
         );
-        controller.burnWithOperationId(address(stablecoin), 30e6, operationId);
+        controller.burn(address(stablecoin), 30e6, _keys(key));
 
-        assertEq(
-            uint256(mintIntentRegistry.getOperationState(operationId)),
-            uint256(OperationState.UNUSED),
-            "a rejected burn must not retire the operation ID"
-        );
+        assertTrue(idempotencyKeyRegistry.isFree(key), "a rejected burn must not retire the key");
     }
 
-    function test_burnWithOperationId_consumesUnusedOperationId() public {
-        uint256 operationId = 1;
+    function test_burn_withKeys_consumesKeys() public {
+        bytes32 key = keccak256("burn-key");
         uint256 mintAmount = 100e6;
         uint256 burnAmount = 30e6;
 
@@ -523,489 +520,115 @@ contract TIP20ControllerTest is Test {
 
         vm.startPrank(minter);
         stablecoin.approve(address(controller), burnAmount);
-        controller.burnWithOperationId(address(stablecoin), burnAmount, operationId);
+        controller.burn(address(stablecoin), burnAmount, _keys(key));
 
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        controller.burnWithOperationId(address(stablecoin), 1, operationId);
-        vm.stopPrank();
-    }
-
-    function test_burnWithOperationId_revertWhenOperationIdReservedByMintApproval() public {
-        uint256 operationId = 2;
-        bytes32 holdId = keccak256("tip20-reserved-mint-approval");
-
-        vm.prank(admin);
-        controller.grantRole(controller.BURNER_ROLE(), minter);
-
-        vm.prank(admin);
-        controller.publishApproval(
-            IMintIntent.ApprovalParams({
-                operationId: operationId,
-                holdId: holdId,
-                amount: 100e6,
-                recipient: user1,
-                stablecoin: address(stablecoin)
-            }),
-            uint64(block.timestamp + 1 days)
+        vm.expectRevert(
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-
-        vm.prank(minter);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        controller.burnWithOperationId(address(stablecoin), 100e6, operationId);
-    }
-
-    function test_burnWithOperationId_revertWhenOperationIdConsumedByMintApproval() public {
-        uint256 operationId = 3;
-        IMintIntent.ApprovalParams memory params = IMintIntent.ApprovalParams({
-            operationId: operationId,
-            holdId: keccak256("tip20-consumed-mint-approval"),
-            amount: 100e6,
-            recipient: minter,
-            stablecoin: address(stablecoin)
-        });
-
-        vm.startPrank(admin);
-        controller.setTxnMintLimit(address(stablecoin), 100e6);
-        controller.setMinterAllowance(address(stablecoin), minter, 100e6);
-        controller.grantRole(controller.BURNER_ROLE(), minter);
-        controller.publishApproval(params, uint64(block.timestamp + 1 days));
+        controller.burn(address(stablecoin), 1, _keys(key));
         vm.stopPrank();
 
-        vm.prank(minter);
-        controller.mintWithApproval(params);
-
-        vm.prank(minter);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        controller.burnWithOperationId(address(stablecoin), 100e6, operationId);
+        assertFalse(idempotencyKeyRegistry.isFree(key));
     }
 
-    function test_publishApproval_revertWhenOperationIdConsumedByBurn() public {
-        uint256 operationId = 4;
+    function test_mint_withKeys_consumesKeysAndRejectsReuse() public {
+        bytes32 key = keccak256("mint-key");
+        _allowMinter(address(stablecoin), 200e6);
 
-        _mintStablecoinToMinter(100e6);
+        vm.prank(minter);
+        vm.expectEmit(true, true, false, false, address(controller));
+        emit IIdempotencyKeys.KeyUsed(minter, key);
+        controller.mint(address(stablecoin), user1, 100e6, _keys(key));
+
+        assertEq(stablecoin.balanceOf(user1), 100e6);
+        assertFalse(idempotencyKeyRegistry.isFree(key));
+
+        vm.prank(minter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
+        );
+        controller.mint(address(stablecoin), user1, 100e6, _keys(key));
+    }
+
+    function test_mint_withKeys_limitFailureDoesNotConsumeKeys() public {
+        bytes32 key = keccak256("limit-key");
+        _allowMinter(address(stablecoin), 50e6);
+
+        vm.prank(minter);
+        vm.expectRevert(ITIP20Controller.MinterAllowanceExceeded.selector);
+        controller.mint(address(stablecoin), user1, 100e6, _keys(key));
+
+        assertTrue(idempotencyKeyRegistry.isFree(key));
+    }
+
+    function test_mint_and_burn_shareKeyNamespace() public {
+        bytes32 key = keccak256("shared-mint-burn");
+        _allowMinter(address(stablecoin), 100e6);
+        controller.grantRole(controller.BURNER_ROLE(), minter);
+
+        vm.prank(minter);
+        controller.mint(address(stablecoin), minter, 100e6, _keys(key));
 
         vm.startPrank(minter);
-        stablecoin.approve(address(controller), 30e6);
-        controller.burnWithOperationId(address(stablecoin), 30e6, operationId);
-        vm.stopPrank();
-
-        vm.prank(admin);
+        stablecoin.approve(address(controller), 100e6);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
-            )
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-        controller.publishApproval(
-            IMintIntent.ApprovalParams({
-                operationId: operationId,
-                holdId: keccak256("tip20-burn-consumed-operation"),
-                amount: 100e6,
-                recipient: user1,
-                stablecoin: address(stablecoin)
-            }),
-            uint64(block.timestamp + 1 days)
-        );
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
-                                Mint Intent Tests
-    //////////////////////////////////////////////////////////////////////////*/
-
-    function test_initialize_grantsPublisherRole() public view {
-        assertTrue(controller.hasRole(controller.PUBLISHER_ROLE(), admin));
-    }
-
-    function test_publishRevokeExtend_revertWhenNotPublisher() public {
-        IMintIntent.ApprovalParams memory params = _approvalParams(10, keccak256("not-publisher"));
-
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                controller.PUBLISHER_ROLE()
-            )
-        );
-        controller.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                controller.PUBLISHER_ROLE()
-            )
-        );
-        controller.revokeApproval(params.holdId);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                controller.PUBLISHER_ROLE()
-            )
-        );
-        controller.revokeOperationId(params.operationId);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                controller.PUBLISHER_ROLE()
-            )
-        );
-        controller.extendApproval(params.holdId, uint64(block.timestamp + 2 days));
+        controller.burn(address(stablecoin), 100e6, _keys(key));
         vm.stopPrank();
     }
 
-    function test_publishApproval_storesFieldsAndEmits() public {
-        uint256 operationId = 11;
-        bytes32 holdId = keccak256("publish-stores-fields");
-        uint64 expiry = uint64(block.timestamp + 1 days);
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
+    function test_mint_revertWhenKeyRetiredByAnotherController() public {
+        bytes32 key = keccak256("retire");
+        address otherController = makeAddr("otherController");
+        idempotencyKeyRegistry.grantRole(idempotencyKeyRegistry.CONTROLLER_ROLE(), otherController);
 
-        vm.expectEmit(true, true, true, true, address(controller));
-        emit IMintIntent.ApprovalPublished(
-            admin, operationId, holdId, address(stablecoin), user1, 100e6, expiry
-        );
-        controller.publishApproval(params, expiry);
+        vm.prank(otherController);
+        idempotencyKeyRegistry.useKeys(_keys(key));
 
-        Approval memory approval = controller.getApproval(holdId);
-        assertEq(approval.amount, params.amount);
-        assertEq(approval.recipient, params.recipient);
-        assertEq(approval.stablecoin, params.stablecoin);
-        assertEq(approval.expiry, expiry);
-        assertEq(approval.flags, 0);
-        assertEq(approval.operationId, operationId);
-    }
+        assertFalse(idempotencyKeyRegistry.isFree(key));
 
-    function test_publishApproval_rejectsInvalidInputsAndDuplicates() public {
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        controller.publishApproval(
-            _approvalParams(0, keccak256("zero-operation")), uint64(block.timestamp + 1 days)
-        );
-
-        vm.expectRevert(IMintIntentErrors.InvalidHoldId.selector);
-        controller.publishApproval(
-            _approvalParams(12, bytes32(0)), uint64(block.timestamp + 1 days)
-        );
-
-        IMintIntent.ApprovalParams memory params = _approvalParams(13, keccak256("invalid-publish"));
-
-        params.amount = 0;
-        vm.expectRevert(IMintIntentErrors.InvalidAmount.selector);
-        controller.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        params = _approvalParams(14, keccak256("zero-stablecoin"));
-        params.stablecoin = address(0);
-        vm.expectRevert(IMintIntentErrors.InvalidStablecoin.selector);
-        controller.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        params = _approvalParams(15, keccak256("zero-recipient"));
-        params.recipient = address(0);
-        vm.expectRevert(IMintIntentErrors.InvalidRecipient.selector);
-        controller.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.expectRevert(IMintIntentErrors.InvalidExpiry.selector);
-        controller.publishApproval(
-            _approvalParams(16, keccak256("expired-expiry")), uint64(block.timestamp)
-        );
-
-        params = _approvalParams(17, keccak256("duplicate-original"));
-        controller.publishApproval(params, uint64(block.timestamp + 1 days));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(IMintIntentErrors.ApprovalExistsForOperationId.selector, 17)
-        );
-        controller.publishApproval(
-            _approvalParams(17, keccak256("duplicate-operation")), uint64(block.timestamp + 1 days)
-        );
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForHoldId.selector, params.holdId
-            )
-        );
-        controller.publishApproval(
-            _approvalParams(18, params.holdId), uint64(block.timestamp + 1 days)
-        );
-    }
-
-    function test_extendApproval_updatesExpiryAndEmits() public {
-        uint256 operationId = 19;
-        bytes32 holdId = keccak256("extend-success");
-        uint64 expiry = uint64(block.timestamp + 1 days);
-        uint64 newExpiry = uint64(block.timestamp + 2 days);
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
-        _publishApproval(params, expiry);
-
-        vm.expectEmit(true, true, true, true, address(controller));
-        emit IMintIntent.ApprovalExtended(admin, holdId, operationId, newExpiry);
-        controller.extendApproval(holdId, newExpiry);
-
-        Approval memory approval = controller.getApproval(holdId);
-        assertEq(approval.expiry, newExpiry);
-        assertEq(approval.operationId, operationId);
-    }
-
-    function test_extendApproval_rejectsSameOlderRevokedConsumedAndNonexistent() public {
-        uint64 expiry = uint64(block.timestamp + 1 days);
-        IMintIntent.ApprovalParams memory params = _approvalParams(20, keccak256("extend-invalid"));
-        _publishApproval(params, expiry);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExpiryNotExtended.selector, params.holdId, expiry, expiry
-            )
-        );
-        controller.extendApproval(params.holdId, expiry);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExpiryNotExtended.selector,
-                params.holdId,
-                expiry - 1,
-                expiry
-            )
-        );
-        controller.extendApproval(params.holdId, expiry - 1);
-
-        IMintIntent.ApprovalParams memory revoked = _approvalParams(21, keccak256("extend-revoked"));
-        _publishApproval(revoked, expiry);
-        controller.revokeApproval(revoked.holdId);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, revoked.holdId, uint256(2)
-            )
-        );
-        controller.extendApproval(revoked.holdId, expiry + 1);
-
-        IMintIntent.ApprovalParams memory consumed =
-            _approvalParams(22, keccak256("extend-consumed"));
-        _publishApproval(consumed, expiry);
         _allowMinter(address(stablecoin), 100e6);
         vm.prank(minter);
-        controller.mintWithApproval(consumed);
-
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, consumed.holdId, uint256(1)
-            )
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-        controller.extendApproval(consumed.holdId, expiry + 1);
-
-        bytes32 missingHoldId = keccak256("extend-missing");
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalNotExistsForHoldId.selector, missingHoldId
-            )
-        );
-        controller.extendApproval(missingHoldId, expiry + 1);
+        controller.mint(address(stablecoin), user1, 100e6, _keys(key));
     }
 
-    function test_mintWithApproval_consumesApprovalAndRejectsReuse() public {
-        uint256 operationId = 23;
-        bytes32 holdId = keccak256("mint-with-approval");
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
-        _publishApproval(params, uint64(block.timestamp + 1 days));
+    function test_mint_withKeys_emptyAllowedWhenOptionalSkipsRegistry() public {
         _allowMinter(address(stablecoin), 100e6);
+        idempotencyKeyRegistry.revokeRole(
+            idempotencyKeyRegistry.CONTROLLER_ROLE(), address(controller)
+        );
 
         vm.prank(minter);
-        vm.expectEmit(true, true, true, true, address(controller));
-        emit IMintIntent.ApprovalConsumed(minter, operationId, holdId);
-        controller.mintWithApproval(params);
+        controller.mint(address(stablecoin), user1, 100e6, new bytes32[](0));
 
-        Approval memory approval = controller.getApproval(holdId);
-        assertEq(approval.flags, 1);
         assertEq(stablecoin.balanceOf(user1), 100e6);
         assertEq(controller.getMinterAllowance(address(stablecoin), minter), 0);
-        address reserveStore = controller.getReserveStore(address(stablecoin));
-        assertTrue(reserveStore != address(0));
-        assertEq(reserveLedgerToken.balanceOf(reserveStore), 100e6);
-
-        _allowMinter(address(stablecoin), 100e6);
-        vm.prank(minter);
-        vm.expectRevert(
-            abi.encodeWithSelector(IMintIntentErrors.InvalidApproval.selector, holdId, uint256(1))
-        );
-        controller.mintWithApproval(params);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
-            )
-        );
-        controller.publishApproval(
-            _approvalParams(operationId, keccak256("consumed-operation-republish")),
-            uint64(block.timestamp + 1 days)
-        );
     }
 
-    function test_mintWithApproval_limitFailuresDoNotConsumeApproval() public {
-        IMintIntent.ApprovalParams memory allowanceParams =
-            _approvalParams(30, keccak256("approval-allowance-limit"));
-        _publishApproval(allowanceParams, uint64(block.timestamp + 1 days));
-
-        vm.prank(user2);
-        vm.expectRevert(ITIP20Controller.MinterAllowanceExceeded.selector);
-        controller.mintWithApproval(allowanceParams);
-
-        Approval memory approval = controller.getApproval(allowanceParams.holdId);
-        assertEq(approval.flags, 0);
-
-        _allowMinter(address(stablecoin), 99e6);
-
-        vm.prank(minter);
-        vm.expectRevert(ITIP20Controller.MinterAllowanceExceeded.selector);
-        controller.mintWithApproval(allowanceParams);
-
-        approval = controller.getApproval(allowanceParams.holdId);
-        assertEq(approval.flags, 0);
-
+    function test_mint_withoutKeys_revertWhenRequired() public {
         _allowMinter(address(stablecoin), 100e6);
+        controller.setMintIntentVersion(ITIP20Controller.MintIntentVersion.Required);
 
         vm.prank(minter);
-        controller.mintWithApproval(allowanceParams);
+        vm.expectRevert(ITIP20Controller.IdempotencyKeysRequired.selector);
+        controller.mint(address(stablecoin), user1, 100e6);
 
-        IMintIntent.ApprovalParams memory txnLimitParams =
-            _approvalParams(31, keccak256("approval-txn-limit"));
-        _publishApproval(txnLimitParams, uint64(block.timestamp + 1 days));
-
-        vm.startPrank(admin);
-        controller.setTxnMintLimit(address(stablecoin), 99e6);
-        controller.setMinterAllowance(address(stablecoin), minter, 100e6);
-        vm.stopPrank();
-
-        vm.prank(minter);
-        vm.expectRevert(ITIP20Controller.MintTxnLimitExceeded.selector);
-        controller.mintWithApproval(txnLimitParams);
-
-        approval = controller.getApproval(txnLimitParams.holdId);
-        assertEq(approval.flags, 0);
-
-        _allowMinter(address(stablecoin), 100e6);
-
-        vm.prank(minter);
-        controller.mintWithApproval(txnLimitParams);
+        assertEq(stablecoin.balanceOf(user1), 0);
+        assertEq(controller.getMinterAllowance(address(stablecoin), minter), 100e6);
     }
 
-    function test_mintWithApproval_revert_amount_zero() public {
-        IMintIntent.ApprovalParams memory params =
-            _approvalParams(32, keccak256("zero-approval-amount"));
-        params.amount = 0;
-
-        vm.prank(minter);
-        vm.expectRevert(ITIP20Controller.AmountCannotBeZero.selector);
-        controller.mintWithApproval(params);
-    }
-
-    function test_mintWithApproval_invalidParamsReportExpectedBooleans() public {
-        IMintIntent.ApprovalParams memory params = _approvalParams(24, keccak256("invalid-params"));
-        _publishApproval(params, uint64(block.timestamp + 1 days));
-        _allowMinter(address(stablecoin), 1000e6);
-
-        IMintIntent.ApprovalParams memory invalid = params;
-        invalid.holdId = keccak256("wrong-hold");
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, true, true, true, true, true);
-        controller.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.holdId = bytes32(0);
-        vm.prank(minter);
-        _expectInvalidApprovalParams(true, true, true, true, true, true);
-        controller.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.operationId = 25;
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, true, false, false, false, false);
-        controller.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.amount = 99e6;
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, true, false, false, false);
-        controller.mintWithApproval(invalid);
-
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.recipient = user2;
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, false, true, false, false);
-        controller.mintWithApproval(invalid);
-
-        _allowMinter(address(reserveLedgerToken), 100e6);
-        invalid = _approvalParams(24, keccak256("invalid-params"));
-        invalid.stablecoin = address(reserveLedgerToken);
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, false, false, true, false);
-        controller.mintWithApproval(invalid);
-
-        IMintIntent.ApprovalParams memory expired =
-            _approvalParams(26, keccak256("expired-approval"));
-        _publishApproval(expired, uint64(block.timestamp + 1 days));
-        vm.warp(block.timestamp + 2 days);
-        vm.prank(minter);
-        _expectInvalidApprovalParams(false, false, false, false, false, true);
-        controller.mintWithApproval(expired);
-    }
-
-    function test_revokeApprovalAndOperationId_emitFieldsAndBlockReuse() public {
-        IMintIntent.ApprovalParams memory revokedApproval =
-            _approvalParams(27, keccak256("revoke-approval-fields"));
-        _publishApproval(revokedApproval, uint64(block.timestamp + 1 days));
-
-        vm.expectEmit(true, true, true, true, address(controller));
-        emit IMintIntent.ApprovalRevoked(admin, revokedApproval.holdId, revokedApproval.operationId);
-        controller.revokeApproval(revokedApproval.holdId);
-
-        _allowMinter(address(stablecoin), 100e6);
-        vm.prank(minter);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, revokedApproval.holdId, uint256(2)
-            )
-        );
-        controller.mintWithApproval(revokedApproval);
-
-        vm.prank(admin);
+    function test_burn_withKeys_revertWhenEmpty() public {
         controller.grantRole(controller.BURNER_ROLE(), minter);
         vm.prank(minter);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        controller.burnWithOperationId(address(stablecoin), 100e6, revokedApproval.operationId);
-
-        IMintIntent.ApprovalParams memory revokedOperation =
-            _approvalParams(28, keccak256("revoke-operation-fields"));
-        _publishApproval(revokedOperation, uint64(block.timestamp + 1 days));
-
-        vm.expectEmit(true, true, true, true, address(controller));
-        emit IMintIntent.ApprovalRevoked(
-            admin, revokedOperation.holdId, revokedOperation.operationId
-        );
-        vm.expectEmit(true, true, true, true, address(controller));
-        emit IMintIntent.OperationIdRevoked(
-            admin, revokedOperation.operationId, revokedOperation.holdId
-        );
-        controller.revokeOperationId(revokedOperation.operationId);
-
-        _allowMinter(address(stablecoin), 100e6);
-        vm.prank(minter);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApproval.selector, revokedOperation.holdId, uint256(2)
-            )
-        );
-        controller.mintWithApproval(revokedOperation);
-
-        vm.prank(minter);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        controller.burnWithOperationId(address(stablecoin), 100e6, revokedOperation.operationId);
+        vm.expectRevert(IIdempotencyKeyErrors.InvalidIdempotencyKeys.selector);
+        controller.burn(address(stablecoin), 1, new bytes32[](0));
     }
 
-    function test_setMintIntentVersion_requiredGatesPlainMintButAllowsApprovalMint() public {
-        IMintIntent.ApprovalParams memory params =
-            _approvalParams(29, keccak256("required-version"));
-        _publishApproval(params, uint64(block.timestamp + 1 days));
+    function test_setMintIntentVersion_requiredGatesEmptyKeyMint() public {
         _allowMinter(address(stablecoin), 200e6);
 
         bytes32 defaultAdminRole = controller.DEFAULT_ADMIN_ROLE();
@@ -1024,17 +647,20 @@ contract TIP20ControllerTest is Test {
         controller.setMintIntentVersion(ITIP20Controller.MintIntentVersion.Required);
 
         vm.prank(minter);
-        vm.expectRevert(ITIP20Controller.MintIntentRequired.selector);
-        controller.mint(address(stablecoin), user1, 100e6);
+        vm.expectRevert(ITIP20Controller.IdempotencyKeysRequired.selector);
+        controller.mint(address(stablecoin), user1, 100e6, new bytes32[](0));
 
         controller.grantRole(controller.BRIDGE_ECOSYSTEM_CONTRACT_ROLE(), admin);
         controller.mintBridgeEcosystem(address(stablecoin), user2, 1);
 
+        bytes32 key = keccak256("required-ok");
         vm.prank(minter);
-        controller.mintWithApproval(params);
+        controller.mint(address(stablecoin), user1, 100e6, _keys(key));
 
         assertEq(stablecoin.balanceOf(user1), 100e6);
         assertEq(stablecoin.balanceOf(user2), 1);
+        assertEq(controller.getMinterAllowance(address(stablecoin), minter), 100e6);
+        assertFalse(idempotencyKeyRegistry.isFree(key));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -1467,85 +1093,39 @@ contract TIP20ControllerTest is Test {
                 Shared registry across DIFFERENT controller types
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @dev The Zenith finding names both TokenAuthority and TIP20Controller, but every other
-    /// cross-controller test uses two TokenAuthority proxies or two EOAs. This is the only test
-    /// where the two real, mechanically different controller types share one registry.
-    function test_sharedRegistryWithTokenAuthority_operationIdIsSingleUse() public {
-        uint256 operationId = 4242;
-        bytes32 holdId = keccak256("cross-type");
+    /// @dev The two real, mechanically different controller types share one registry. A key used
+    /// through TIP20Controller cannot be reused through TokenAuthority.
+    function test_sharedRegistryWithTokenAuthority_keyIsSingleUse() public {
+        bytes32 key = keccak256("cross-type");
 
-        // A TokenAuthority sharing this controller's registry
         TokenAuthority ta = new TokenAuthority(address(reserveLedgerToken), false);
-        ta.initialize(admin, admin, address(mintIntentRegistry));
-        mintIntentRegistry.grantRole(mintIntentRegistry.CONTROLLER_ROLE(), address(ta));
+        ta.initialize(admin, address(idempotencyKeyRegistry));
+        idempotencyKeyRegistry.grantRole(idempotencyKeyRegistry.CONTROLLER_ROLE(), address(ta));
 
-        // Consume the operation ID through the TIP20Controller
-        IMintIntent.ApprovalParams memory params = _approvalParams(operationId, holdId);
-        _publishApproval(params, uint64(block.timestamp + 1 days));
         _allowMinter(address(stablecoin), 100e6);
         vm.prank(minter);
-        controller.mintWithApproval(params);
+        controller.mint(address(stablecoin), user1, 100e6, _keys(key));
 
-        assertEq(
-            uint256(mintIntentRegistry.getOperationState(operationId)),
-            uint256(OperationState.CONSUMED)
-        );
+        assertFalse(idempotencyKeyRegistry.isFree(key));
 
-        // The TokenAuthority cannot reuse the operation ID...
-        vm.prank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.ApprovalExistsForOperationId.selector, operationId
-            )
-        );
-        ta.publishApproval(
-            _approvalParams(operationId, keccak256("cross-type-other")),
-            uint64(block.timestamp + 1 days)
-        );
-
-        // ...nor the hold ID...
-        vm.prank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(IMintIntentErrors.ApprovalExistsForHoldId.selector, holdId)
-        );
-        ta.publishApproval(_approvalParams(9999, holdId), uint64(block.timestamp + 1 days));
-
-        // ...nor retire it via a burn...
         vm.startPrank(admin);
         ta.grantRole(ta.BURNER_ROLE(), admin);
-        vm.expectRevert(IMintIntentErrors.InvalidOperationId.selector);
-        ta.burnWithOperationId(address(stablecoin), 1, operationId);
-        vm.stopPrank();
-
-        // ...and cannot touch the TIP20Controller's approval, since ownership is per controller.
-        vm.prank(admin);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IMintIntentErrors.NotApprovalController.selector,
-                holdId,
-                address(controller),
-                address(ta)
-            )
+            abi.encodeWithSelector(IIdempotencyKeyErrors.IdempotencyKeyUsed.selector, key)
         );
-        ta.revokeApproval(holdId);
+        ta.burn(address(stablecoin), 1, _keys(key));
+        vm.stopPrank();
     }
 
-    function _approvalParams(uint256 operationId, bytes32 holdId)
-        internal
-        view
-        returns (IMintIntent.ApprovalParams memory)
-    {
-        return IMintIntent.ApprovalParams({
-            operationId: operationId,
-            holdId: holdId,
-            amount: 100e6,
-            recipient: user1,
-            stablecoin: address(stablecoin)
-        });
+    function _keys(bytes32 a) internal pure returns (bytes32[] memory keys) {
+        keys = new bytes32[](1);
+        keys[0] = a;
     }
 
-    function _publishApproval(IMintIntent.ApprovalParams memory params, uint64 expiry) internal {
-        controller.publishApproval(params, expiry);
+    function _keys(bytes32 a, bytes32 b) internal pure returns (bytes32[] memory keys) {
+        keys = new bytes32[](2);
+        keys[0] = a;
+        keys[1] = b;
     }
 
     function _allowMinter(address token, uint256 amount) internal {
@@ -1555,25 +1135,369 @@ contract TIP20ControllerTest is Test {
         vm.stopPrank();
     }
 
-    function _expectInvalidApprovalParams(
-        bool invalidHoldId,
-        bool invalidOperationId,
-        bool invalidAmount,
-        bool invalidRecipient,
-        bool stablecoinIsWrong,
-        bool invalidExpiry
-    ) internal {
+    /*//////////////////////////////////////////////////////////////////////////
+                                    Seize
+    //////////////////////////////////////////////////////////////////////////*/
+
+    uint256 constant SEIZE_HOLDER_BALANCE = 1000e6;
+
+    // Seize fixtures, populated by _setUpSeize
+    MockTIP20BurnAt seizableStablecoin;
+    address seizer;
+    address seizureWallet;
+    address frozenHolder;
+    uint64 transferPolicyId;
+    uint64 seizureWalletPolicyId;
+
+    /// @dev Issues SEIZE_HOLDER_BALANCE to `frozenHolder` through the controller (so the reserve
+    /// store holds matching reserve ledger tokens), freezes it under the coin's TIP-403 policy, and
+    /// grants every role monorail's setup grants. Uses a T12-style mock because the pinned
+    /// precompile has no `burnAt`.
+    function _setUpSeize() internal {
+        seizer = makeAddr("seizer");
+        seizureWallet = makeAddr("seizureWallet");
+        frozenHolder = makeAddr("frozenHolder");
+
+        ITIP403Registry registry = StdPrecompiles.TIP403_REGISTRY;
+        transferPolicyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        seizureWalletPolicyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
+
+        seizableStablecoin = new MockTIP20BurnAt(admin, transferPolicyId);
+        seizableStablecoin.grantRole(seizableStablecoin.ISSUER_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.BURN_AT_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.PAUSE_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.UNPAUSE_ROLE(), address(controller));
+        seizableStablecoin.grantRole(seizableStablecoin.PAUSE_ROLE(), admin);
+
+        _allowMinter(address(seizableStablecoin), SEIZE_HOLDER_BALANCE);
+        vm.prank(minter);
+        controller.mint(address(seizableStablecoin), frozenHolder, SEIZE_HOLDER_BALANCE);
+        registry.modifyPolicyBlacklist(transferPolicyId, frozenHolder, true);
+
+        controller.grantRole(controller.SEIZER_ROLE(), seizer);
+        controller.setSeizureWalletPolicyId(seizureWalletPolicyId);
+    }
+
+    function _assertReserveBackingUnchanged() internal view {
+        address reserveStore = controller.getReserveStore(address(seizableStablecoin));
+        assertEq(reserveLedgerToken.totalSupply(), SEIZE_HOLDER_BALANCE, "rl total supply");
+        assertEq(
+            reserveLedgerToken.balanceOf(reserveStore), SEIZE_HOLDER_BALANCE, "rl in reserve store"
+        );
+    }
+
+    function test_seizerRole_constant() public view {
+        // Frozen literal: monorail detects an upgraded controller by calling SEIZER_ROLE().
+        assertEq(
+            controller.SEIZER_ROLE(),
+            0xe770a2b882b0a3a025be15ffce2d5d54f5d719264e701933268dd62f79db677f
+        );
+    }
+
+    function test_seize_seizerRoleIsEnumerable() public {
+        _setUpSeize();
+
+        bytes32 seizerRole = controller.SEIZER_ROLE();
+        assertEq(controller.getRoleMemberCount(seizerRole), 1);
+        assertEq(controller.getRoleMember(seizerRole, 0), seizer);
+    }
+
+    function test_seize_movesPartOfFrozenBalance() public {
+        _setUpSeize();
+
+        vm.expectEmit(true, true, true, true, address(seizableStablecoin));
+        emit MockTIP20BurnAt.BurnAt(address(controller), frozenHolder, 600e6);
+        vm.expectEmit(true, true, true, true, address(seizableStablecoin));
+        emit MockTIP20BurnAt.Mint(seizureWallet, 600e6);
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit ISeize.Seized(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6, seizer);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(seizableStablecoin.balanceOf(frozenHolder), 400e6, "holder");
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 600e6, "seizure wallet");
+        assertEq(seizableStablecoin.balanceOf(address(controller)), 0, "controller");
+        assertEq(seizableStablecoin.totalSupply(), 1000e6, "supply");
+        assertFalse(
+            StdPrecompiles.TIP403_REGISTRY.isAuthorized(transferPolicyId, frozenHolder),
+            "holder still frozen"
+        );
+        _assertReserveBackingUnchanged();
+    }
+
+    function test_seize_movesWholeFrozenBalance() public {
+        _setUpSeize();
+
+        vm.prank(seizer);
+        controller.seize(
+            address(seizableStablecoin), frozenHolder, seizureWallet, SEIZE_HOLDER_BALANCE
+        );
+
+        assertEq(seizableStablecoin.balanceOf(frozenHolder), 0, "holder");
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 1000e6, "seizure wallet");
+        assertEq(seizableStablecoin.totalSupply(), 1000e6, "supply");
+        _assertReserveBackingUnchanged();
+    }
+
+    function test_seize_pausedCoinEndsPaused() public {
+        _setUpSeize();
+        seizableStablecoin.pause();
+
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.unpause, ()), 1);
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.pause, ()), 1);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertTrue(seizableStablecoin.paused(), "re-paused");
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 600e6);
+    }
+
+    function test_seize_unpausedCoinIsNeverPaused() public {
+        _setUpSeize();
+
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.unpause, ()), 0);
+        vm.expectCall(address(seizableStablecoin), abi.encodeCall(ITIP20.pause, ()), 0);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertFalse(seizableStablecoin.paused());
+    }
+
+    function test_seize_neverMintsReserveLedgerTokens() public {
+        _setUpSeize();
+
+        vm.expectCall(address(reserveLedgerToken), abi.encodeWithSelector(ITIP20.mint.selector), 0);
+        vm.expectCall(address(reserveLedgerToken), abi.encodeWithSelector(ITIP20.burn.selector), 0);
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        _assertReserveBackingUnchanged();
+    }
+
+    function test_seize_ignoresControllerStablecoinPause() public {
+        _setUpSeize();
+        controller.grantRole(controller.STABLECOIN_PAUSER_ROLE(), admin);
+        controller.setStablecoinPaused(address(seizableStablecoin), true);
+
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(seizableStablecoin.balanceOf(seizureWallet), 600e6);
+        assertTrue(controller.stablecoinIsPaused(address(seizableStablecoin)));
+    }
+
+    function test_seize_doesNotTouchMintLimits() public {
+        _setUpSeize();
+        _allowMinter(address(seizableStablecoin), 500e6);
+
+        vm.prank(seizer);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(controller.getMinterAllowance(address(seizableStablecoin), minter), 500e6);
+        assertEq(controller.getStablecoinTxnMintLimit(address(seizableStablecoin)), 500e6);
+        assertEq(controller.getMinterAllowance(address(seizableStablecoin), seizer), 0);
+    }
+
+    function test_seize_revertWhenCallerLacksSeizerRole() public {
+        _setUpSeize();
+        bytes32 seizerRole = controller.SEIZER_ROLE();
+
+        vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IMintIntentErrors.InvalidApprovalParams.selector,
-                invalidHoldId,
-                invalidOperationId,
-                invalidAmount,
-                invalidRecipient,
-                stablecoinIsWrong,
-                invalidExpiry
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, seizerRole
             )
         );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenPolicyNotSet() public {
+        _setUpSeize();
+        controller.setSeizureWalletPolicyId(0);
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.SeizeNotConfigured.selector, address(seizableStablecoin))
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenDestinationNotSeizureWallet() public {
+        _setUpSeize();
+
+        vm.prank(seizer);
+        vm.expectRevert(abi.encodeWithSelector(ISeize.DestinationNotSeizureWallet.selector, user2));
+        controller.seize(address(seizableStablecoin), frozenHolder, user2, 600e6);
+    }
+
+    function test_seize_revertWhenDestinationRemovedFromList() public {
+        _setUpSeize();
+        StdPrecompiles.TIP403_REGISTRY
+            .modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, false);
+
+        vm.prank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.DestinationNotSeizureWallet.selector, seizureWallet)
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenHolderNotBlocked() public {
+        _setUpSeize();
+        StdPrecompiles.TIP403_REGISTRY.modifyPolicyBlacklist(transferPolicyId, frozenHolder, false);
+
+        vm.prank(seizer);
+        vm.expectRevert(abi.encodeWithSelector(ISeize.HolderNotBlocked.selector, frozenHolder));
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+    }
+
+    function test_seize_revertWhenAmountIsZeroOrAboveBalance() public {
+        _setUpSeize();
+
+        vm.startPrank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.InvalidSeizeAmount.selector, 0, SEIZE_HOLDER_BALANCE)
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISeize.InvalidSeizeAmount.selector, SEIZE_HOLDER_BALANCE + 1, SEIZE_HOLDER_BALANCE
+            )
+        );
+        controller.seize(
+            address(seizableStablecoin), frozenHolder, seizureWallet, SEIZE_HOLDER_BALANCE + 1
+        );
+        vm.stopPrank();
+    }
+
+    function test_seize_revertWhenDestinationIsHolderOrController() public {
+        _setUpSeize();
+
+        vm.startPrank(seizer);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.InvalidSeizeDestination.selector, frozenHolder)
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, frozenHolder, 600e6);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeize.InvalidSeizeDestination.selector, address(controller))
+        );
+        controller.seize(address(seizableStablecoin), frozenHolder, address(controller), 600e6);
+        vm.stopPrank();
+    }
+
+    function test_seize_revertWhenSeizureWalletNotAuthorizedByCoinPolicy() public {
+        _setUpSeize();
+        // The Seizure Wallet must also be allowed by the coin's own transfer policy, or the
+        // TIP-20 mint refuses it and nothing moves.
+        StdPrecompiles.TIP403_REGISTRY.modifyPolicyBlacklist(transferPolicyId, seizureWallet, true);
+
+        vm.prank(seizer);
+        vm.expectRevert(ITIP20.PolicyForbids.selector);
+        controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+
+        assertEq(seizableStablecoin.balanceOf(frozenHolder), SEIZE_HOLDER_BALANCE);
+    }
+
+    function test_seize_pinnedPrecompileHasNoBurnAt() public {
+        // Characterizes the toolchain gap behind MockTIP20BurnAt: the pinned Tempo Foundry
+        // precompile predates T12. When this starts failing, the toolchain supports burnAt and the
+        // seize tests can move to a real TIP-20.
+        (bool success,) = address(stablecoin).call(abi.encodeCall(ITIP20.burnAt, (user1, 1)));
+        assertFalse(success);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            Seizure Wallet Policy Setter
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_setSeizureWalletPolicyId_storesAndEmits() public {
+        uint64 policyId = StdPrecompiles.TIP403_REGISTRY
+        .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, policyId);
+        controller.setSeizureWalletPolicyId(policyId);
+
+        assertEq(controller.seizureWalletPolicyId(), policyId);
+    }
+
+    function test_setSeizureWalletPolicyId_zeroDisablesSeize() public {
+        _setUpSeize();
+
+        vm.expectEmit(true, true, true, true, address(controller));
+        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, 0);
+        controller.setSeizureWalletPolicyId(0);
+
+        assertEq(controller.seizureWalletPolicyId(), 0);
+    }
+
+    function test_setSeizureWalletPolicyId_revertWhenNotAdmin() public {
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, user1, bytes32(0)
+            )
+        );
+        controller.setSeizureWalletPolicyId(2);
+    }
+
+    function test_seize_revertWhenSeizureWalletListUnusable() public {
+        _setUpSeize();
+        ITIP403Registry registry = StdPrecompiles.TIP403_REGISTRY;
+        uint64 blacklistId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        uint64 listContainingController =
+            registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(listContainingController, address(controller), true);
+
+        // The always-allow built-in, a blacklist (authorizes everyone unlisted), and a whitelist
+        // that names the controller itself. The setter accepts each; every seize refuses them.
+        uint64[3] memory policyIds = [uint64(1), blacklistId, listContainingController];
+        for (uint256 i = 0; i < policyIds.length; i++) {
+            controller.setSeizureWalletPolicyId(policyIds[i]);
+
+            vm.prank(seizer);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    ISeize.InvalidSeizureWalletList.selector, address(registry), policyIds[i]
+                )
+            );
+            controller.seize(address(seizableStablecoin), frozenHolder, seizureWallet, 600e6);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                Storage Layout
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_seizureWalletPolicyId_storageSlotIsPackedBesideRegistry() public {
+        uint64 policyId = StdPrecompiles.TIP403_REGISTRY
+        .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        controller.setSeizureWalletPolicyId(policyId);
+
+        // minterAllowances 0, mintTxnLimits 1, reserveStores 2, mintIntentVersion 3,
+        // stablecoinIsPaused 4, then slot 5 packs idempotencyKeyRegistry (bytes 0 to 19) with
+        // seizureWalletPolicyId (bytes 20 to 27). Slot 6 stays unused.
+        assertEq(
+            uint256(vm.load(address(controller), bytes32(uint256(5)))),
+            (uint256(policyId) << 160) | uint256(uint160(address(idempotencyKeyRegistry))),
+            "registry and policy ID packed in slot 5"
+        );
+        assertEq(uint256(vm.load(address(controller), bytes32(uint256(6)))), 0, "slot 6 unused");
+
+        // Each setter leaves the other half of the slot alone.
+        controller.setSeizureWalletPolicyId(0);
+        assertEq(
+            uint256(vm.load(address(controller), bytes32(uint256(5)))),
+            uint256(uint160(address(idempotencyKeyRegistry))),
+            "clearing the policy ID keeps the registry"
+        );
+        controller.setSeizureWalletPolicyId(policyId);
+        IdempotencyKeyRegistry newRegistry = _deployIdempotencyKeyRegistry(admin);
+        newRegistry.grantRole(newRegistry.CONTROLLER_ROLE(), address(controller));
+        controller.setIdempotencyKeyRegistry(address(newRegistry));
+        assertEq(controller.seizureWalletPolicyId(), policyId, "registry change keeps the ID");
+        assertEq(address(controller.idempotencyKeyRegistry()), address(newRegistry));
     }
 
 }

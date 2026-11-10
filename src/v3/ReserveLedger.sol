@@ -60,8 +60,8 @@ contract ReserveLedger is StablecoinTemplateV3Base {
     /**
      * @dev Burns the entire balance of a blocked address.
      *
-     * This function temporarily unblocks the address to allow the burn operation,
-     * then re-blocks it after the burn is complete.
+     * Temporarily bypasses this token's transfer-policy checks for all addresses during the burn,
+     * then clears the bypass. Registry authorization is unchanged.
      *
      * Requirements:
      * - `account` must be blocked
@@ -77,9 +77,8 @@ contract ReserveLedger is StablecoinTemplateV3Base {
         uint256 accountBalance = balanceOf(account);
         require(accountBalance > 0, NoBalanceToBurn());
 
-        // Temporarily unblock the address to allow the burn to go through. This is needed because
-        // _update prevents transfers to and from blocked addresses. _burn() treats
-        // burns as transfers to the zero address.
+        // Temporarily bypass this token's transfer-policy checks so _burn can destroy the blocked
+        // account's balance. _burn treats the operation as a transfer to the zero address.
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(true);
         _burn(account, accountBalance);
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);

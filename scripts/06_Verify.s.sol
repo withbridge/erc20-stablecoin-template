@@ -5,8 +5,9 @@ import { Common } from "./Common.s.sol";
 import { console } from "forge-std/console.sol";
 
 import { AuthRegistry } from "auth-registry/src/AuthRegistry.sol";
-import { MintIntentRegistry } from "src/mintIntent/MintIntentRegistry.sol";
+import { IdempotencyKeyRegistry } from "src/idempotency/IdempotencyKeyRegistry.sol";
 import { TokenAuthority } from "src/tokenAuthority/TokenAuthority.sol";
+import { ISeizeHandler } from "src/tokenAuthority/seizeHandler/ISeizeHandler.sol";
 import { ReserveLedger } from "src/v3/ReserveLedger.sol";
 import { StablecoinTemplateV3 } from "src/v3/StablecoinTemplateV3.sol";
 import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
@@ -19,8 +20,9 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  *         Checks: contract existence, token metadata (name, symbol, decimals),
  *         policy IDs, immutables, role grants (minter, pauser, unpauser,
  *         blocked-address burner, mint rate limit setter), TokenAuthority
- *         config (txn mint limit, minter allowance), max supply, admin
- *         handover (ownership + DEFAULT_ADMIN_ROLE), and deployer renunciation.
+ *         config (txn mint limit, minter allowance), the stablecoin's seize handler
+ *         and its FORCE_TRANSFER_ROLE, max supply, admin handover (ownership +
+ *         DEFAULT_ADMIN_ROLE), and deployer renunciation.
  */
 contract Verify is Common {
 
@@ -30,6 +32,7 @@ contract Verify is Common {
     bytes32 constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
+    bytes32 constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
     bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
@@ -39,7 +42,7 @@ contract Verify is Common {
     function run() public {
         address authRegistry = authRegistryAddress();
         address reserveLedger = reserveLedgerAddress();
-        address mintIntentRegistry = mintIntentRegistryAddress();
+        address idempotencyKeyRegistry = idempotencyKeyRegistryAddress();
         address tokenAuthority = tokenAuthorityAddress();
         address stablecoin = stablecoinAddress();
 
@@ -47,8 +50,13 @@ contract Verify is Common {
         _verifyReserveLedger(ReserveLedger(reserveLedger), tokenAuthority);
         _verifyStablecoin(StablecoinTemplateV3(stablecoin), reserveLedger, tokenAuthority);
         _verifyTokenAuthority(TokenAuthority(tokenAuthority), reserveLedger, stablecoin);
-        _verifyMintIntentRegistry(MintIntentRegistry(mintIntentRegistry), tokenAuthority);
-        _verifyDeployerRenunciation(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin);
+        _verifySeizeHandler(TokenAuthority(tokenAuthority), StablecoinTemplateV3(stablecoin));
+        _verifyIdempotencyKeyRegistry(
+            IdempotencyKeyRegistry(idempotencyKeyRegistry), tokenAuthority
+        );
+        _verifyDeployerRenunciation(
+            reserveLedger, idempotencyKeyRegistry, tokenAuthority, stablecoin
+        );
 
         // --- Summary ---
         console.log("---");
@@ -185,33 +193,58 @@ contract Verify is Common {
         );
     }
 
-    function _verifyMintIntentRegistry(MintIntentRegistry registry, address tokenAuthority)
+    function _verifySeizeHandler(TokenAuthority ta, StablecoinTemplateV3 sc) internal {
+        address seizeHandler = ta.getSeizeHandler(address(sc));
+        _check(seizeHandler != address(0), "TA: seizeHandler registered for stablecoin");
+        // Guarded so a missing handler is reported as a failed check, not a revert.
+        if (seizeHandler.code.length == 0) {
+            _check(false, "TA: seizeHandler has code");
+            return;
+        }
+
+        _check(
+            ISeizeHandler(seizeHandler).TOKEN_AUTHORITY() == address(ta),
+            "TA: seizeHandler built for this TokenAuthority"
+        );
+        // The stablecoin can't tell who calls forceTransfer, so the role must have exactly one
+        // holder: the seize handler, which only the TokenAuthority can call.
+        _check(
+            sc.hasRole(FORCE_TRANSFER_ROLE, seizeHandler),
+            "SC: seizeHandler has FORCE_TRANSFER_ROLE"
+        );
+        _check(
+            sc.getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1,
+            "SC: FORCE_TRANSFER_ROLE has exactly one holder"
+        );
+    }
+
+    function _verifyIdempotencyKeyRegistry(IdempotencyKeyRegistry registry, address tokenAuthority)
         internal
     {
-        _check(address(registry).code.length > 0, "MintIntentRegistry has code");
+        _check(address(registry).code.length > 0, "IdempotencyKeyRegistry has code");
 
-        // The TokenAuthority must point at this registry, and be authorized on it, or mint
-        // intents cannot be published or consumed.
+        // The TokenAuthority must point at this registry, and be authorized on it, or keys
+        // cannot be used.
         _check(
-            address(TokenAuthority(tokenAuthority).mintIntentRegistry()) == address(registry),
-            "TA: mintIntentRegistry matches"
+            address(TokenAuthority(tokenAuthority).idempotencyKeyRegistry()) == address(registry),
+            "TA: idempotencyKeyRegistry matches"
         );
         _check(
             registry.hasRole(CONTROLLER_ROLE, tokenAuthority),
-            "MintIntentRegistry: TA has CONTROLLER_ROLE"
+            "IdempotencyKeyRegistry: TA has CONTROLLER_ROLE"
         );
 
         // Admin handover
         address taAdmin = vm.envAddress("TOKEN_AUTHORITY_ADMIN");
         _check(
             registry.hasRole(DEFAULT_ADMIN_ROLE, taAdmin),
-            "MintIntentRegistry: admin has DEFAULT_ADMIN_ROLE"
+            "IdempotencyKeyRegistry: admin has DEFAULT_ADMIN_ROLE"
         );
     }
 
     function _verifyDeployerRenunciation(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin
     ) internal {
@@ -253,8 +286,9 @@ contract Verify is Common {
                 "TA: deployer renounced TOKEN_AUTHORITY_HANDLER_SETTER_ROLE"
             );
             _check(
-                !MintIntentRegistry(mintIntentRegistry).hasRole(DEFAULT_ADMIN_ROLE, deployer),
-                "MintIntentRegistry: deployer renounced DEFAULT_ADMIN_ROLE"
+                !IdempotencyKeyRegistry(idempotencyKeyRegistry)
+                    .hasRole(DEFAULT_ADMIN_ROLE, deployer),
+                "IdempotencyKeyRegistry: deployer renounced DEFAULT_ADMIN_ROLE"
             );
         }
     }

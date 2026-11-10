@@ -16,17 +16,19 @@ import { StablecoinTemplateV3Base } from "src/v3/StablecoinTemplateV3Base.sol";
  * @notice Configures roles and limits on deployed contracts, then hands over
  *         admin to the final admin addresses and renounces the deployer's roles.
  *
- *         Prerequisites: steps 01-04 must have been run with the deployer as
+ *         Prerequisites: steps 01-04 and 07 must have been run with the deployer as
  *         admin (msg.sender).
  *
  *         This script:
  *         1. Grants MINTER_ROLE on RL and SC to TokenAuthority
- *         2. Grants CONTROLLER_ROLE on the MintIntentRegistry to TokenAuthority
+ *         2. Grants CONTROLLER_ROLE on the IdempotencyKeyRegistry to TokenAuthority
  *         3. Grants PAUSER, UNPAUSER, BLOCKED_ADDRESS_BURNER roles on SC
- *         4. Sets txn mint limit and minter allowance on TokenAuthority
- *         5. Sets max supply on RL and SC
- *         6. Grants DEFAULT_ADMIN_ROLE + ownership to final admin addresses
- *         7. Renounces all deployer roles
+ *         4. Grants FORCE_TRANSFER_ROLE on SC to the TokenAuthority's ForceTransferSeizeHandler
+ *            (step 07) and registers SC with it as its seize handler
+ *         5. Sets txn mint limit and minter allowance on TokenAuthority
+ *         6. Sets max supply on RL and SC
+ *         7. Grants DEFAULT_ADMIN_ROLE + ownership to final admin addresses
+ *         8. Renounces all deployer roles
  */
 contract ConfigureAndHandover is Common {
 
@@ -35,6 +37,7 @@ contract ConfigureAndHandover is Common {
     bytes32 constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 constant BLOCKED_ADDRESS_BURNER_ROLE = keccak256("BLOCKED_ADDRESS_BURNER_ROLE");
+    bytes32 constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
     bytes32 constant MINT_RATE_LIMIT_SETTER_ROLE = keccak256("MINT_RATE_LIMIT_SETTER_ROLE");
     bytes32 constant TOKEN_AUTHORITY_HANDLER_SETTER_ROLE =
         keccak256("TOKEN_AUTHORITY_HANDLER_SETTER_ROLE");
@@ -42,15 +45,17 @@ contract ConfigureAndHandover is Common {
 
     function run(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin,
+        address forceTransferSeizeHandler,
         HandoverConfig calldata config
     ) public {
         requireDeployed(reserveLedger, "reserveLedger");
-        requireDeployed(mintIntentRegistry, "mintIntentRegistry");
+        requireDeployed(idempotencyKeyRegistry, "idempotencyKeyRegistry");
         requireDeployed(tokenAuthority, "tokenAuthority");
         requireDeployed(stablecoin, "stablecoin");
+        requireDeployed(forceTransferSeizeHandler, "forceTransferSeizeHandler");
 
         require(config.rlAdmin != address(0), "rlAdmin is zero");
         require(config.stablecoinAdmin != address(0), "stablecoinAdmin is zero");
@@ -58,11 +63,13 @@ contract ConfigureAndHandover is Common {
 
         vm.startBroadcast();
 
-        _configureRoles(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin, config);
-        _deployHandlerAndRegister(reserveLedger, tokenAuthority, stablecoin, config);
+        _configureRoles(reserveLedger, idempotencyKeyRegistry, tokenAuthority, stablecoin, config);
+        _deployHandlerAndRegister(
+            reserveLedger, tokenAuthority, stablecoin, forceTransferSeizeHandler, config
+        );
         _configureLimits(tokenAuthority, stablecoin, config);
         _configureMaxSupply(reserveLedger, stablecoin, config);
-        _handover(reserveLedger, mintIntentRegistry, tokenAuthority, stablecoin, config);
+        _handover(reserveLedger, idempotencyKeyRegistry, tokenAuthority, stablecoin, config);
 
         vm.stopBroadcast();
     }
@@ -71,6 +78,7 @@ contract ConfigureAndHandover is Common {
         address reserveLedger,
         address tokenAuthority,
         address stablecoin,
+        address forceTransferSeizeHandler,
         HandoverConfig calldata config
     ) internal {
         address handler = address(new ReserveLedgerWrappedHandler(tokenAuthority));
@@ -79,14 +87,19 @@ contract ConfigureAndHandover is Common {
         IAccessControl(reserveLedger).grantRole(MINTER_ROLE, handler);
         IAccessControl(stablecoin).grantRole(MINTER_ROLE, handler);
 
+        // StablecoinTemplateV3 holds its own backing, so it is seized by force transfer. The
+        // role is granted now, while the deployer is still the stablecoin's admin.
+        IAccessControl(stablecoin).grantRole(FORCE_TRANSFER_ROLE, forceTransferSeizeHandler);
+
         IAccessControl(tokenAuthority).grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
-        TokenAuthority(tokenAuthority).registerStablecoin(stablecoin, handler, config.txnMintLimit);
-        console.log("Registered stablecoin with handler on TA");
+        TokenAuthority(tokenAuthority)
+            .registerStablecoin(stablecoin, handler, forceTransferSeizeHandler, config.txnMintLimit);
+        console.log("Registered stablecoin with token and seize handlers on TA");
     }
 
     function _configureRoles(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin,
         HandoverConfig calldata config
@@ -94,8 +107,8 @@ contract ConfigureAndHandover is Common {
         IAccessControl(reserveLedger).grantRole(MINTER_ROLE, tokenAuthority);
         IAccessControl(stablecoin).grantRole(MINTER_ROLE, tokenAuthority);
 
-        // Authorize the TokenAuthority to publish and consume intents in the shared registry
-        IAccessControl(mintIntentRegistry).grantRole(CONTROLLER_ROLE, tokenAuthority);
+        // Authorize the TokenAuthority to use keys in the shared registry
+        IAccessControl(idempotencyKeyRegistry).grantRole(CONTROLLER_ROLE, tokenAuthority);
 
         IAccessControl(stablecoin).grantRole(PAUSER_ROLE, config.pauserAddress);
         IAccessControl(stablecoin).grantRole(UNPAUSER_ROLE, config.unpauserAddress);
@@ -127,7 +140,7 @@ contract ConfigureAndHandover is Common {
 
     function _handover(
         address reserveLedger,
-        address mintIntentRegistry,
+        address idempotencyKeyRegistry,
         address tokenAuthority,
         address stablecoin,
         HandoverConfig calldata config
@@ -147,16 +160,17 @@ contract ConfigureAndHandover is Common {
             .grantRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, config.tokenAuthorityAdmin);
         console.log("TA: admin handed over to", config.tokenAuthorityAdmin);
 
-        // The registry admin controls which controllers may share the intent namespace
-        IAccessControl(mintIntentRegistry).grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
-        console.log("MintIntentRegistry: admin handed over to", config.tokenAuthorityAdmin);
+        // The registry admin controls which controllers may share the key namespace
+        IAccessControl(idempotencyKeyRegistry)
+            .grantRole(DEFAULT_ADMIN_ROLE, config.tokenAuthorityAdmin);
+        console.log("IdempotencyKeyRegistry: admin handed over to", config.tokenAuthorityAdmin);
 
         if (config.tokenAuthorityAdmin != msg.sender) {
             IAccessControl(tokenAuthority)
                 .renounceRole(TOKEN_AUTHORITY_HANDLER_SETTER_ROLE, msg.sender);
             IAccessControl(tokenAuthority).renounceRole(MINT_RATE_LIMIT_SETTER_ROLE, msg.sender);
             IAccessControl(tokenAuthority).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
-            IAccessControl(mintIntentRegistry).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
+            IAccessControl(idempotencyKeyRegistry).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         if (config.rlAdmin != msg.sender) {
             IAccessControl(reserveLedger).renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);

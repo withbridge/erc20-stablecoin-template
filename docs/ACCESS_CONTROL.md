@@ -11,6 +11,7 @@ graph TB
         UP[UNPAUSER_ROLE]
         BAB[BLOCKED_ADDRESS_BURNER_ROLE]
         UW[UNWRAPPER_ROLE]
+        FT[FORCE_TRANSFER_ROLE]
     end
 
     subgraph "TokenAuthority Roles"
@@ -22,9 +23,10 @@ graph TB
         THS[TOKEN_AUTHORITY_HANDLER_SETTER_ROLE]
         SP[STABLECOIN_PAUSER_ROLE]
         PUB[PUBLISHER_ROLE]
+        SZ[SEIZER_ROLE]
     end
 
-    subgraph "MintIntentRegistry Roles"
+    subgraph "IdempotencyKeyRegistry Roles"
         MIR_DA[DEFAULT_ADMIN_ROLE]
         CR[CONTROLLER_ROLE]
     end
@@ -34,6 +36,7 @@ graph TB
     DA --> UP
     DA --> BAB
     DA --> UW
+    DA --> FT
 
     TA_DA --> MRLS
     TA_DA --> B
@@ -42,12 +45,13 @@ graph TB
     TA_DA --> THS
     TA_DA --> SP
     TA_DA --> PUB
+    TA_DA --> SZ
 
     MIR_DA --> CR
     CR -.granted to.-> TA_DA
 ```
 
-The same role set applies to `TIP20Controller`, which shares the `MintIntentRegistry` with `TokenAuthority`.
+The same role set applies to `TIP20Controller`, which shares the `IdempotencyKeyRegistry` with `TokenAuthority`.
 
 ## Stablecoin Roles
 
@@ -102,6 +106,13 @@ Convert stablecoins back to reserve tokens.
 |------------|----------|
 | Unwrap tokens | `unwrap(address, uint256)` |
 
+### `FORCE_TRANSFER_ROLE`
+`StablecoinTemplateV3` only (not `ReserveLedger`). Grant it **only to the TokenAuthority's `ForceTransferSeizeHandler`**, which only the TokenAuthority can call (after checking `SEIZER_ROLE`) and which checks the Seizure Wallet list and the freeze before every move. The coin cannot enforce who holds it, so the readiness check confirms `getRoleMemberCount(FORCE_TRANSFER_ROLE) == 1`.
+
+| Permission | Function |
+|------------|----------|
+| Move coins out of a blocked address | `forceTransfer(address, address, uint256)` |
+
 ## TokenAuthority Roles
 
 ### `DEFAULT_ADMIN_ROLE`
@@ -109,9 +120,8 @@ Full administrative control over TokenAuthority.
 
 | Permission | Function |
 |------------|----------|
-| Register stablecoins | `registerStablecoin(address, address, uint256)` |
-| Set mint intent version | `setMintIntentVersion(MintIntentVersion)` |
-| Migrate mint intent registry | `setMintIntentRegistry(address)` |
+| Set whether keys are required on `mint` | `setIdempotencyKeysVersion(IdempotencyKeysVersion)` |
+| Migrate idempotency-key registry | `setIdempotencyKeyRegistry(address)` |
 | Manage roles | `grantRole()`, `revokeRole()` |
 | Upgrade implementation | `upgradeToAndCall(address, bytes)` |
 
@@ -129,17 +139,14 @@ Initiate token burns through TokenAuthority.
 | Permission | Function |
 |------------|----------|
 | Burn tokens | `burn(address, uint256)` |
-| Burn against an operation ID | `burnWithOperationId(address, uint256, uint256)` |
+| Burn, marking keys used | `burn(address, uint256, bytes32[])` |
 
 ### `PUBLISHER_ROLE`
-Manage the mint intent lifecycle. Each function forwards to the shared `MintIntentRegistry`; the TokenAuthority itself must hold `CONTROLLER_ROLE` there.
+Retire idempotency keys without a token movement. Each call forwards to the shared `IdempotencyKeyRegistry`; the TokenAuthority itself must hold `CONTROLLER_ROLE` there.
 
 | Permission | Function |
 |------------|----------|
-| Publish an approval | `publishApproval(ApprovalParams, uint64)` |
-| Revoke an approval | `revokeApproval(bytes32)` |
-| Revoke an operation ID | `revokeOperationId(uint256)` |
-| Extend an approval's expiry | `extendApproval(bytes32, uint64)` |
+| Mark keys used | `useKeys(bytes32[])` |
 
 ### `STABLECOIN_PAUSER_ROLE`
 Pause a single stablecoin's mint/burn/wrap/unwrap paths.
@@ -168,14 +175,34 @@ Configure token handlers.
 | Permission | Function |
 |------------|----------|
 | Set handler | `setTokenHandler(address, address)` |
+| Register stablecoins | `registerStablecoin(address, address, address, uint256)` |
 | Unregister stablecoins | `unregisterStablecoin(address)` |
 
-## MintIntentRegistry Roles
+### `SEIZER_ROLE`
+`keccak256("SEIZER_ROLE")`, on both `TokenAuthority` and `TIP20Controller`. Grant it only to the entity's Seize Authority vault. The readiness check confirms it is the sole member via `getRoleMemberCount` / `getRoleMember`.
 
-One registry is shared by every controller deployment so that operation IDs and hold IDs are single-use across all of them, not once per controller.
+| Permission | Function |
+|------------|----------|
+| Seize from a frozen holder to a listed Seizure Wallet | `seize(address, address, address, uint256)` |
+
+Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizeHandler(address, address)` on `TokenAuthority`, for stablecoins registered without a seize handler; `setSeizureWalletPolicyId(uint64)` on each **seize handler**, which checks the caller holds the **TokenAuthority's** `DEFAULT_ADMIN_ROLE` (seize handlers have no admin of their own); and `setSeizureWalletPolicyId(uint64)` on `TIP20Controller`, against TIP-403. New stablecoins get their seize handler from `registerStablecoin`.
+
+### Roles stablecoins grant for seize
+
+Granted by the stablecoin's admin during setup. Seize handlers are called only by the TokenAuthority's `seize`; token handlers and the TokenAuthority never use these roles.
+
+| Stablecoin | Held by | Roles |
+|---|---|---|
+| `StablecoinTemplateV3` | `ForceTransferSeizeHandler` | `FORCE_TRANSFER_ROLE` |
+| `StablecoinTemplateV2` | `BurnAndRemintSeizeHandler` | `BLOCKED_ADDRESS_BURNER_ROLE`, `MINTER_ROLE`, `UNBLOCKER_ROLE`, `BLOCKER_ROLE`, `PAUSER_ROLE`, `UNPAUSER_ROLE`; mint recipient: the Seizure Wallet and the seize handler |
+| TIP-20 | TIP20Controller | `BURN_AT_ROLE`, `PAUSE_ROLE`, `UNPAUSE_ROLE` (plus the existing `ISSUER_ROLE`) |
+
+## IdempotencyKeyRegistry Roles
+
+One registry is shared by every controller deployment so that keys are single-use across all of them, not once per controller.
 
 ### `DEFAULT_ADMIN_ROLE`
-Controls which controllers may share the intent namespace.
+Controls which controllers may share the key namespace.
 
 | Permission | Function |
 |------------|----------|
@@ -183,18 +210,13 @@ Controls which controllers may share the intent namespace.
 | Upgrade implementation | `upgradeToAndCall(address, bytes)` |
 
 ### `CONTROLLER_ROLE`
-Held by each controller contract (`TokenAuthority`, `TIP20Controller`) — never by an EOA. Controllers gate their own callers with `PUBLISHER_ROLE` / `BURNER_ROLE` before forwarding here.
+Held by each controller contract (`TokenAuthority`, `TIP20Controller`) — never by an EOA. Controllers gate their own callers with `PUBLISHER_ROLE` / minter allowance / `BURNER_ROLE` before forwarding here.
 
-`CONTROLLER_ROLE` alone is **not** sufficient to act on an arbitrary approval. Each approval records the controller that published it, and consuming, revoking, or extending is restricted to that controller — otherwise the call reverts with `NotApprovalController`. The role admits a controller to the shared ID namespace; it does not grant authority over other controllers' approvals.
+Any controller with `CONTROLLER_ROLE` may mark a still-free key used. Uniqueness is registry-wide.
 
 | Permission | Function | Additionally requires |
 |------------|----------|-----------------------|
-| Publish an approval | `publishApproval(ApprovalParams, uint64)` | ID unused registry-wide |
-| Revoke an approval | `revokeApproval(bytes32)` | caller published it |
-| Revoke an operation ID | `revokeOperationId(uint256)` | caller published it, if an approval exists |
-| Extend an approval's expiry | `extendApproval(bytes32, uint64)` | caller published it |
-| Consume an approval | `consumeApproval(ApprovalParams)` | caller published it |
-| Consume an unused operation ID | `consumeUnusedOperationId(uint256)` | — (unowned) |
+| Mark keys used | `useKeys(bytes32[])` | every key free and nonzero |
 
 Granting this role is what admits a controller into the shared namespace:
 
@@ -202,11 +224,11 @@ Granting this role is what admits a controller into the shared namespace:
 graph LR
     PUB[Publisher EOA] -->|PUBLISHER_ROLE| TA[TokenAuthority]
     BRN[Burner EOA] -->|BURNER_ROLE| TA
-    TA -->|CONTROLLER_ROLE| MIR[(MintIntentRegistry)]
+    TA -->|CONTROLLER_ROLE| MIR[(IdempotencyKeyRegistry)]
     T20[TIP20Controller] -->|CONTROLLER_ROLE| MIR
 ```
 
-Revoking `CONTROLLER_ROLE` from a controller halts all of its intent operations while leaving existing intent state intact.
+Revoking `CONTROLLER_ROLE` from a controller halts all of its key operations while leaving existing key state intact.
 
 ## Rate Limiting
 

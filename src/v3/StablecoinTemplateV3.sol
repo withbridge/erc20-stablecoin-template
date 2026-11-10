@@ -17,6 +17,11 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
     using SafeERC20 for IERC20Mintable;
 
+    /// @notice Role that may move coins out of a blocked address. Granted by the admin only to the
+    /// TokenAuthority's force-transfer seize handler, which only the TokenAuthority can call after
+    /// it has checked the Seizure Wallet list.
+    bytes32 public constant FORCE_TRANSFER_ROLE = keccak256("FORCE_TRANSFER_ROLE");
+
     IERC20Mintable public immutable RESERVE_LEDGER_ADDRESS;
 
     constructor(address _reserveLedgerAddress, address _authRegistry)
@@ -50,7 +55,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
 
         _mint(to, amount);
 
-        emit Wrapped(amount, to, msg.sender);
+        emit Minted(amount, to, msg.sender);
     }
 
     /**
@@ -69,7 +74,7 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         _burn(msg.sender, amount);
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, amount);
 
-        emit Unwrapped(amount, msg.sender);
+        emit Burned(amount, msg.sender);
     }
 
     /**
@@ -122,7 +127,8 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
     }
 
     /**
-     * @notice Permanently locks direct mint/burn, leaving wrap/unwrap as the only supply changes.
+     * @notice Permanently locks direct mint/burn. Wrap, unwrap, and blocked-address burns remain
+     * available.
      * @dev One-way and irreversible. Requires this contract to already hold reserve ledger tokens
      * equal to total supply, i.e. the stablecoin is fully collateralized at the moment of
      * migration; reverts with {ReserveLedgerBalanceMismatch} otherwise.
@@ -141,10 +147,9 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
     /**
      * @dev Burns the entire balance of a blocked address.
      *
-     * This function temporarily unblocks the address to allow the burn operation,
-     * then re-blocks it after the burn is complete. Rather than burning the underlying reserve
-     * ledger token,
-     * this function transfers the balance of the blocked address to the caller.
+     * Temporarily bypasses this token's transfer-policy checks for all addresses during the
+     * burn and reserve-token transfer, then clears the bypass. Registry authorization is unchanged.
+     * Transfers matching reserve ledger tokens to the caller without burning those reserves.
      *
      * Requirements:
      * - `account` must be blocked
@@ -157,15 +162,52 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         uint256 accountBalance = balanceOf(account);
         require(accountBalance > 0, NoBalanceToBurn());
 
-        // Temporarily unblock the address to allow the burn to go through. This is needed because
-        // _update prevents transfers to and from blocked addresses. _burn() treats
-        // burns as transfers to the zero address.
+        // Temporarily bypass this token's transfer-policy checks so _burn can destroy the blocked
+        // account's balance. _burn treats the operation as a transfer to the zero address.
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(true);
         _burn(account, accountBalance);
         RESERVE_LEDGER_ADDRESS.safeTransfer(msg.sender, accountBalance);
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
 
         emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
+    }
+
+    /**
+     * @dev Moves `amount` from the blocked address `from` to `to`, past the freeze and pause
+     * checks that stop every other transfer.
+     *
+     * Used to seize a frozen holder's coins. The reserve ledger tokens backing them stay in this
+     * contract, so supply and backing are unchanged; a burn and re-mint would strand that backing
+     * instead. The destination list is checked by the caller, not here.
+     *
+     * Only the holder's freeze is bypassed: the temporary unblock flag would also let a blocked
+     * `to` receive, so `to` is checked explicitly first.
+     *
+     * Emits a {ForceTransferred} event.
+     *
+     * Requirements:
+     * - `from` must be blocked
+     * - `to` must not be blocked
+     * - `amount` must be greater than 0 and at most `from`'s balance
+     * - This function requires that the caller has the FORCE_TRANSFER_ROLE.
+     */
+    function forceTransfer(address from, address to, uint256 amount)
+        public
+        onlyRole(FORCE_TRANSFER_ROLE)
+    {
+        require(isBlocked(from), AddressIsNotBlocked());
+        require(!isBlocked(to), AddressBlocked());
+        require(amount > 0, AmountCannotBeZero());
+
+        // Both flags are transient and cleared straight after the move, so no other transfer in
+        // the same transaction can pass the freeze or pause checks.
+        StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(true);
+        StablecoinTemplateV3StorageLib.setTemporaryPauseBypassStatus(true);
+        _transfer(from, to, amount);
+        StablecoinTemplateV3StorageLib.setTemporaryPauseBypassStatus(false);
+        StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
+
+        emit ForceTransferred(amount, from, to, msg.sender);
     }
 
 }
