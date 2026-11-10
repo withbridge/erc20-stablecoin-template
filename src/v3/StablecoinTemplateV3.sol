@@ -2,18 +2,22 @@
 pragma solidity ^0.8.24;
 
 import { IERC20Mintable } from "../utils/IERC20Mintable.sol";
+import { EIP3009Upgradeable } from "./EIP3009Upgradeable.sol";
 import { StablecoinTemplateV3Base } from "./StablecoinTemplateV3Base.sol";
 import {
     StablecoinTemplateV3Storage,
     StablecoinTemplateV3StorageLib
 } from "./StablecoinTemplateV3Storage.sol";
+import {
+    ERC20Upgradeable
+} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title StablecoinTemplateV3
 /// @author Bridge
 /// @notice Wrapped stablecoin backed by reserve ledger tokens held in the contract
 /// @dev Supports wrap/unwrap operations and migration from direct mint/burn to wrapped mode
-contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
+contract StablecoinTemplateV3 is StablecoinTemplateV3Base, EIP3009Upgradeable {
 
     using SafeERC20 for IERC20Mintable;
 
@@ -157,6 +161,31 @@ contract StablecoinTemplateV3 is StablecoinTemplateV3Base {
         StablecoinTemplateV3StorageLib.setTemporaryUnblockStatus(false);
 
         emit BurnedFromBlockedAddress(accountBalance, account, msg.sender);
+    }
+
+    /**
+     * @dev Retrieves `decimals`. Override required because both StablecoinTemplateV3Base and
+     * EIP3009Upgradeable inherit ERC20Upgradeable.
+     */
+    function decimals()
+        public
+        view
+        virtual
+        override(ERC20Upgradeable, StablecoinTemplateV3Base)
+        returns (uint8)
+    {
+        return super.decimals();
+    }
+
+    /**
+     * @dev See {StablecoinTemplateV3Base-_update}. Override required because both
+     * StablecoinTemplateV3Base and EIP3009Upgradeable inherit ERC20Upgradeable.
+     */
+    function _update(address from, address to, uint256 amount)
+        internal
+        override(ERC20Upgradeable, StablecoinTemplateV3Base)
+    {
+        super._update(from, to, amount);
     }
 
 }
