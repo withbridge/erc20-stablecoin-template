@@ -25,6 +25,9 @@ interface ISeizeHandler is IERC165 {
     /// @notice Thrown when the address is the zero address
     error ZeroAddress();
 
+    /// @notice Thrown when the caller does not hold the TokenAuthority's DEFAULT_ADMIN_ROLE
+    error OnlyTokenAuthorityAdmin();
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Events
     //////////////////////////////////////////////////////////////////////////*/
@@ -38,6 +41,11 @@ interface ISeizeHandler is IERC165 {
         address indexed stablecoinContract, address indexed from, address indexed to, uint256 amount
     );
 
+    /// @notice Emitted when this handler's Seizure Wallet list is set or cleared
+    /// @param sender The TokenAuthority admin that set the list
+    /// @param policyId The new Seizure Wallet policy ID; 0 disables seize for this handler's coins
+    event SeizureWalletPolicyIdSet(address indexed sender, uint64 policyId);
+
     /*//////////////////////////////////////////////////////////////////////////
                                     Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -49,15 +57,29 @@ interface ISeizeHandler is IERC165 {
     function TOKEN_AUTHORITY() external view returns (address);
 
     /**
-     * @notice Whether `account` is on Seizure Wallet list `policyId`
+     * @notice The AuthRegistry policy listing the approved Seizure Wallets for the stablecoins this
+     * handler serves; 0 when seize is disabled for them
+     */
+    function seizureWalletPolicyId() external view returns (uint64);
+
+    /**
+     * @notice Sets or clears this handler's Seizure Wallet list
+     * @dev Only callable by an account holding the TokenAuthority's DEFAULT_ADMIN_ROLE, so the
+     * handler needs no admin of its own. Pass 0 to disable seize. The list is validated on every
+     * seize ({isSeizureWallet}), not here.
+     * @param policyId The Seizure Wallet policy ID
+     */
+    function setSeizureWalletPolicyId(uint64 policyId) external;
+
+    /**
+     * @notice Whether `account` is on this handler's Seizure Wallet list
      * @dev Read from the TokenAuthority's reserve ledger's AuthRegistry, which the handler fixes
      * at construction. Reverts with {ISeize-InvalidSeizureWalletList} if the list authorizes the
      * TokenAuthority itself, as the allow-all policy and blacklist-type lists do.
-     * @param policyId The TokenAuthority's Seizure Wallet policy ID
      * @param account The proposed destination
      * @return True when `account` is an approved Seizure Wallet
      */
-    function isSeizureWallet(uint64 policyId, address account) external view returns (bool);
+    function isSeizureWallet(address account) external view returns (bool);
 
     /**
      * @notice Whether `holder` is frozen on `stablecoinContract`

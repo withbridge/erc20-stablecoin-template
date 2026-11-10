@@ -355,6 +355,18 @@ contract TIP20Controller is
         emit MintIntentVersionSet(msg.sender, mintIntentVersion);
     }
 
+    /**
+     * @notice Sets or clears the TIP-403 policy listing the approved Seizure Wallets
+     * @dev 0 disables seize. The list is validated on every seize (see {_isSeizureWallet}), the
+     * same way the TokenAuthority's seize handlers validate theirs.
+     * @param policyId The Seizure Wallet policy ID
+     */
+    function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        seizureWalletPolicyId = policyId;
+
+        emit SeizureWalletPolicyIdSet(msg.sender, policyId);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                 Getters
     //////////////////////////////////////////////////////////////////////////*/
@@ -539,11 +551,6 @@ contract TIP20Controller is
         );
 
         return StdPrecompiles.TIP403_REGISTRY.isAuthorized(listId, account);
-    }
-
-    /// @inheritdoc Seize
-    function _setSeizureWalletPolicyId(uint64 policyId) internal override {
-        seizureWalletPolicyId = policyId;
     }
 
     /// @inheritdoc Seize

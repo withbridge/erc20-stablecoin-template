@@ -15,8 +15,8 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// handled by that move itself.
 /// @dev Holds no state. Declaring storage here would insert slots ahead of the inheriting
 /// controller's existing sequential variables and shift its layout (the same constraint as
-/// {IdempotencyKeys}). Implementers store their own seize settings and expose them through
-/// {_seizureWalletList} and {_setSeizureWalletPolicyId}.
+/// {IdempotencyKeys}). Implementers store their own seize settings (the TokenAuthority in its seize
+/// handlers, the TIP20Controller in itself) and expose them through {_seizureWalletList}.
 /// @dev Never reads a list registry itself: each implementer checks the Seizure Wallet list in
 /// {_isSeizureWallet} against its own fixed registry (the TokenAuthority through the stablecoin's
 /// seize handler, the TIP20Controller through TIP-403), so no shared registry interface is needed.
@@ -64,19 +64,6 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
         emit Seized(stablecoinContract, from, to, amount, msg.sender);
     }
 
-    /**
-     * @inheritdoc ISeize
-     * @dev Shared by every controller, like {IdempotencyKeys-setIdempotencyKeyRegistry}. Only the
-     * policy ID is configurable: each controller checks it against one fixed registry. The list is
-     * validated on every seize instead of here (see {_isSeizureWallet}), because the
-     * TokenAuthority's registry lives in its seize handlers.
-     */
-    function setSeizureWalletPolicyId(uint64 policyId) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setSeizureWalletPolicyId(policyId);
-
-        emit SeizureWalletPolicyIdSet(msg.sender, policyId);
-    }
-
     /*//////////////////////////////////////////////////////////////////////////
                                 Internal Functions
     //////////////////////////////////////////////////////////////////////////*/
@@ -103,9 +90,6 @@ abstract contract Seize is AccessControlEnumerableUpgradeable, ISeize {
         view
         virtual
         returns (bool);
-
-    /// @dev Persists the Seizure Wallet policy ID in the implementer's own storage.
-    function _setSeizureWalletPolicyId(uint64 policyId) internal virtual;
 
     /// @dev Returns whether `holder` is frozen on the stablecoin.
     function _isHolderBlocked(address stablecoinContract, address holder)

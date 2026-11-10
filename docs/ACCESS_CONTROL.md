@@ -185,7 +185,7 @@ Configure token handlers.
 |------------|----------|
 | Seize from a frozen holder to a listed Seizure Wallet | `seize(address, address, address, uint256)` |
 
-Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizureWalletPolicyId(uint64)` on both controllers (one list for the whole controller, checked against a fixed registry: the seize handlers' AuthRegistry on `TokenAuthority`, TIP-403 on `TIP20Controller`), and on `TokenAuthority` `setSeizeHandler(address, address)` for stablecoins registered without a seize handler. New stablecoins get their seize handler from `registerStablecoin`.
+Seize settings are `DEFAULT_ADMIN_ROLE` only: `setSeizeHandler(address, address)` on `TokenAuthority`, for stablecoins registered without a seize handler; `setSeizureWalletPolicyId(uint64)` on each **seize handler**, which checks the caller holds the **TokenAuthority's** `DEFAULT_ADMIN_ROLE` (seize handlers have no admin of their own); and `setSeizureWalletPolicyId(uint64)` on `TIP20Controller`, against TIP-403. New stablecoins get their seize handler from `registerStablecoin`.
 
 ### Roles stablecoins grant for seize
 

@@ -79,7 +79,8 @@ abstract contract SeizeHandlersDeployer is Common {
  *            V3; the six seize roles and two mint recipients on V2)
  *         2. Call setSeizeHandler(stablecoin, handler) for every stablecoin registered before
  *            seize existed
- *         3. Call setSeizureWalletPolicyId(policyId) and grant SEIZER_ROLE
+ *         3. Call setSeizureWalletPolicyId(policyId) on each handler (gated by the TokenAuthority's
+ *            DEFAULT_ADMIN_ROLE) and grant SEIZER_ROLE on the TokenAuthority
  */
 contract DeploySeizeHandlers is SeizeHandlersDeployer {
 

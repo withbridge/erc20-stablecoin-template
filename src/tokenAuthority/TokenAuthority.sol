@@ -100,16 +100,6 @@ contract TokenAuthority is
     /// @dev Appended after {idempotencyKeyRegistry} so the upgrade keeps every existing slot.
     mapping(address stablecoinContract => address seizeHandler) seizeHandlers;
 
-    /// @notice The policy listing the approved Seizure Wallets; 0 when seize is disabled
-    /// @dev One list serves every stablecoin on this TokenAuthority, because a TokenAuthority
-    /// belongs to one entity and that entity seizes into the same wallets for all of its coins.
-    /// Only the policy ID lives here: each seize handler fixes the registry it is checked against
-    /// (the reserve ledger's AuthRegistry) and does the check.
-    /// Stored as a full word in its own fresh slot (7), the same as
-    /// {TIP20Controller-seizureWalletPolicyId}. {setSeizureWalletPolicyId} only accepts a
-    /// `uint64`, so the value always fits one.
-    uint256 public seizureWalletPolicyId;
-
     /*//////////////////////////////////////////////////////////////////////////
                                     Constructor
     //////////////////////////////////////////////////////////////////////////*/
@@ -570,37 +560,32 @@ contract TokenAuthority is
     }
 
     /// @inheritdoc Seize
+    /// @dev The Seizure Wallet list lives in the stablecoin's seize handler, alongside the registry
+    /// it is checked against, so the TokenAuthority only routes. Its admin sets the list on each
+    /// handler directly ({ISeizeHandler-setSeizureWalletPolicyId}).
     function _seizureWalletList(address stablecoinContract)
         internal
         view
         override
         returns (uint64 listId)
     {
-        require(
-            seizeHandlers[stablecoinContract] != address(0) && seizureWalletPolicyId != 0,
-            SeizeNotConfigured(stablecoinContract)
-        );
+        address seizeHandler = seizeHandlers[stablecoinContract];
+        require(seizeHandler != address(0), SeizeNotConfigured(stablecoinContract));
 
-        // Cannot truncate: setSeizureWalletPolicyId only ever stores a uint64.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint64(seizureWalletPolicyId);
+        listId = ISeizeHandler(seizeHandler).seizureWalletPolicyId();
+        require(listId != 0, SeizeNotConfigured(stablecoinContract));
     }
 
     /// @inheritdoc Seize
-    /// @dev Routed to the stablecoin's seize handler, which holds the registry and does the check.
-    /// {_seizureWalletList} has already required that handler to be set.
-    function _isSeizureWallet(address stablecoinContract, uint64 listId, address account)
+    /// @dev Routed to the stablecoin's seize handler, which checks its own list against its own
+    /// registry. {_seizureWalletList} has already required that handler and its list to be set.
+    function _isSeizureWallet(address stablecoinContract, uint64, address account)
         internal
         view
         override
         returns (bool)
     {
-        return ISeizeHandler(seizeHandlers[stablecoinContract]).isSeizureWallet(listId, account);
-    }
-
-    /// @inheritdoc Seize
-    function _setSeizureWalletPolicyId(uint64 policyId) internal override {
-        seizureWalletPolicyId = policyId;
+        return ISeizeHandler(seizeHandlers[stablecoinContract]).isSeizureWallet(account);
     }
 
     /**

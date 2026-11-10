@@ -1416,7 +1416,7 @@ contract TIP20ControllerTest is Test {
         .createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
 
         vm.expectEmit(true, true, true, true, address(controller));
-        emit ISeize.SeizureWalletPolicyIdSet(admin, policyId);
+        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, policyId);
         controller.setSeizureWalletPolicyId(policyId);
 
         assertEq(controller.seizureWalletPolicyId(), policyId);
@@ -1426,7 +1426,7 @@ contract TIP20ControllerTest is Test {
         _setUpSeize();
 
         vm.expectEmit(true, true, true, true, address(controller));
-        emit ISeize.SeizureWalletPolicyIdSet(admin, 0);
+        emit ITIP20Controller.SeizureWalletPolicyIdSet(admin, 0);
         controller.setSeizureWalletPolicyId(0);
 
         assertEq(controller.seizureWalletPolicyId(), 0);

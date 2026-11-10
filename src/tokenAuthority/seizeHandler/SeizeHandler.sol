@@ -6,6 +6,7 @@ import { ISeize } from "../../seize/interfaces/ISeize.sol";
 import { ReserveLedger } from "../../v3/ReserveLedger.sol";
 import { ITokenAuthority } from "../ITokenAuthority.sol";
 import { ISeizeHandler } from "./ISeizeHandler.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { ERC165, IERC165 } from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 
@@ -13,7 +14,9 @@ import { IAuthRegistry } from "auth-registry/src/IAuthRegistry.sol";
 /// @author Bridge
 /// @notice Abstract base contract for seize handlers with TokenAuthority access control
 /// @dev Mirrors {TokenHandler}: only the TokenAuthority may call, and ERC165 lets the
-/// TokenAuthority reject anything that is not a seize handler when one is configured
+/// TokenAuthority reject anything that is not a seize handler when one is configured. Unlike a
+/// token handler it holds one setting, the Seizure Wallet list, which the TokenAuthority's admin
+/// sets: the handler takes its authority from its TokenAuthority instead of having an admin.
 abstract contract SeizeHandler is ISeizeHandler, ERC165, Version {
 
     /// @notice The address of the token authority that controls this handler
@@ -21,8 +24,14 @@ abstract contract SeizeHandler is ISeizeHandler, ERC165, Version {
 
     /// @notice The AuthRegistry holding the TokenAuthority's Seizure Wallet list
     /// @dev Read from the TokenAuthority's reserve ledger at construction, so it is always the
-    /// registry that entity's lists live in. The TokenAuthority stores only the list's policy ID.
+    /// registry that entity's lists live in.
     IAuthRegistry public immutable AUTH_REGISTRY;
+
+    /// @dev OpenZeppelin's DEFAULT_ADMIN_ROLE, checked on the TokenAuthority.
+    bytes32 private constant TOKEN_AUTHORITY_ADMIN_ROLE = 0x00;
+
+    /// @inheritdoc ISeizeHandler
+    uint64 public seizureWalletPolicyId;
 
     /// @notice Restricts function access to only the token authority
     modifier onlyTokenAuthority() {
@@ -40,7 +49,20 @@ abstract contract SeizeHandler is ISeizeHandler, ERC165, Version {
     }
 
     /// @inheritdoc ISeizeHandler
-    function isSeizureWallet(uint64 policyId, address account) external view returns (bool) {
+    function setSeizureWalletPolicyId(uint64 policyId) external {
+        require(
+            IAccessControl(TOKEN_AUTHORITY).hasRole(TOKEN_AUTHORITY_ADMIN_ROLE, msg.sender),
+            OnlyTokenAuthorityAdmin()
+        );
+
+        seizureWalletPolicyId = policyId;
+
+        emit SeizureWalletPolicyIdSet(msg.sender, policyId);
+    }
+
+    /// @inheritdoc ISeizeHandler
+    function isSeizureWallet(address account) external view returns (bool) {
+        uint64 policyId = seizureWalletPolicyId;
         require(
             !AUTH_REGISTRY.isAuthorized(policyId, TOKEN_AUTHORITY),
             ISeize.InvalidSeizureWalletList(address(AUTH_REGISTRY), policyId)

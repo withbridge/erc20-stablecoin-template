@@ -288,7 +288,9 @@ contract DeployAllE2ETest is Test, DeployAll {
         uint64 seizureWalletPolicyId =
             registry.createPolicy(address(this), IAuthRegistry.PolicyType.WHITELIST);
         registry.modifyPolicyWhitelist(seizureWalletPolicyId, seizureWallet, true);
-        ta.setSeizureWalletPolicyId(seizureWalletPolicyId);
+        // The list lives in the stablecoin's seize handler; the TokenAuthority admin sets it.
+        ISeizeHandler(ta.getSeizeHandler(result.stablecoin))
+            .setSeizureWalletPolicyId(seizureWalletPolicyId);
         ta.grantRole(SEIZER_ROLE, seizer);
 
         // --- Fund the holder, then freeze it ---
